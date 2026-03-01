@@ -3813,8 +3813,6 @@ class CPUReproTests(TestCase):
                     self.common(m, (x,))
                     check_metrics_vec_kernel_count(8)
 
-    @xfailIf(IS_ARM64 and IS_CPU_CAPABILITY_SVE256)
-    # see https://github.com/pytorch/pytorch/issues/169958
     @requires_vectorization
     @config.patch("cpp.enable_tiling_heuristics", False)
     def test_transpose_copy(self):
