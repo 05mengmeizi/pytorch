@@ -43,13 +43,10 @@ install_ubuntu() {
         fi
       fi
 
-      RELEASE_TYPE="nightlies"
-
       # Auto-detect latest nightly version if not pinned
       VERSION="${THEROCK_VERSION:-}"
       if [[ -z "${VERSION}" ]]; then
-        THEROCK_BASE_URL="https://rocm.${RELEASE_TYPE}.amd.com/tarball"
-        VERSION=$(curl -fsSL "${THEROCK_BASE_URL}/" \
+        VERSION=$(curl -fsSL "https://rocm.nightlies.amd.com/tarball/" \
           | grep -oP "therock-dist-linux-${AMDGPU_FAMILY}-\K[^\"]+(?=\.tar\.gz)" \
           | grep -v ADHOCBUILD \
           | sort -V \
@@ -63,14 +60,13 @@ install_ubuntu() {
       # URL-encode '+' as '%2B' in VERSION (required for devreleases)
       VERSION_ENCODED="${VERSION//+/%2B}"
 
-      TARBALL_URL="https://rocm.${RELEASE_TYPE}.amd.com/tarball/therock-dist-linux-${AMDGPU_FAMILY}-${VERSION_ENCODED}.tar.gz"
+      TARBALL_URL="https://rocm.nightlies.amd.com/tarball/therock-dist-linux-${AMDGPU_FAMILY}-${VERSION_ENCODED}.tar.gz"
 
       echo "=============================================="
       echo "ROCm Tarball Installation"
       echo "=============================================="
       echo "Version:         ${VERSION}"
       echo "AMDGPU Family:   ${AMDGPU_FAMILY}"
-      echo "Release Type:    ${RELEASE_TYPE}"
       echo "Tarball URL:     ${TARBALL_URL}"
       echo "=============================================="
 
