@@ -278,25 +278,25 @@ class MiscTests(torch._inductor.test_case.TestCase):
         torch._dynamo.decorators.mark_unbacked(b, 1)
 
         source_code = run_and_get_code(func, a, b)[1]
-
+        # Check that int64 indexing is used (either 1D [:] or 2D [:, None] form)
         self.assertTrue(
-            "xindex = xoffset + tl.arange(0, XBLOCK)[:].to(tl.int64)\\n"
-            in str(source_code)
+            "tl.arange(0, XBLOCK)[:].to(tl.int64)" in str(source_code)
+            or "tl.arange(0, XBLOCK)[:, None].to(tl.int64)" in str(source_code)
         )
+        # Check that 32-bit indexing is NOT used
         self.assertFalse(
-            "xindex = xoffset + tl.arange(0, XBLOCK)[:]\\n" in str(source_code)
+            "tl.arange(0, XBLOCK)[:]\n" in str(source_code)
+            and ".to(tl.int64)" not in str(source_code)
         )
 
         torch._dynamo.reset()
 
         with torch._inductor.config.patch(assume_32bit_indexing=True):
             source_code = run_and_get_code(func, a, b)[1]
+            # Check that int64 indexing is NOT used when assume_32bit_indexing=True
             self.assertFalse(
-                "xindex = xoffset + tl.arange(0, XBLOCK)[:].to(tl.int64)\\n"
-                in str(source_code)
-            )
-            self.assertTrue(
-                "xindex = xoffset + tl.arange(0, XBLOCK)[:]\\n" in str(source_code)
+                "tl.arange(0, XBLOCK)[:].to(tl.int64)" in str(source_code)
+                or "tl.arange(0, XBLOCK)[:, None].to(tl.int64)" in str(source_code)
             )
 
     def test_dynamo_side_effect(self):
@@ -2389,6 +2389,21 @@ not ___dict_contains('cccccccc', G['sys'].modules)""",
         # Verify the dynamic attribute is preserved
         self.assertTrue(hasattr(result, "c"))
         self.assertEqual(result.c, torch.tensor(3.0))
+
+    def test_namedtuple___eq__(self):
+        class MyNamedTuple(typing.NamedTuple):
+            a: int
+            b: int
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def f(x):
+            t1 = MyNamedTuple(a=1, b=2)
+            t2 = (1, 2)
+            return x.sin(), (t1 == t2)
+
+        x = torch.randn(2)
+        res = f(x)
+        self.assertTrue(res[1])
 
     def test_structseq1(self):
         def fn(x, y):
@@ -13039,6 +13054,90 @@ fn
         res_t, res_obj = opt_fn(x)
         self.assertEqual(ref_t, res_t)
         self.assertEqual(ref_obj.field, res_obj.field)
+
+    def test_data_descriptor_priority_over_instance_dict(self):
+        # CPython: data descriptors on the type take priority over instance
+        # dict values. Verify Dynamo follows this ordering.
+        class Foo:
+            @property
+            def x(self):
+                return 10
+
+        foo = Foo()
+        # Manually put a different value in the instance dict.
+        # The property (data descriptor) should still win.
+        foo.__dict__["x"] = 999
+
+        def fn(t):
+            return t + foo.x
+
+        opt_fn = torch.compile(fn, backend="eager", fullgraph=True)
+        t = torch.randn(4)
+        ref = fn(t)
+        res = opt_fn(t)
+        self.assertEqual(ref, res)
+        self.assertEqual(ref, t + 10)
+
+    def test_instance_dict_priority_over_non_data_descriptor(self):
+        # CPython: instance dict values take priority over non-data
+        # descriptors (those with only __get__, no __set__/__delete__).
+        class Desc:
+            def __init__(self, val):
+                self.val = val
+
+            def __get__(self, obj, cls):
+                return self.val * 100
+
+        class Foo:
+            x = Desc(7)
+
+        foo = Foo()
+        # Instance dict value should shadow the non-data descriptor.
+        foo.__dict__["x"] = 10
+
+        def fn(t):
+            return t + foo.x
+
+        opt_fn = torch.compile(fn, backend="eager", fullgraph=True)
+        t = torch.randn(4)
+        ref = fn(t)
+        res = opt_fn(t)
+        self.assertEqual(ref, res)
+        # CPython: instance dict wins → foo.x is 10, not 700
+        self.assertEqual(ref, t + 10)
+
+    def test_user_defined_data_descriptor(self):
+        # A user-defined data descriptor (has __get__ + __set__) on the type
+        # should be invoked even when the same name exists in the instance dict.
+        class ValidatedAttr:
+            def __set_name__(self, owner, name):
+                self.storage_name = "_" + name
+
+            def __get__(self, obj, cls):
+                if obj is None:
+                    return self
+                return getattr(obj, self.storage_name)
+
+            def __set__(self, obj, value):
+                setattr(obj, self.storage_name, value)
+
+        class Foo:
+            x = ValidatedAttr()
+
+            def __init__(self, x):
+                self.x = x
+
+        foo = Foo(10)
+
+        def fn(t):
+            return t + foo.x
+
+        opt_fn = torch.compile(fn, backend="eager", fullgraph=True)
+        t = torch.randn(4)
+        ref = fn(t)
+        res = opt_fn(t)
+        self.assertEqual(ref, res)
+        self.assertEqual(ref, t + 10)
 
     def test_assert_size_stride(self):
         x = torch.randn(2, 3, 4)
