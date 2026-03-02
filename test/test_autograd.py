@@ -91,6 +91,7 @@ from torch.utils.checkpoint import (
     checkpoint_sequential,
     CheckpointPolicy,
     create_selective_checkpoint_contexts,
+    checkpoint_name,
 )
 from torch.utils.flop_counter import FlopCounterMode
 
@@ -14863,6 +14864,30 @@ class TestNestedCheckpoint(TestCase):
         self.assertEqual(counter[0], 1)
 
 
+def _make_counter_op(name):
+    counts = [0]
+
+    @torch.library.custom_op(f"test_ckpt::{name}", mutates_args=())
+    def op(x: torch.Tensor) -> torch.Tensor:
+        counts[0] += 1
+        return x.sin()
+
+    @op.register_fake
+    def _(x):
+        return torch.empty_like(x)
+
+    def setup_context(ctx, inputs, output):
+        ctx.save_for_backward(inputs[0])
+
+    def backward(ctx, grad):
+        (x,) = ctx.saved_tensors
+        return grad * x.cos()
+
+    op.register_autograd(backward, setup_context=setup_context)
+
+    return op, counts
+
+
 class TestSelectiveActivationCheckpoint(TestCase):
     @unittest.skipIf(not TEST_CUDA, "requires CUDA")
     def test_flops_and_mem(self):
@@ -15262,9 +15287,6 @@ class TestSelectiveActivationCheckpoint(TestCase):
 
     @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
     def test_can_only_trigger_recompute_once(self):
-        # We don't support this to avoid adding extra complexity for now.
-        # If there's a need, we could probably do some kind of use_count tracking.
-        # TODO: have a nice error message here.
         def policy_fn(ctx, op, *args, **kwargs):
             if op == torch.ops.aten.sin.default:
                 return CheckpointPolicy.MUST_SAVE
@@ -15281,6 +15303,126 @@ class TestSelectiveActivationCheckpoint(TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Trying to backward an extra time"):
             out.sum().backward(retain_graph=True)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_skips_recomputation(self):
+        # checkpoint_name() + policy should prevent recomputation
+        op_a, counts_a = _make_counter_op("name_a")
+        op_b, counts_b = _make_counter_op("name_b")
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            if ctx.tensor_name == "keep_this":
+                return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        def fn(x):
+            y = op_a(x)
+            checkpoint_name(y, "keep_this")
+            return op_b(y)
+
+        x = torch.randn(4, requires_grad=True)
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+        out = checkpoint(fn, x, use_reentrant=False, context_fn=context_fn)
+        self.assertEqual(counts_a[0], 1)
+        self.assertEqual(counts_b[0], 1)
+
+        out.sum().backward()
+        # op_a was named "keep_this" and policy returned MUST_SAVE: not recomputed
+        self.assertEqual(counts_a[0], 1)
+        # op_b was not named: recomputed
+        self.assertEqual(counts_b[0], 2)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_with_policy_fn(self):
+        # checkpoint_name() works alongside a policy that already saves some ops
+        op_a, counts_a = _make_counter_op("namepol_a")
+        op_b, counts_b = _make_counter_op("namepol_b")
+        op_c, counts_c = _make_counter_op("namepol_c")
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            if ctx.tensor_name == "save_b":
+                return CheckpointPolicy.MUST_SAVE
+            if op == torch.ops.test_ckpt.namepol_a.default:
+                return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        def fn(x):
+            y = op_a(x)
+            z = op_b(y)
+            checkpoint_name(z, "save_b")
+            return op_c(z)
+
+        x = torch.randn(4, requires_grad=True)
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+        out = checkpoint(fn, x, use_reentrant=False, context_fn=context_fn)
+
+        out.sum().backward()
+        # op_a: policy saved by op match
+        self.assertEqual(counts_a[0], 1)
+        # op_b: policy saved by name match
+        self.assertEqual(counts_b[0], 1)
+        # op_c: recomputed
+        self.assertEqual(counts_c[0], 2)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_policy_recompute(self):
+        # Policy can still decide to recompute a named tensor
+        op_a, counts_a = _make_counter_op("namerecomp_a")
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        def fn(x):
+            y = op_a(x)
+            checkpoint_name(y, "dont_save")
+            return y
+
+        x = torch.randn(4, requires_grad=True)
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+        out = checkpoint(fn, x, use_reentrant=False, context_fn=context_fn)
+        out.sum().backward()
+        # Policy said PREFER_RECOMPUTE even for the named tensor, so it was recomputed
+        self.assertEqual(counts_a[0], 2)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_gradient_correctness(self):
+        def fn(x, w):
+            h = x @ w
+            return torch.relu(h).sum()
+
+        def fn_with_name(x, w):
+            h = x @ w
+            checkpoint_name(h, "hidden")
+            return torch.relu(h).sum()
+
+        x = torch.randn(4, 4, requires_grad=True)
+        w = torch.randn(4, 4, requires_grad=True)
+
+        # Reference (no checkpoint)
+        x_ref = x.clone().detach().requires_grad_(True)
+        w_ref = w.clone().detach().requires_grad_(True)
+        fn(x_ref, w_ref).backward()
+
+        # Checkpointed with checkpoint_name, policy saves named tensors
+        x_ckpt = x.clone().detach().requires_grad_(True)
+        w_ckpt = w.clone().detach().requires_grad_(True)
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            if ctx.tensor_name is not None:
+                return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+        checkpoint(fn_with_name, x_ckpt, w_ckpt, use_reentrant=False, context_fn=context_fn).backward()
+
+        self.assertEqual(x_ref.grad, x_ckpt.grad)
+        self.assertEqual(w_ref.grad, w_ckpt.grad)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_no_sac_is_noop(self):
+        # checkpoint_name without SAC context is a silent no-op
+        x = torch.randn(4)
+        checkpoint_name(x, "foo")  # should not raise
 
 
 class TestAutogradMultipleDispatch(TestCase):
