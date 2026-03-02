@@ -712,6 +712,7 @@ print(t.is_pinned())
             os.environ.get(v)
             for v in ("TORCH_BLAS_PREFER_CUBLASLT", "TORCH_BLAS_PREFER_HIPBLASLT")
         ):
+            torch.backends.cuda.preferred_blas_library("default")
             _check_default()
 
     @unittest.skipIf(TEST_CUDAMALLOCASYNC, "temporarily disabled for async")
