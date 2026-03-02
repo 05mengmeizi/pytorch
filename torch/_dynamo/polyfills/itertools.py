@@ -143,45 +143,41 @@ def takewhile(predicate: _Predicate[_T], iterable: Iterable[_T], /) -> Iterator[
 
 
 @overload
-# pyrefly: ignore [inconsistent-overload]
 def starmap(
     function: Callable[[], _U],
     iterable: Iterable[tuple[()]],
     /,
-) -> Iterator[_U]: ...
+) -> itertools.starmap[_U]: ...
 
 
 @overload
-# pyrefly: ignore [inconsistent-overload]
 def starmap(
     function: Callable[[_T], _U],
     iterable: Iterable[tuple[_T]],
     /,
-) -> Iterator[_U]: ...
+) -> itertools.starmap[_U]: ...
 
 
 @overload
-# pyrefly: ignore [inconsistent-overload]
 def starmap(
     function: Callable[[_T, _T1], _U],
     iterable: Iterable[tuple[_T, _T1]],
     /,
-) -> Iterator[_U]: ...
+) -> itertools.starmap[_U]: ...
 
 
 @overload
-# pyrefly: ignore [inconsistent-overload]
 def starmap(
     function: Callable[[_T, _T1, _T2], _U],
     iterable: Iterable[tuple[_T, _T1, _T2]],
     /,
-) -> Iterator[_U]: ...
+) -> itertools.starmap[_U]: ...
 
 
 # Reference: https://docs.python.org/3/library/itertools.html#itertools.starmap
 @substitute_in_graph(itertools.starmap, is_embedded_type=True)  # type: ignore[arg-type]
 # pyrefly: ignore [implicit-any]
-def starmap(function: Callable[..., _T], iterable: Iterable, /) -> Iterator[_T]:
+def starmap(function: Callable[..., _T], iterable: Iterable, /) -> Iterable[_T]:
     # starmap(pow, [(2,5), (3,2), (10,3)]) → 32 9 1000
     if not callable(function):
         raise TypeError(f"'{type(function).__name__}' object is not callable")
