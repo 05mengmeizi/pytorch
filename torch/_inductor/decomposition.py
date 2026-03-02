@@ -36,7 +36,6 @@ from torch._prims_common import (
 )
 from torch._refs import native_layer_norm as decomp_native_layer_norm
 from torch.fx.experimental.symbolic_shapes import guard_or_false, statically_known_true
-from torch.utils._ordered_set import OrderedSet
 
 from . import config, inductor_prims
 from .utils import (
@@ -831,7 +830,6 @@ def grid_sampler_2d(
         _expand_grid=_expand_grid,
     )
     return output
-
 
     # _foreach_addcmul and _foreach_addcdiv decompositions removed —
     # the inductor lowering in lowering.py handles these with FMA.

@@ -761,7 +761,11 @@ def make_foreach_pointwise(pw_fn, allow_alpha=False, scalar_kwarg="alpha"):
         # positional arg (not keyword) due to the ATen schema. Extract it
         # from the end of inputs if present.
         inputs = list(inputs)
-        if scalar_kwarg == "value" and inputs and not isinstance(inputs[-1], (list, tuple)):
+        if (
+            scalar_kwarg == "value"
+            and inputs
+            and not isinstance(inputs[-1], (list, tuple))
+        ):
             scalar_val = inputs.pop()
         elif scalar_kwarg == "value":
             scalar_val = value
