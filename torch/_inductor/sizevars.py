@@ -632,7 +632,7 @@ class SizeVarAllocator:
         expr = self.remove_precomputed_replacements(expr)
 
         try:
-            hint = self.size_hint(expr)
+            hint = self.guarding_hint_or_throw(expr)
         except Exception:
             hint = None
         node = SymNode(expr, self.shape_env, int, hint)
@@ -641,20 +641,6 @@ class SizeVarAllocator:
     def to_symints_or_ints(self, exprs: Sequence[Expr | int]) -> list[SymInt | int]:
         """Convert a sequence of sympy expressions to SymInts, or return ints as is."""
         return [self.to_symint_or_int(e) for e in exprs]
-
-    # TODO this will be deprecated.
-    def size_hint(self, expr: Expr | int) -> int:
-        if isinstance(expr, SymInt):
-            raise TypeError(
-                "wrong API usage!, use size_hint from torch.fx.experimental.symbolic_shapes or pass sympy expressions instead"
-            )
-
-        out = self.replace_backed_symbols_with_hints(expr)
-        try:
-            return int(out)
-        except Exception:
-            log.debug("failed on: %s", out)
-            raise
 
     def guarding_hint_or_throw(self, expr: Expr | int) -> int:
         """
@@ -881,12 +867,6 @@ class SizeVarAllocator:
         return tuple(
             self.optimization_hint_with_override(e, hint_override) for e in exprs
         )
-
-    def size_hints(
-        self,
-        exprs: Iterable[Expr | int],
-    ) -> tuple[int, ...]:
-        return tuple(self.size_hint(x) for x in exprs)
 
     def guarding_hints_or_throw(
         self,
