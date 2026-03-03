@@ -509,6 +509,30 @@ class TORCH_API Backend : public torch::CustomClassHolder {
   // normal shutdown.
   virtual void shutdown() {}
 
+  // APIs related to memory offload
+  virtual void suspend() {
+    TORCH_CHECK(
+        false,
+        c10::str(
+            "Backend ", getBackendName(), " does not support suspend"));
+  }
+
+  virtual void resume() {
+    TORCH_CHECK(
+        false,
+        c10::str(
+            "Backend ", getBackendName(), " does not support resume"));
+  }
+
+  virtual void printMemoryStats() {
+    TORCH_CHECK(
+        false,
+        c10::str(
+            "Backend ",
+            getBackendName(),
+            " does not support printMemoryStats"));
+  }
+
  protected:
   // Implementations of this interface need to call this to setup
   // appropriate logging etc.

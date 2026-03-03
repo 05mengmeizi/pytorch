@@ -3270,6 +3270,33 @@ uint64_t ProcessGroupNCCL::getCommSplitCounter() const {
   return ret;
 }
 
+void ProcessGroupNCCL::suspend() {
+  // Get the collective communicator on the current CUDA device.
+  auto device = at::Device(at::kCUDA, guessDeviceId());
+  std::string deviceKey = getKeyFromDevice(device);
+  auto ncclComm = getNCCLComm(deviceKey);
+  TORCH_CHECK(ncclComm != nullptr, "NCCL communicator not initialized.");
+  ncclComm->suspend();
+}
+
+void ProcessGroupNCCL::resume() {
+  // Get the collective communicator on the current CUDA device.
+  auto device = at::Device(at::kCUDA, guessDeviceId());
+  std::string deviceKey = getKeyFromDevice(device);
+  auto ncclComm = getNCCLComm(deviceKey);
+  TORCH_CHECK(ncclComm != nullptr, "NCCL communicator not initialized.");
+  ncclComm->resume();
+}
+
+void ProcessGroupNCCL::printMemoryStats() {
+  // Get the collective communicator on the current CUDA device.
+  auto device = at::Device(at::kCUDA, guessDeviceId());
+  std::string deviceKey = getKeyFromDevice(device);
+  auto ncclComm = getNCCLComm(deviceKey);
+  TORCH_CHECK(ncclComm != nullptr, "NCCL communicator not initialized.");
+  ncclComm->printMemoryStats();
+}
+
 namespace {
 
 // Check validity of tensor

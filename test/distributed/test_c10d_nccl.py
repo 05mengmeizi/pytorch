@@ -1975,6 +1975,62 @@ class ProcessGroupNCCLGroupTest(MultiProcessTestCase):
         work.wait()
         torch.cuda.synchronize()
 
+    @requires_nccl()
+    @skip_but_pass_in_sandcastle_if(not TEST_MULTIGPU, "NCCL test requires 2+ GPUs")
+    def test_suspend(self):
+        """Test that suspend can be called on the NCCL backend."""
+        store = c10d.FileStore(self.file_name, self.world_size)
+        device = torch.device(f"cuda:{self.rank}")
+        pg = self._create_process_group_nccl(store, self.opts(), device_id=device)
+
+        # Run a large collective to cause NCCL to allocate internal memory
+        dist.all_reduce(torch.zeros(1024 * 1024 * 512, device=device))
+
+        backend = pg._get_backend(device)
+        backend.suspend()
+        backend.print_memory_stats()
+
+    @requires_nccl()
+    @skip_but_pass_in_sandcastle_if(not TEST_MULTIGPU, "NCCL test requires 2+ GPUs")
+    def test_print_memory_stats(self):
+        """Test that print_memory_stats can be called on the NCCL backend."""
+        store = c10d.FileStore(self.file_name, self.world_size)
+        device = torch.device(f"cuda:{self.rank}")
+        pg = self._create_process_group_nccl(store, self.opts(), device_id=device)
+
+        # Run a large collective to cause NCCL to allocate internal memory
+        dist.all_reduce(torch.zeros(1024 * 1024 * 512, device=device))
+
+        backend = pg._get_backend(device)
+        backend.print_memory_stats()
+
+    @requires_nccl()
+    @skip_but_pass_in_sandcastle_if(not TEST_MULTIGPU, "NCCL test requires 2+ GPUs")
+    def test_resume(self):
+        """Test the full suspend/resume cycle with collectives."""
+        store = c10d.FileStore(self.file_name, self.world_size)
+        device = torch.device(f"cuda:{self.rank}")
+        pg = self._create_process_group_nccl(store, self.opts(), device_id=device)
+
+        # Run a large collective to cause NCCL to allocate internal memory
+        dist.all_reduce(torch.zeros(1024 * 1024 * 512, device=device))
+
+        backend = pg._get_backend(device)
+
+        # Suspend (release memory)
+        backend.suspend()
+
+        # Resume
+        backend.resume()
+
+        # Run a collective to verify the communicator still works
+        tensor = torch.ones(1024, device=device, dtype=torch.float32)
+        dist.all_reduce(tensor)
+        expected = torch.full(
+            (1024,), self.world_size, device=device, dtype=torch.float32
+        )
+        self.assertEqual(tensor, expected)
+
 
 class DistributedDataParallelTest(
     test_c10d_common.CommonDistributedDataParallelTest, MultiProcessTestCase

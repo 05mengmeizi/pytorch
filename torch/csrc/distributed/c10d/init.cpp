@@ -3105,7 +3105,10 @@ Arguments:
               py::arg("device"),
               py::call_guard<py::gil_scoped_release>())
           .def_property_readonly(
-              "mem_allocator", &::c10d::Backend::getMemAllocator);
+              "mem_allocator", &::c10d::Backend::getMemAllocator)
+          .def("suspend", &::c10d::Backend::suspend)
+          .def("resume", &::c10d::Backend::resume)
+          .def("print_memory_stats", &::c10d::Backend::printMemoryStats);
 
   // base Backend::Options binding
   // TODO: Maybe we can consider how to merge this with
