@@ -8869,6 +8869,16 @@ class ReproTestsDevice(torch._dynamo.test_case.TestCase):
         result = f(torch.tensor(0.0))
         self.assertEqual(result.item(), 4.0)
 
+    @requires_cuda
+    def test_deterministic_replication_pad_compile(self):
+        torch.use_deterministic_algorithms(True)
+        pad = torch.nn.ReplicationPad1d(2).to("cuda")
+        x = torch.randn(3, 3, device="cuda")
+        expected = pad(x)
+        compiled = torch.compile(pad, backend="eager", fullgraph=True)
+        result = compiled(x)
+        self.assertEqual(result, expected)
+
 
 instantiate_parametrized_tests(ReproTests)
 

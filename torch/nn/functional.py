@@ -5420,16 +5420,17 @@ def pad(
             torch.nn.functional.pad, (input,), input, pad, mode=mode, value=value
         )
     if not torch.jit.is_scripting():
-        if torch.are_deterministic_algorithms_enabled() and (
-            input.is_cuda or input.is_xpu
+        if (
+            not torch.compiler.is_compiling()
+            and torch.are_deterministic_algorithms_enabled()
+            and (input.is_cuda or input.is_xpu)
         ):
             if mode == "replicate":
                 # Use slow decomp whose backward will be in terms of index_put.
-                # importlib is required because the import cannot be top level
-                # (cycle) and cannot be nested (TS doesn't support)
-                return importlib.import_module(
-                    "torch._decomp.decompositions"
-                )._replication_pad(input, pad)
+                # Cannot be top level due to circular import.
+                from torch._decomp.decompositions import _replication_pad
+
+                return _replication_pad(input, pad)
     return torch._C._nn.pad(input, pad, mode, value)
 
 
