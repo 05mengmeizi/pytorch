@@ -5063,6 +5063,33 @@ def forward(self, arg0_1: "i64[1][1]cpu", arg1_1: "Sym(u1)", arg2_1: "i64[u1][1]
         self.assertEqual(result.shape, x.shape)
 
     @skipIfTorchDynamo("mark_unbacked is not traceable")
+    def test_mark_unbacked_min_max_bounds(self):
+        """
+        Test that min/max bounds on mark_unbacked create runtime checks.
+        """
+        torch._dynamo.reset()
+
+        def func(x):
+            return x.sum()
+
+        # Test with min bound
+        x = torch.rand(4, 3)
+        torch._dynamo.decorators.mark_unbacked(x, 0, min=1)
+
+        compiled_func = torch.compile(func, backend="eager", fullgraph=True)
+        result = compiled_func(x)
+        self.assertEqual(result.shape, ())
+
+        # Test with max bound
+        torch._dynamo.reset()
+        x2 = torch.rand(4, 3)
+        torch._dynamo.decorators.mark_unbacked(x2, 0, max=10)
+
+        compiled_func2 = torch.compile(func, backend="eager", fullgraph=True)
+        result2 = compiled_func2(x2)
+        self.assertEqual(result2.shape, ())
+
+    @skipIfTorchDynamo("mark_unbacked is not traceable")
     def test_shape_id_no_recompile_without_dynamic_indices(self):
         """
         Test that passing a tensor without _dynamo_dynamic_indices after
