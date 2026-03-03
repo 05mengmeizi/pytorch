@@ -18,7 +18,6 @@
 #include <torch/csrc/profiler/standalone/itt_observer.h>
 #include <torch/csrc/profiler/standalone/nvtx_observer.h>
 #include <torch/csrc/profiler/standalone/privateuse1_observer.h>
-#include <torch/csrc/profiler/standalone/privateuse1_profiler.h>
 #include <torch/csrc/profiler/util.h>
 
 #include <stdexcept>
@@ -28,6 +27,7 @@
 #include <ApproximateClock.h>
 #include <libkineto.h>
 #include <time_since_epoch.h>
+#include <torch/csrc/profiler/standalone/privateuse1_profiler.h>
 
 #ifndef _MSC_VER
 // TODO: TO be removed, once this properly works from libkineto
@@ -661,9 +661,12 @@ void prepareProfiler(
   // Forward registered PrivateUse1 profiler factory to Kineto.
   // Only for KINETO_PRIVATEUSE1 state where backend provides its own
   // IActivityProfiler.
+#ifdef USE_KINETO
   if (config.state == ProfilerState::KINETO_PRIVATEUSE1) {
-    torch::profiler::impl::PrivateUse1ProfilerRegistry::instance().onKinetoInit();
+    torch::profiler::impl::PrivateUse1ProfilerRegistry::instance()
+        .onKinetoInit();
   }
+#endif // USE_KINETO
 
   if (!config.experimental_config.performance_events.empty()) {
     /* For now only CPU activity is supported */
