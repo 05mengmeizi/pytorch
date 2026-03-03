@@ -108,9 +108,8 @@ jobs:
       - name: Upload logs to S3
         if: always()
         run: |
-          TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
           ISSUE_NUM="${{ steps.issue.outputs.number }}"
-          S3_KEY="review-logs/${ISSUE_NUM}-${TIMESTAMP}.log"
+          S3_KEY="review-logs/${ISSUE_NUM}.log"
           if [ -f /tmp/triage_hooks.log ]; then
             aws s3 cp /tmp/triage_hooks.log "s3://gha-artifacts/${S3_KEY}"
             echo "Uploaded logs to s3://gha-artifacts/${S3_KEY}"
