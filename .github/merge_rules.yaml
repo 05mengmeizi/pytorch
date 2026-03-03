@@ -205,8 +205,9 @@
   - kulinseth
   - alband
   - malfet
-  - razarmehr
   - DenisVieriu97
+  - kurtamohler
+
   mandatory_checks_name:
   - EasyCLA
   - Lint
