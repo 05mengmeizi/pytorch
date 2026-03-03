@@ -2196,6 +2196,11 @@ namespace {
       ASSERT_TRUE(vec_pinf.has_inf_nan()) << "Test failed for positive Infinity\n";
       ASSERT_TRUE(vec_ninf.has_inf_nan()) << "Test failed for negative Infinity\n";
     }
+// Building below for SVE with gcc-13 fails with following internal error
+// during GIMPLE pass: sink
+// In member function ‘virtual void {anonymous}::VecConvertBFloat16_ExhaustiveToFloat_Test::TestBody()’:
+// vec_test_all_types.cpp:2265:10: internal compiler error: Segmentation fault
+// 2265 |     TEST(VecConvertBFloat16, ExhaustiveToFloat) {
 #if !defined(CPU_CAPABILITY_SVE256)
     template <typename vec, typename dst_t>
     void test_convert_to(const char* dst_t_name) {
