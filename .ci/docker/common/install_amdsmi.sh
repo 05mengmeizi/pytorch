@@ -2,7 +2,7 @@
 
 set -ex
 
-source /etc/rocm_env.sh
+# ROCM_PATH is set via Dockerfile ENV
 
 # For theRock nightly, amd_smi may already be installed or in a different location
 if [ -d "${ROCM_PATH}/share/amd_smi" ]; then

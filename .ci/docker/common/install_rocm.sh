@@ -117,27 +117,6 @@ install_ubuntu() {
       echo "PATH should include: $ROCM_INSTALL_DIR/bin"
       echo "=============================================="
 
-      # Write environment to file that can be sourced by CI scripts and users
-      cat > /etc/rocm_env.sh << ROCM_ENV
-# ROCm paths
-export ROCM_PATH=/opt/rocm
-export ROCM_HOME=/opt/rocm
-export ROCM_SOURCE_DIR=/opt/rocm
-export ROCM_BIN=/opt/rocm/bin
-export ROCM_CMAKE=/opt/rocm
-export PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:\${PATH}
-# Sysdeps include path (libdrm headers needed by rocm_smi)
-export CPLUS_INCLUDE_PATH=/opt/rocm/lib/rocm_sysdeps/include:\${CPLUS_INCLUDE_PATH:-}
-export C_INCLUDE_PATH=/opt/rocm/lib/rocm_sysdeps/include:\${C_INCLUDE_PATH:-}
-# Device library paths
-export ROCM_DEVICE_LIB_PATH=/opt/rocm/amdgcn/bitcode
-export HIP_DEVICE_LIB_PATH=/opt/rocm/amdgcn/bitcode
-export MAGMA_HOME=/opt/rocm/magma
-# Disable MSLK for theRock nightly (not yet supported)
-export USE_MSLK=0
-ROCM_ENV
-
-      echo "source /etc/rocm_env.sh" >> /etc/bash.bashrc
       exit 0
     fi
 
@@ -249,24 +228,6 @@ EOF
     fi
 
     pip_install "git+https://github.com/rocm/composable_kernel@$ROCM_COMPOSABLE_KERNEL_VERSION"
-
-    # Write environment to file that can be sourced by CI scripts and users
-    cat > /etc/rocm_env.sh << ROCM_ENV
-# ROCm paths
-export ROCM_PATH=/opt/rocm
-export ROCM_HOME=/opt/rocm
-export ROCM_SOURCE_DIR=/opt/rocm
-export ROCM_BIN=/opt/rocm/bin
-export ROCM_CMAKE=/opt/rocm
-export PATH=/opt/rocm/bin:/opt/rocm/llvm/bin:\${PATH}
-# Device library paths
-export ROCM_DEVICE_LIB_PATH=/opt/rocm/amdgcn/bitcode
-export HIP_DEVICE_LIB_PATH=/opt/rocm/amdgcn/bitcode
-export MAGMA_HOME=/opt/rocm/magma
-ROCM_ENV
-
-    # Append to bash.bashrc so interactive shells get the env vars
-    echo "source /etc/rocm_env.sh" >> /etc/bash.bashrc
 
     # Cleanup
     apt-get autoclean && apt-get clean
