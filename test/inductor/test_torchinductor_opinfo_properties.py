@@ -378,7 +378,6 @@ EAGER_EQUIV_XFAILS = {
         "log_softmax": {fp32},
     },
     "inductor_numerics": {
-        "reciprocal": {fp32},
         "remainder": {ALL},
         "sigmoid": {fp32},
         "sub": {ALL},
@@ -416,7 +415,6 @@ UNARY_NUMERICAL_XFAILS = {
         "tanh": {fp32},
     },
     "inductor_numerics": {
-        "reciprocal": {fp32},
         "sigmoid": {fp32},
     },
 }
