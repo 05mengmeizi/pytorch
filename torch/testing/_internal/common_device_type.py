@@ -1682,6 +1682,10 @@ def onlyHPU(fn):
     return onlyOn("hpu")(fn)
 
 
+def onlyAccelerator(fn):
+    return onlyOn(["cuda", "mps", "xpu"])(fn)
+
+
 def onlyPRIVATEUSE1(fn):
     device_type = torch._C._get_privateuse1_backend_name()
     device_mod = getattr(torch, device_type, None)
