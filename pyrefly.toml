@@ -41,6 +41,7 @@ project-excludes = [
   "torch/overrides.py",
   "*/__pycache__/**",
   "*/.*",
+  "torch/_inductor/kernel/vendored_templates/cutedsl/kernels/**",
 ]
 ignore-missing-imports = [
     # XPU memory symbols not present for builds without XPU support
