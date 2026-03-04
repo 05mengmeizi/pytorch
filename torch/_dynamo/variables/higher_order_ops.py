@@ -28,19 +28,25 @@ import types
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional, TYPE_CHECKING, Union
+from typing import Any, Literal, NamedTuple, Optional, TYPE_CHECKING, Union
 
 import torch._C
 import torch.fx
 import torch.nn
 from torch._dispatch.python import enable_python_dispatcher
+from torch._dynamo.guards import (
+    extract_tensor_metadata,
+    GUARD_VALUE_DISPATCH,
+    SKIP_GUARD,
+    UnsupportedGuardCheckSpec,
+)
 from torch._dynamo.utils import get_fake_value
 from torch._dynamo.variables.constant import CONSTANT_VARIABLE_NONE, ConstantVariable
 from torch._dynamo.variables.ctx_manager import RepararametrizeModuleContextVariable
 from torch._dynamo.variables.functions import UserFunctionVariable
 from torch._dynamo.variables.nn_module import UnspecializedNNModuleVariable
 from torch._dynamo.variables.tensor import SymNodeVariable, TensorVariable
-from torch._guards import Source
+from torch._guards import InvokeSubgraphReuseCondition, Source
 from torch._higher_order_ops.invoke_subgraph import NestedCompileRegionOptions
 from torch._ops import HigherOrderOperator
 from torch.fx.graph_module import GraphModule
@@ -5134,6 +5140,602 @@ class BaseHOPVariable(WrapHigherOrderVariable):
         )
 
 
+# ---------------------------------------------------------------------------
+# Auto-cache helpers for invoke_subgraph
+# ---------------------------------------------------------------------------
+
+
+class InputFingerprint(NamedTuple):
+    # (tag, VariableTracker) pairs for each leaf input.
+    # Tags: "tensor", "symnode", "constant", "module".
+    flat_vts: list[tuple[str, Any]]
+    # Source objects collected from leaf VTs that have a source.
+    arg_sources: list[Any]
+    # True if any leaf VT had an unsupported type for reuse.
+    has_unknown: bool = False
+    # TreeSpec from pytree.tree_flatten of the (args, kwargs) structure.
+    treespec: Any = None
+
+
+def build_input_fingerprint(
+    tx: "InstructionTranslator",
+    fn_args_vt: Any,
+    kwargs: dict[str, Any],
+) -> InputFingerprint:
+    """Build an InputFingerprint by flattening (args, kwargs) via pytree.
+
+    Uses _make_inlined(tx, pytree.tree_flatten) to recursively flatten
+    the argument structure into leaf VTs, classifying each leaf as
+    tensor/symnode/constant/module. Also records the TreeSpec so that
+    cache lookups can verify structural equivalence.
+    """
+    from torch._dynamo.variables.builder import SourcelessBuilder
+
+    container_vt = SourcelessBuilder.create(tx, (list(fn_args_vt), kwargs))
+    flat_list_vt, treespec_vt = _make_inlined(tx, pytree.tree_flatten)(
+        container_vt
+    ).unpack_var_sequence(tx)
+    treespec = treespec_vt.as_python_constant()
+
+    flat_vts: list[tuple[str, Any]] = []
+    arg_sources: list[Any] = []
+    has_unknown = False
+
+    for vt in flat_list_vt.unpack_var_sequence(tx):
+        if isinstance(vt, TensorVariable):
+            flat_vts.append(("tensor", vt))
+        elif isinstance(vt, SymNodeVariable):
+            flat_vts.append(("symnode", vt))
+        elif isinstance(vt, ConstantVariable):
+            flat_vts.append(("constant", vt))
+        elif isinstance(vt, UnspecializedNNModuleVariable):
+            flat_vts.append(("module", vt))
+        else:
+            has_unknown = True
+            continue
+
+        source = getattr(vt, "source", None)
+        if source is not None:
+            arg_sources.append(source)
+
+    return InputFingerprint(flat_vts, arg_sources, has_unknown, treespec)
+
+
+def get_flat_proxies(flat_vts: list[tuple[str, Any]]) -> list[Proxy]:
+    """Collect deduplicated proxies from tensor/symnode leaves."""
+    seen: set[torch.fx.Node] = set()
+    flat_proxies: list[Proxy] = []
+    for tag, vt in flat_vts:
+        if tag in ("tensor", "symnode"):
+            proxy = vt.as_proxy()
+            if proxy.node not in seen:
+                seen.add(proxy.node)
+                flat_proxies.append(proxy)
+    return flat_proxies
+
+
+def get_fn_id(fn_var: Any) -> int | None:
+    if isinstance(fn_var, UserFunctionVariable):
+        return id(fn_var.get_function())
+    elif isinstance(fn_var, UnspecializedNNModuleVariable):
+        return id(fn_var.value.forward.__func__)
+    return None
+
+
+def _has_mutated_vars(
+    tx: "InstructionTranslator",
+    traced_sources: set[Any],
+) -> bool:
+    """Check if any variable accessed by the subgraph has been mutated.
+
+    Guards are snapshotted on sources, but if the object behind a source has
+    been mutated (e.g. ``cfg.c = 10``), the guard would still resolve to the
+    original (pre-mutation) value because the actual Python object isn't
+    updated until codegen. We must bail out of reuse in this case.
+
+    traced_sources contains all sources accessed via VariableBuilder during
+    the subgraph trace, plus cell sources from load_cell. This covers both
+    direct inputs (arg_sources) and captured variables (freevars, cells).
+    """
+    from torch._dynamo.source import is_from_source
+
+    for var in tx.output.side_effects._get_modified_vars():
+        var_source = getattr(var, "source", None)
+        if var_source is None:
+            continue
+        for ts in traced_sources:
+            if is_from_source(ts, var_source):
+                hc_log.debug(
+                    "subgraph_reuse: mutated variable detected -- %s (source: %r)",
+                    type(var).__name__,
+                    var_source,
+                )
+                return True
+
+    return False
+
+
+def is_reuse_eligible(
+    tx: "InstructionTranslator",
+    body_r: Any,
+    fingerprint: InputFingerprint,
+    tracing_info: SubgraphTracingInfo,
+    traced_sources: set[Any] | None = None,
+) -> bool:
+    """Best-effort check for whether a traced subgraph result can be reused.
+
+    It is possible that a subgraph is morally reusable but does not fall
+    into the limited support that Dynamo has today. Current limitations:
+      - The subgraph must not have side effects.
+      - No variable accessed by the subgraph may have been mutated.
+      - Output must be a single tensor, or a tuple/list of plain tensors.
+      - All flattened inputs must be one of: tensor, symnode, constant,
+        unspecialized NN module.
+    """
+    if tracing_info.side_effect_stack is not None:
+        stack_msg = "\n" + "".join(
+            traceback.format_list(tracing_info.side_effect_stack)
+        )
+        hc_log.debug(
+            "subgraph_reuse: not eligible -- subgraph has side effects%s",
+            stack_msg,
+        )
+        return False
+
+    if traced_sources and _has_mutated_vars(tx, traced_sources):
+        return False
+
+    if isinstance(body_r, TensorVariable):
+        pass
+    elif isinstance(body_r, (TupleVariable, ListVariable)):
+        non_tensor = [
+            type(item).__name__
+            for item in body_r.items
+            if not isinstance(item, TensorVariable)
+        ]
+        if non_tensor:
+            hc_log.debug(
+                "subgraph_reuse: not eligible -- output contains non-tensor types: %s",
+                non_tensor,
+            )
+            return False
+    else:
+        hc_log.debug(
+            "subgraph_reuse: not eligible -- output type %s is not tensor or tuple/list",
+            type(body_r).__name__,
+        )
+        return False
+
+    if fingerprint.has_unknown:
+        hc_log.debug(
+            "subgraph_reuse: not eligible -- unsupported input VT types",
+        )
+        return False
+
+    return True
+
+
+def build_reuse_condition(
+    tx: "InstructionTranslator",
+    flat_vts: list[tuple[str, Any]],
+    arg_sources: list[Any],
+    traced_sources: set[Any],
+    treespec: Any = None,
+) -> InvokeSubgraphReuseCondition | None:
+    """Build an InvokeSubgraphReuseCondition from a traced subgraph.
+
+    A reuse condition is a mix of two kinds of checks:
+
+    1. **Input tag checks** (from flat_vts): For each flattened leaf VT,
+       we record its tag ("tensor", "symnode", "constant", "module") and
+       metadata (e.g. tensor shape/stride/dtype/device/requires_grad).
+       At lookup time, the treespec ensures structural equivalence, and
+       then we compare tags and metadata leaf-by-leaf.
+
+    2. **Guard checks** (from traced_sources): During the subgraph trace,
+       every source accessed via VariableBuilder is recorded. We look up
+       all guards installed on those sources (and on the arg_sources) to
+       build the set of guards that must be re-evaluated on cache hit.
+       This is more robust than guard diffing because it catches guards
+       that were already installed before the subgraph trace began.
+
+    Returns None if any guard type is unsupported.
+    """
+    from torch._guards import InvokeSubgraphReuseCondition
+
+    input_checks: list[tuple[str, Any]] = []
+    for tag, vt in flat_vts:
+        if tag == "tensor":
+            example = vt.proxy.node.meta.get("example_value", None)
+            if example is None:
+                hc_log.debug(
+                    "subgraph_reuse: cannot build condition -- tensor input has no example_value"
+                )
+                return None
+            input_checks.append(("tensor", extract_tensor_metadata(example)))
+        elif tag == "symnode":
+            input_checks.append(("symnode", vt.python_type()))
+        elif tag == "constant":
+            input_checks.append(("constant", vt.value))
+        elif tag == "module":
+            input_checks.append(("module", None))
+        else:
+            raise RuntimeError(
+                f"Unexpected input tag '{tag}' for {type(vt).__name__} -- "
+                f"is_reuse_eligible should have rejected this"
+            )
+
+    # Collect all guards for sources accessed during the subgraph trace
+    # and for the flattened arg sources.
+    all_sources = set(traced_sources)
+    all_sources.update(arg_sources)
+    all_relevant_guards: set = set()
+    for source in all_sources:
+        all_relevant_guards.update(tx.output.guards.get_guards_for_source(source))
+
+    guard_tuples: list[tuple[Any, Any, Any]] = []
+    for guard in all_relevant_guards:
+        source = guard.originating_source
+        type_str = guard.create_fn_name()
+        handler = GUARD_VALUE_DISPATCH.get(type_str)
+
+        if handler is SKIP_GUARD:
+            continue
+
+        if handler is None or isinstance(handler, UnsupportedGuardCheckSpec):
+            raise RuntimeError(
+                f"subgraph_reuse: unsupported guard type '{type_str}' on source '{source.name}'"
+            )
+
+        try:
+            value = tx.output.resolve_source_value(source)
+        except Exception:
+            raise RuntimeError(
+                f"subgraph_reuse: failed to resolve source '{source.name}' for {type_str} guard"
+            ) from None
+
+        # TODO(anijain2305): vLLM workaround -- skip CONSTANT_MATCH on
+        # strings. Re-evaluate once vLLM migrates off this pattern.
+        if type_str == "CONSTANT_MATCH" and isinstance(value, str):
+            continue
+
+        expected = handler.get_metadata_fn(guard, value)
+        guard_tuples.append((source, handler, expected))
+
+    hc_log.debug("Number of guards %s", len(guard_tuples))
+
+    return InvokeSubgraphReuseCondition(
+        input_checks=input_checks,
+        guards=guard_tuples,
+        treespec=treespec,
+        traced_sources=traced_sources,
+    )
+
+
+def is_reusable(
+    tx: "InstructionTranslator",
+    condition: "InvokeSubgraphReuseCondition",
+    flat_vts: list[tuple[str, Any]],
+    new_arg_sources: list[Any],
+    cached_entry: Any,
+    treespec: Any = None,
+) -> bool:
+    """Check if a cached subgraph can be reused for the current call.
+
+    Two-phase check:
+    (1) Verify that intermediates (tensor metadata, symnode types, constant
+        values) match the cached input_checks — these are lightweight
+        structural comparisons that don't require source resolution.
+    (2) Build a source replacement mapping (old sources → new sources) and
+        re-evaluate the snapshotted guards under the new sources.
+    """
+    # Structural check: treespec must match first.
+    if condition.treespec is not None and treespec != condition.treespec:
+        hc_log.debug(
+            "subgraph_reuse: reuse failed -- treespec mismatch",
+        )
+        return False
+
+    # Input count, tags, and metadata must match.
+    # Tensor metadata (shape, stride, dtype, device, requires_grad) is checked
+    # here because TENSOR_MATCH guards for subgraph inputs typically already
+    # exist in the outer graph before tracing and thus won't appear in the
+    # guard delta.
+    if len(condition.input_checks) != len(flat_vts):
+        hc_log.debug(
+            "subgraph_reuse: reuse failed -- input count mismatch: cached %d vs current %d",
+            len(condition.input_checks),
+            len(flat_vts),
+        )
+        return False
+
+    for i, ((cached_tag, cached_val), (cur_tag, cur_vt)) in enumerate(
+        zip(condition.input_checks, flat_vts)
+    ):
+        if cached_tag != cur_tag:
+            hc_log.debug(
+                "subgraph_reuse: reuse failed -- input %d tag mismatch: cached '%s' vs current '%s'",
+                i,
+                cached_tag,
+                cur_tag,
+            )
+            return False
+        if cached_tag == "tensor":
+            example = cur_vt.proxy.node.meta.get("example_value", None)
+            if example is None:
+                hc_log.debug(
+                    "subgraph_reuse: reuse failed -- input %d tensor has no example_value",
+                    i,
+                )
+                return False
+            cur_meta = extract_tensor_metadata(example)
+            if cur_meta != cached_val:
+                hc_log.debug(
+                    "subgraph_reuse: reuse failed -- input %d tensor metadata mismatch",
+                    i,
+                )
+                return False
+        elif cached_tag == "symnode":
+            if cur_vt.python_type() != cached_val:
+                return False
+        elif cached_tag == "constant":
+            if cur_vt.value != cached_val:
+                return False
+
+    source_replacement = {
+        old: new
+        for old, new in zip(cached_entry.arg_sources, new_arg_sources)
+        if old != new
+    }
+
+    # If no sources changed, all guards were already checked during the
+    # original trace and will trivially pass again.
+    if not source_replacement:
+        return True
+
+    def replacement_fn(s: Any) -> Any:
+        return source_replacement.get(s, s)
+
+    # Shared resolution context so source.get_value memoizes intermediate
+    # results (e.g. common base sources) across all guards in this check.
+    resolve_globals = {
+        "G": tx.output.root_tx.f_globals,
+        "L": tx.output.root_tx.f_locals,
+    }
+    resolve_locals: dict = {}
+    resolve_cache: dict = {}
+
+    for source, handler, expected in condition.guards:
+        new_source = source.clone(replacement_fn)
+        # Source unchanged after replacement — guard already passed during
+        # the original trace, skip re-evaluation.
+        if new_source == source:
+            continue
+
+        try:
+            value = new_source.get_value(resolve_globals, resolve_locals, resolve_cache)
+        except Exception:
+            hc_log.debug(
+                "subgraph_reuse: reuse failed -- cannot resolve source '%s'",
+                new_source.name,
+            )
+            return False
+
+        if not handler.eval_fn(value, expected):
+            hc_log.debug(
+                "subgraph_reuse: reuse failed -- guard on '%s': expected %s, got mismatch",
+                new_source.name,
+                expected,
+            )
+            return False
+
+    return True
+
+
+def find_reuse_match(
+    tx: "InstructionTranslator",
+    fn_var: Any,
+    flat_vts: list[tuple[str, Any]],
+    new_arg_sources: list[Any],
+    treespec: Any = None,
+) -> Any:
+    from torch._guards import InvokeSubgraphCache
+
+    invoke_subgraph_cache = tx.output.tracing_context.hop_dispatch_set_cache.get_cache(
+        torch._higher_order_ops.invoke_subgraph
+    )
+    if not isinstance(invoke_subgraph_cache, InvokeSubgraphCache):
+        return None
+    fn_id = get_fn_id(fn_var)
+    if fn_id is None:
+        return None
+
+    def evaluator(
+        cond: "InvokeSubgraphReuseCondition", entry: Any
+    ) -> bool:
+        if _has_mutated_vars(tx, cond.traced_sources):
+            return False
+        return is_reusable(tx, cond, flat_vts, new_arg_sources, entry, treespec)
+
+    return invoke_subgraph_cache.find_reuse_entry(fn_id, evaluator)
+
+
+def save_reuse_entry(
+    tx: "InstructionTranslator",
+    fn_var: Any,
+    fingerprint: InputFingerprint,
+    body_name: str,
+    body_gmod: Any,
+    config: Any,
+    p_args: tuple,
+    body_r: Any,
+    example_value: Any,
+    condition: "InvokeSubgraphReuseCondition",
+) -> None:
+    from torch._guards import InvokeSubgraphCache, InvokeSubgraphReuseEntry
+
+    invoke_subgraph_cache = tx.output.tracing_context.hop_dispatch_set_cache.get_cache(
+        torch._higher_order_ops.invoke_subgraph
+    )
+    if not isinstance(invoke_subgraph_cache, InvokeSubgraphCache):
+        return
+
+    fn_id = get_fn_id(fn_var)
+    if fn_id is None:
+        return
+
+    freevar_mapping = build_freevar_mapping(p_args, fingerprint.flat_vts)
+    single_tensor_output = isinstance(body_r, TensorVariable)
+
+    # Cache output tensor metadata so we can construct fresh FakeTensors on
+    # cache hit without re-running the subgraph. This is safe because
+    # invoke_subgraph does not support aliasing between inputs and outputs
+    # (speculate_subgraph will fail if that happens).
+    # example_value may contain SymInts (e.g. shape values for backward);
+    # only record metadata for actual tensors.
+    output_metadata = [
+        (t.shape, t.stride(), t.dtype, t.device, t.requires_grad)
+        for t in example_value
+        if isinstance(t, torch.Tensor)
+    ]
+
+    entry = InvokeSubgraphReuseEntry(
+        body_name=body_name,
+        body_gmod=body_gmod,
+        config=config,
+        freevar_mapping=freevar_mapping,
+        single_tensor_output=single_tensor_output,
+        output_metadata=output_metadata,
+        # Record arg sources so that on cache hit we can build a
+        # source replacement mapping (old sources → new sources) to
+        # rewrite captured variable sources for the current invocation.
+        arg_sources=fingerprint.arg_sources,
+    )
+    invoke_subgraph_cache.add_reuse_entry(fn_id, condition, entry)
+
+
+def stamp_out_subgraph(
+    tx: "InstructionTranslator",
+    fingerprint: InputFingerprint,
+    cached: Any,
+) -> Any:
+    """Emit a new invoke_subgraph call by stamping out a cached subgraph.
+
+    Sources in the cached entry are parameterized: they refer to the original
+    call's sources and must be rewritten to the current call's sources via
+    source replacement before we can look up or create the corresponding
+    graph placeholders.
+    """
+    from torch._dynamo.variables.builder import VariableBuilder
+
+    flat_proxies = get_flat_proxies(fingerprint.flat_vts)
+    new_arg_sources = fingerprint.arg_sources
+
+    source_replacement = {
+        old: new for old, new in zip(cached.arg_sources, new_arg_sources) if old != new
+    }
+
+    # TODO: consider extracting this placeholder-by-source lookup into a
+    # utility on OutputGraph so other features can reuse it.
+    existing_source_to_node: dict = {}
+    for node in tx.output.graph.find_nodes(op="placeholder"):
+        ga = node.meta.get("grapharg", None)
+        if ga is not None and ga.source is not None:
+            existing_source_to_node[ga.source] = node
+
+    new_lifted_args = []
+    for user_arg_idx, data in cached.freevar_mapping:
+        if user_arg_idx >= 0:
+            new_lifted_args.append(flat_proxies[user_arg_idx])
+        else:
+            source = data
+            new_source = source
+            if source_replacement:
+                new_source = source.clone(lambda s: source_replacement.get(s, s))
+
+            if new_source in existing_source_to_node:
+                node = existing_source_to_node[new_source]
+                new_lifted_args.append(torch.fx.Proxy(node, tx.output.current_tracer))
+            else:
+                value = tx.output.resolve_source_value(new_source)
+                vt = VariableBuilder(tx, new_source)(value)
+                new_lifted_args.append(vt.as_proxy())
+
+    assert tx.fake_mode is not None
+    with tx.fake_mode:
+        example_value = tuple(
+            torch.empty_strided(
+                shape,
+                stride,
+                dtype=dtype,
+                device=device,
+                requires_grad=req_grad,
+            )
+            for shape, stride, dtype, device, req_grad in cached.output_metadata
+        )
+
+    body_node = make_attr(tx, cached.body_name)
+    p_args = (body_node, cached.body_name, *new_lifted_args)
+    flat_variable = add_call_function(
+        tx,
+        torch._higher_order_ops.invoke_subgraph,
+        tuple(p_args),
+        {},
+        example_value,
+        cached.config,
+    )
+
+    # Validate output structure matches what was cached
+    if cached.single_tensor_output:
+        assert isinstance(flat_variable.items[0], TensorVariable), (
+            f"Expected tensor output but got {type(flat_variable.items[0]).__name__}"
+        )
+        return flat_variable.items[0]
+    return flat_variable
+
+
+def build_freevar_mapping(
+    p_args: tuple, flat_vts: list[tuple[str, Any]]
+) -> list[tuple[int, Any]]:
+    """Build a mapping that records the origin of each lifted arg for a subgraph.
+
+    On a cache hit, we stamp out a new invoke_subgraph call and need to
+    reconstruct its argument list in the correct order. Each lifted arg
+    (p_args[2:], skipping body_node and body_name) comes from one of:
+
+    (1) A user argument (intermediate activation or explicit input) that
+        appears in flat_vts — we record its index so we can look it up
+        from the new call's flat proxies.
+    (2) A sourceful captured variable (e.g. a weight or parameter) — we
+        record its Source so we can re-derive the correct proxy on cache
+        hit via source replacement.
+    """
+    proxy_node_to_idx: dict[torch.fx.Node, int] = {}
+    idx = 0
+    for tag, vt in flat_vts:
+        if tag in ("tensor", "symnode"):
+            node = vt.as_proxy().node
+            if node not in proxy_node_to_idx:
+                proxy_node_to_idx[node] = idx
+                idx += 1
+
+    freevar_mapping: list[tuple[int, Any]] = []
+    for outer_proxy in p_args[2:]:
+        matched_idx = proxy_node_to_idx.get(outer_proxy.node, -1)
+        if matched_idx >= 0:
+            freevar_mapping.append((matched_idx, None))
+        else:
+            grapharg = outer_proxy.node.meta.get("grapharg", None)
+            source = grapharg.source if grapharg is not None else None
+            assert source is not None, (
+                f"Freevar has no source: node.op={outer_proxy.node.op} "
+                f"node.name={outer_proxy.node.name} -- this likely means a "
+                f"function argument was not included in the proxy matching"
+            )
+            freevar_mapping.append((-1, source))
+    return freevar_mapping
+
+
 class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
     _HOP_NAME = "torch.ops.higher_order.invoke_subgraph"
     _ALLOW_FALLBACK_TO_EAGER = False
@@ -5220,6 +5822,8 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
         args: Sequence[VariableTracker],
         kwargs: dict[str, VariableTracker],
     ) -> VariableTracker:
+        from torch._dynamo.utils import dynamo_timed
+
         fn_var = args[0]
         fn_args_vt = args[1:]
 
@@ -5235,17 +5839,42 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
                 )
                 raise
 
+        reuse = not tx.output.export
+
+        # Auto-cache lookup
+        if reuse:
+            with dynamo_timed("invoke_subgraph_reuse_lookup"):
+                fingerprint = build_input_fingerprint(tx, fn_args_vt, kwargs)
+                match = find_reuse_match(
+                    tx,
+                    fn_var,
+                    fingerprint.flat_vts,
+                    fingerprint.arg_sources,
+                    fingerprint.treespec,
+                )
+            if match is not None:
+                hc_log.debug(
+                    "subgraph_reuse: cache hit for '%s', reusing subgraph '%s'",
+                    fn_var,
+                    match.body_name,
+                )
+                with dynamo_timed("invoke_subgraph_reuse_stamp_out"):
+                    return stamp_out_subgraph(tx, fingerprint, match)
+
         assert self._HOP_NAME is not None
-        (
-            p_args,
-            p_kwargs,
-            example_value,
-            body_r,
-            body_gmod,
-            body_name,
-            body_graph_output_vts,
-            tracing_info,
-        ) = self.create_wrapped_node(tx, fn_var, fn_args_vt, kwargs, self._HOP_NAME)
+        with dynamo_timed("invoke_subgraph_trace"):
+            (
+                p_args,
+                p_kwargs,
+                example_value,
+                body_r,
+                body_gmod,
+                body_name,
+                body_graph_output_vts,
+                tracing_info,
+            ) = self.create_wrapped_node(
+                tx, fn_var, fn_args_vt, kwargs, self._HOP_NAME
+            )
 
         if len(p_kwargs) > 0:
             unimplemented(
@@ -5257,6 +5886,7 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
                 ],
             )
 
+        # Store config in the body graph module meta
         if isinstance(config, NestedCompileRegionOptions):
             body_gmod.meta["nested_region_config"] = config
 
@@ -5265,6 +5895,32 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
             body_name,
             *p_args[1:],
         )
+
+        # Subgraph reuse: save entry for future cache hits
+        if reuse:
+            fingerprint = build_input_fingerprint(tx, fn_args_vt, kwargs)
+            traced_sources = tracing_info.traced_sources
+            if is_reuse_eligible(tx, body_r, fingerprint, tracing_info, traced_sources):
+                condition = build_reuse_condition(
+                    tx,
+                    fingerprint.flat_vts,
+                    fingerprint.arg_sources,
+                    traced_sources,
+                    fingerprint.treespec,
+                )
+                if condition is not None:
+                    save_reuse_entry(
+                        tx,
+                        fn_var,
+                        fingerprint,
+                        body_name,
+                        body_gmod,
+                        config,
+                        p_args,
+                        body_r,
+                        example_value,
+                        condition,
+                    )
 
         return _call_function_with_auto_output_flattening(  # type: ignore[return-value]
             tx,

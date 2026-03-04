@@ -2470,8 +2470,8 @@ class GraphModule(torch.nn.Module):
         invoke_subgraph = torch.ops.higher_order.invoke_subgraph(subgraph_0, 'subgraph_0', x, y);  subgraph_0 = x = None
         getitem_4: "f32[5]" = invoke_subgraph[0];  invoke_subgraph = None
 
-        subgraph_1 = self.subgraph_1
-        invoke_subgraph_1 = torch.ops.higher_order.invoke_subgraph(subgraph_1, 'subgraph_1', getitem_4, y);  subgraph_1 = getitem_4 = y = None
+        subgraph_1 = self.subgraph_0
+        invoke_subgraph_1 = torch.ops.higher_order.invoke_subgraph(subgraph_1, 'subgraph_0', getitem_4, y);  subgraph_1 = getitem_4 = y = None
         getitem_5: "f32[5]" = invoke_subgraph_1[0];  invoke_subgraph_1 = None
         return (getitem_5,)
 
@@ -2480,15 +2480,6 @@ class GraphModule(torch.nn.Module):
             o: "f32[5]" = torch.zeros_like(x)
 
             triton_kernel_wrapper_mutation = torch.ops.higher_order.triton_kernel_wrapper_mutation(kernel_idx = 0, constant_args_idx = 0, grid = [(5, 1, 1)], tma_descriptor_metadata = {}, kwargs = {'in_ptr0': x, 'in_ptr1': y, 'out_ptr': o});  x = y = triton_kernel_wrapper_mutation = None
-
-            sin: "f32[5]" = o.sin();  o = None
-            return (sin,)
-
-    class subgraph_1(torch.nn.Module):
-        def forward(self, z: "f32[5]", y: "f32[5]"):
-            o: "f32[5]" = torch.zeros_like(z)
-
-            triton_kernel_wrapper_mutation = torch.ops.higher_order.triton_kernel_wrapper_mutation(kernel_idx = 0, constant_args_idx = 1, grid = [(5, 1, 1)], tma_descriptor_metadata = {}, kwargs = {'in_ptr0': z, 'in_ptr1': y, 'out_ptr': o});  z = y = triton_kernel_wrapper_mutation = None
 
             sin: "f32[5]" = o.sin();  o = None
             return (sin,)
@@ -3099,6 +3090,310 @@ class GraphModule(torch.nn.Module):
                 return (getitem, getitem_1)
 """,
             )
+
+
+@skipIfTorchDynamo("Not a torch._dynamo test")
+class TestInvokeSubgraphReuse(TestCase):
+    def test_subgraph_reuse_basic(self):
+        @nested_compile_region()
+        def gn(x, y):
+            return torch.mul(x, y)
+
+        def fn(x, y):
+            a = gn(x, y)
+            b = gn(x, y)
+            return a + b
+
+        x = torch.randn(8, requires_grad=True)
+        y = torch.randn(8, requires_grad=True)
+        ref = fn(x, y)
+
+        x_clone = x.detach().clone().requires_grad_(True)
+        y_clone = y.detach().clone().requires_grad_(True)
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x_clone, y_clone)
+
+        ref.sum().backward()
+        res.sum().backward()
+
+        self.assertEqual(ref, res)
+        self.assertEqual(x.grad, x_clone.grad)
+        self.assertEqual(y.grad, y_clone.grad)
+
+    def test_subgraph_reuse_skips_tracing(self):
+        @nested_compile_region()
+        def gn(x, y):
+            return torch.mul(x, y)
+
+        def fn(x, y):
+            a = gn(x, y)
+            b = gn(x, y)
+            c = gn(x, y)
+            return a + b + c
+
+        x = torch.randn(8)
+        y = torch.randn(8)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            torch.compile(fn, backend="aot_eager", fullgraph=True)(x, y)
+
+        self.assertEqual(call_count, 1)
+
+    def test_subgraph_reuse_different_shapes(self):
+        @nested_compile_region()
+        def gn(x):
+            return x.sin()
+
+        def fn(x, y):
+            a = gn(x)
+            b = gn(y)
+            return a.sum() + b.sum()
+
+        x = torch.randn(4)
+        y = torch.randn(8)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x, y)
+
+        # Different shapes → two separate traces
+        self.assertEqual(call_count, 2)
+        self.assertEqual(res, fn(x, y))
+
+    def test_subgraph_reuse_module(self):
+        class Mod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.c = 5
+
+            @nested_compile_region()
+            def forward(self, x, y):
+                return torch.mul(x, y).sin() + self.c
+
+        mod = Mod()
+
+        def fn(x, y):
+            return mod(x, y) + mod(x, y)
+
+        x = torch.randn(8, requires_grad=True)
+        y = torch.randn(8, requires_grad=True)
+        ref = fn(x, y)
+
+        x_clone = x.detach().clone().requires_grad_(True)
+        y_clone = y.detach().clone().requires_grad_(True)
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x_clone, y_clone)
+
+        ref.sum().backward()
+        res.sum().backward()
+
+        self.assertEqual(ref, res)
+        self.assertEqual(x.grad, x_clone.grad)
+        self.assertEqual(y.grad, y_clone.grad)
+
+    def test_subgraph_reuse_free_function_with_module_arg(self):
+        class Block(torch.nn.Module):
+            def __init__(self, scale):
+                super().__init__()
+                self.linear = torch.nn.Linear(8, 8, bias=False)
+                torch.nn.init.constant_(self.linear.weight, scale)
+
+        @nested_compile_region()
+        def apply_block(mod, x):
+            return mod.linear(x).relu()
+
+        block1 = Block(1.0)
+        block2 = Block(2.0)
+
+        def fn(x):
+            a = apply_block(block1, x)
+            b = apply_block(block2, x)
+            return a + b
+
+        x = torch.randn(4, 8, requires_grad=True)
+        ref = fn(x)
+
+        x_clone = x.detach().clone().requires_grad_(True)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x_clone)
+
+        # block1 and block2 have the same subgraph structure (Linear + relu).
+        # Source replacement remaps captured vars, so one cache entry suffices.
+        self.assertEqual(call_count, 1)
+
+        ref.sum().backward()
+        res.sum().backward()
+
+        self.assertEqual(ref, res)
+        self.assertEqual(x.grad, x_clone.grad)
+
+    def test_subgraph_reuse_tuple_output(self):
+        @nested_compile_region()
+        def gn(x, y):
+            return torch.sin(x), torch.cos(y)
+
+        def fn(x, y):
+            a1, a2 = gn(x, y)
+            b1, b2 = gn(x, y)
+            return a1 + b1, a2 + b2
+
+        x = torch.randn(8, requires_grad=True)
+        y = torch.randn(8, requires_grad=True)
+        ref = fn(x, y)
+
+        x_clone = x.detach().clone().requires_grad_(True)
+        y_clone = y.detach().clone().requires_grad_(True)
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x_clone, y_clone)
+
+        sum(r.sum() for r in ref).backward()
+        sum(r.sum() for r in res).backward()
+
+        self.assertEqual(ref[0], res[0])
+        self.assertEqual(ref[1], res[1])
+        self.assertEqual(x.grad, x_clone.grad)
+        self.assertEqual(y.grad, y_clone.grad)
+
+    def test_subgraph_reuse_mutated_attribute(self):
+        """Reuse must be skipped when a captured attribute is mutated between calls."""
+
+        class Mod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.c = 5
+
+            @nested_compile_region()
+            def forward(self, x):
+                return x * self.c
+
+        mod = Mod()
+
+        def fn(x):
+            a = mod(x)
+            mod.c = 10
+            b = mod(x)
+            return a + b
+
+        x = torch.randn(8)
+        # Eager: first call uses c=5, then c is set to 10, second call uses c=10.
+        # Result = x*5 + x*10 = x*15.
+        mod.c = 5
+        ref = fn(x)
+        self.assertEqual(ref, x * 15)
+
+        # Compiled should produce the same result. If reuse incorrectly
+        # fires, both calls would use c=5, giving x*10 instead of x*15.
+        mod.c = 5
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x)
+        self.assertEqual(ref, res)
+
+    def test_subgraph_reuse_pre_existing_attr_guard(self):
+        """Reuse must account for guards installed before the subgraph trace.
+
+        Using ``block.c`` in a conditional before the nested compile region
+        call installs an EQUALS_MATCH guard on ``block.c`` before
+        guards_before is snapshotted.  When the subgraph trace accesses the
+        same attribute, Guard deduplication prevents a second copy from being
+        added, so the guard won't appear in the delta.  And because
+        arg_sources only contains the module source (not the attr source),
+        get_guards_for_source won't find it either.  Without proper handling,
+        the second call with a different module (different ``c``) would
+        incorrectly reuse the first cached subgraph.
+        """
+
+        class Block(torch.nn.Module):
+            def __init__(self, c):
+                super().__init__()
+                self.c = c
+
+        @nested_compile_region()
+        def apply_block(mod, x):
+            return x * mod.c
+
+        block1 = Block(5)
+        block2 = Block(10)
+
+        def fn(x):
+            # The conditional installs EQUALS_MATCH on block1.c *before*
+            # the subgraph trace snapshots guards_before.
+            if block1.c == 5:
+                a = apply_block(block1, x)
+            else:
+                a = x
+            if block2.c == 10:
+                b = apply_block(block2, x)
+            else:
+                b = x
+            return a + b
+
+        x = torch.randn(8)
+        ref = fn(x)
+        self.assertEqual(ref, x * 5 + x * 10)
+
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x)
+        self.assertEqual(ref, res)
+
+    def test_subgraph_reuse_mutated_captured_variable(self):
+        """Reuse must be skipped when a captured (non-input) variable is mutated."""
+
+        class Config:
+            def __init__(self, c):
+                self.c = c
+
+        cfg = Config(5)
+
+        @nested_compile_region()
+        def apply(x):
+            # cfg is captured from closure, not an explicit input
+            return x * cfg.c
+
+        def fn(x):
+            a = apply(x)
+            cfg.c = 10
+            b = apply(x)
+            return a + b
+
+        x = torch.randn(8)
+        cfg.c = 5
+        ref = fn(x)
+        self.assertEqual(ref, x * 15)
+
+        cfg.c = 5
+        res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x)
+        self.assertEqual(ref, res)
 
 
 @skipIfTorchDynamo("Not a torch._dynamo test")
