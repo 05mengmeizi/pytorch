@@ -618,7 +618,10 @@ void NCCLComm::printMemoryStats() {
   C10D_NCCL_CHECK(ncclCommMemStats(comm, ncclStatGpuMemSuspended, &suspended), std::nullopt);
   C10D_NCCL_CHECK(ncclCommMemStats(comm, ncclStatGpuMemPersist, &persist), std::nullopt);
   C10D_NCCL_CHECK(ncclCommMemStats(comm, ncclStatGpuMemTotal, &total), std::nullopt);
-  std::cout << "GPU memory stats (Bytes): suspend=" << suspend << ", suspended=" << suspended << ", persist=" << persist << ", total=" << total << "\n";
+  fmt::print(
+    "GPU memory stats (Bytes): suspend={}, suspended={}, persist={}, total={}\n",
+    suspend, suspended, persist, total
+  );
 }
 
 #if (defined(IS_NCCLX) || defined(USE_ROCM)) && defined(NCCL_COMM_DUMP)
