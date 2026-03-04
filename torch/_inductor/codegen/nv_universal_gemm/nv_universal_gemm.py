@@ -28,6 +28,24 @@ from torch._inductor.utils import ensure_nv_universal_gemm_available
 from torch._logging import getArtifactLogger
 
 
+def _ensure_fp4_dtype_registered():
+    """Patch cutlass_api to handle torch.float4_e2m1fn_x2 if not natively supported."""
+    import cutlass
+    import cutlass_api.utils
+
+    try:
+        cutlass_api.utils.cutlass_type_from_torch_type(torch.float4_e2m1fn_x2)
+    except KeyError:
+        _orig = cutlass_api.utils.cutlass_type_from_torch_type
+
+        def _patched(dtype):
+            if dtype == torch.float4_e2m1fn_x2:
+                return cutlass.Float4E2M1FN
+            return _orig(dtype)
+
+        cutlass_api.utils.cutlass_type_from_torch_type = _patched
+
+
 log = getArtifactLogger(__name__, "output_code")
 
 
@@ -342,6 +360,11 @@ def _add_nv_gemm_choices_impl(
     from torch._inductor.codegen.nv_universal_gemm.kernel_cache import (
         get_compatible_kernels,
     )
+
+    # NOTE: Ensure cutlass_api can handle FP4 dtype before creating GemmArguments.
+    # cutlass_api doesn't natively map torch.float4_e2m1fn_x2 to cutlass.Float4E2M1FN,
+    # so we patch it here. This should be removed once cutlass_api adds native support.
+    _ensure_fp4_dtype_registered()
 
     # Create dummy tensors for cutlass_api's supports() checks
     dummy_tensors = [
