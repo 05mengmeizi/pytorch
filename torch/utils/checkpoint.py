@@ -1275,8 +1275,9 @@ class SelectiveCheckpointContext:
         >>>     context_fn=context_fn,
         >>> )
     """
-    def __init__(self, *, is_recompute) -> None:
+    def __init__(self, *, is_recompute, op_output=None) -> None:
         self.is_recompute = is_recompute
+        self.op_output = op_output
 
 
 class CheckpointPolicy(enum.Enum):
@@ -1338,20 +1339,21 @@ class _CachingTorchDispatchMode(TorchDispatchMode):
         self.storage = storage
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        if func in SAC_IGNORED_OPS:
-            return func(*args, **kwargs)
-
         kwargs = {} if kwargs is None else kwargs
-        policy = self.policy_fn(SelectiveCheckpointContext(is_recompute=False),
-                                func, *args, **kwargs)
-        if isinstance(policy, bool):
-            policy = _policy_from_bool(policy)
-
         is_compiling = _is_compiling(func, args, kwargs)
 
-        if is_compiling:
-            # Overwrite each node's "recompute" tag to add in the user annotation.
-            fx_traceback.current_meta["recompute"] = policy
+        # SAC_IGNORED_OPS are not user-visible ops (e.g. detach), always
+        # recomputable. During compile, mark them explicitly so the remat
+        # chain isn't broken.
+        if func in SAC_IGNORED_OPS:
+            if is_compiling:
+                fx_traceback.current_meta["recompute"] = CheckpointPolicy.PREFER_RECOMPUTE
+            return func(*args, **kwargs)
+
+        # Snapshot graph length before the op so we can tag new nodes after.
+        from torch.fx.experimental.proxy_tensor import get_proxy_mode
+        proxy_mode = get_proxy_mode()
+        graph_len_before = len(list(proxy_mode.tracer.graph.nodes)) if proxy_mode is not None else None
 
         out = func(*args, **kwargs)
 
@@ -1362,6 +1364,19 @@ class _CachingTorchDispatchMode(TorchDispatchMode):
             any_ret_has_alias_info = False
         else:
             any_ret_has_alias_info = any(ret.alias_info is not None for ret in func._schema.returns)
+
+        # Call policy after the op so inner modes (e.g. a naming mode) have
+        # had a chance to annotate outputs before the policy inspects them.
+        policy = self.policy_fn(SelectiveCheckpointContext(is_recompute=False, op_output=out),
+                                func, *args, **kwargs)
+        if isinstance(policy, bool):
+            policy = _policy_from_bool(policy)
+
+        if is_compiling:
+            # Tag all FX nodes added by this op with the policy.
+            if proxy_mode is not None and graph_len_before is not None:
+                for node in list(proxy_mode.tracer.graph.nodes)[graph_len_before:]:
+                    node.meta["recompute"] = policy
 
         if policy in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE) or is_compiling:
             self.storage[func].append(tree_map(lambda x: _VersionWrapper(_maybe_detach(x, any_ret_has_alias_info)), out))

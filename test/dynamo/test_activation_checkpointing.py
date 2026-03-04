@@ -2130,7 +2130,6 @@ class GraphModule(torch.nn.Module):
         with torch._dynamo.config.patch(capture_profiler_record_function=True):
             self._validate(fn, backend, x, y)
 
-
 class RematerializeACNodesPassTests(torch._dynamo.test_case.TestCase):
     """Tests for AC reordering optimization in full graph (forward+backward in one graph)."""
 

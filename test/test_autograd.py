@@ -20,7 +20,7 @@ import unittest
 import uuid
 import warnings
 import weakref
-from collections import OrderedDict
+from collections import defaultdict, OrderedDict
 from copy import deepcopy
 from functools import partial, reduce
 from itertools import product
@@ -86,6 +86,7 @@ from torch.testing._internal.common_utils import (
 )
 from torch.utils._mode_utils import no_dispatch
 from torch.utils._python_dispatch import TorchDispatchMode
+from torch.utils.weak import WeakTensorKeyDictionary
 from torch.utils.checkpoint import (
     checkpoint,
     checkpoint_sequential,
@@ -8425,6 +8426,75 @@ for shape in [(1,), ()]:
         with self.assertRaisesRegex(RuntimeError, "can only be accessed once"):
             y.sum().backward()
 
+    def test_custom_function_needs_input_grad_partial_backward(self):
+        # Test that ctx.needs_input_grad reflects which gradients are actually
+        # needed during a partial backward pass (when inputs= is specified).
+        # See https://github.com/pytorch/pytorch/issues/174017
+        needs_input_grad_values = []
+
+        class MyMatmul(Function):
+            @staticmethod
+            def forward(ctx, a, b):
+                ctx.save_for_backward(a, b)
+                return torch.matmul(a, b)
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                a, b = ctx.saved_tensors
+                needs_input_grad_values.append(tuple(ctx.needs_input_grad))
+
+                grad_a = grad_b = None
+                if ctx.needs_input_grad[0]:
+                    grad_a = torch.matmul(grad_output, b.transpose(-1, -2))
+                if ctx.needs_input_grad[1]:
+                    grad_b = torch.matmul(a.transpose(-1, -2), grad_output)
+                return grad_a, grad_b
+
+        # Test 1: Request gradient only for first input
+        a1 = torch.randn(2, 3, requires_grad=True)
+        b1 = torch.randn(3, 4, requires_grad=True)
+        out1 = MyMatmul.apply(a1, b1)
+        torch.autograd.backward(out1.sum(), inputs=[a1])
+        self.assertEqual(needs_input_grad_values[-1], (True, False))
+
+        # Test 2: Request gradient only for second input
+        a2 = torch.randn(2, 3, requires_grad=True)
+        b2 = torch.randn(3, 4, requires_grad=True)
+        out2 = MyMatmul.apply(a2, b2)
+        torch.autograd.backward(out2.sum(), inputs=[b2])
+        self.assertEqual(needs_input_grad_values[-1], (False, True))
+
+        # Test 3: Request gradients for both inputs
+        a3 = torch.randn(2, 3, requires_grad=True)
+        b3 = torch.randn(3, 4, requires_grad=True)
+        out3 = MyMatmul.apply(a3, b3)
+        torch.autograd.backward(out3.sum(), inputs=[a3, b3])
+        self.assertEqual(needs_input_grad_values[-1], (True, True))
+
+        # Test 4: Regular backward (no inputs specified)
+        a4 = torch.randn(2, 3, requires_grad=True)
+        b4 = torch.randn(3, 4, requires_grad=True)
+        out4 = MyMatmul.apply(a4, b4)
+        out4.sum().backward()
+        self.assertEqual(needs_input_grad_values[-1], (True, True))
+
+        # Test 5: Input that doesn't require grad should still be False
+        a5 = torch.randn(2, 3, requires_grad=True)
+        b5 = torch.randn(3, 4, requires_grad=False)
+        out5 = MyMatmul.apply(a5, b5)
+        torch.autograd.backward(out5.sum(), inputs=[a5])
+        self.assertEqual(needs_input_grad_values[-1], (True, False))
+
+        # Test 6: Reuse graph with retain_graph=True to show needs_input_grad
+        # can differ across backward passes on the same graph.
+        a6 = torch.randn(2, 3, requires_grad=True)
+        b6 = torch.randn(3, 4, requires_grad=True)
+        out6 = MyMatmul.apply(a6, b6)
+        torch.autograd.backward(out6.sum(), inputs=[b6], retain_graph=True)
+        self.assertEqual(needs_input_grad_values[-1], (False, True))
+        torch.autograd.backward(out6.sum(), inputs=[a6, b6])
+        self.assertEqual(needs_input_grad_values[-1], (True, True))
+
     def test_autograd_node_isinstance(self):
         # Node is a "virtual" base class of codegen'd nodes. This means that
         # isinstance and issubclass are overridden, but mro is unchanged
@@ -14863,6 +14933,60 @@ class TestNestedCheckpoint(TestCase):
         self.assertEqual(counter[0], 1)
 
 
+def _make_counter_op(name):
+    counts = [0]
+
+    @torch.library.custom_op(f"test_ckpt::{name}", mutates_args=())
+    def op(x: torch.Tensor) -> torch.Tensor:
+        counts[0] += 1
+        return x.sin()
+
+    @op.register_fake
+    def _(x):
+        return torch.empty_like(x)
+
+    def setup_context(ctx, inputs, output):
+        ctx.save_for_backward(inputs[0])
+
+    def backward(ctx, grad):
+        (x,) = ctx.saved_tensors
+        return grad * x.cos()
+
+    op.register_autograd(backward, setup_context=setup_context)
+
+    return op, counts
+
+
+class _AutoNamingMode(TorchDispatchMode):
+    """Test helper: names output tensors as (fqn, op_name, count, output_idx)."""
+    def __init__(self):
+        from torch.utils.module_tracker import ModuleTracker
+        self._tracker = ModuleTracker()
+        self._func_counter: dict = defaultdict(int)
+        self.names = WeakTensorKeyDictionary()
+    def __enter__(self):
+        self._tracker.__enter__()
+        return super().__enter__()
+    def __exit__(self, *args):
+        self._tracker.__exit__(*args)
+        return super().__exit__(*args)
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        out = func(*args, **(kwargs or {}))
+        parents = self._tracker.parents - {"Global"}
+        fqn = max(parents, key=len) if parents else "Global"
+        op_name = func.__name__.split(".")[0] if hasattr(func, "__name__") else str(func)
+        key = (fqn, func)
+        count = self._func_counter[key]
+        self._func_counter[key] += 1
+        if isinstance(out, torch.Tensor):
+            self.names[out] = (fqn, op_name, count, 0)
+        elif isinstance(out, (tuple, list)):
+            for i, o in enumerate(out):
+                if isinstance(o, torch.Tensor):
+                    self.names[o] = (fqn, op_name, count, i)
+        return out
+
+
 class TestSelectiveActivationCheckpoint(TestCase):
     @unittest.skipIf(not TEST_CUDA, "requires CUDA")
     def test_flops_and_mem(self):
@@ -15262,9 +15386,6 @@ class TestSelectiveActivationCheckpoint(TestCase):
 
     @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
     def test_can_only_trigger_recompute_once(self):
-        # We don't support this to avoid adding extra complexity for now.
-        # If there's a need, we could probably do some kind of use_count tracking.
-        # TODO: have a nice error message here.
         def policy_fn(ctx, op, *args, **kwargs):
             if op == torch.ops.aten.sin.default:
                 return CheckpointPolicy.MUST_SAVE
@@ -15281,6 +15402,78 @@ class TestSelectiveActivationCheckpoint(TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Trying to backward an extra time"):
             out.sum().backward(retain_graph=True)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_auto_naming_mode_names(self):
+        class SubMod(torch.nn.Module):
+            def forward(self, x):
+                return torch.mm(x, x)
+
+        class TopMod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = SubMod()
+
+            def forward(self, x):
+                return self.linear(x)
+
+        mod = TopMod()
+        x = torch.randn(4, 4)
+
+        naming = _AutoNamingMode()
+        with naming:
+            out = mod(x)
+
+        name = naming.names.get(out)
+        self.assertIsNotNone(name)
+        fqn, op, count, output_idx = name
+        self.assertIn("linear", fqn)
+        self.assertEqual(op, "mm")
+        self.assertEqual(count, 0)
+        self.assertEqual(output_idx, 0)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_auto_naming_mode_per_module_counter(self):
+        # Counters are per (fqn, op), so two modules calling the same op
+        # get independent counts
+        intermediates = []
+
+        class Block(torch.nn.Module):
+            def forward(self, x):
+                y = torch.sin(x)
+                intermediates.append(y)
+                z = torch.sin(y)
+                intermediates.append(z)
+                return z
+
+        class TopMod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.a = Block()
+                self.b = Block()
+
+            def forward(self, x):
+                return self.a(x) + self.b(x)
+
+        mod = TopMod()
+        x = torch.randn(4, 4)
+
+        naming = _AutoNamingMode()
+        with naming:
+            mod(x)
+
+        # Collect names for all intermediates that are still alive
+        recorded = [(naming.names[t], t) for t in intermediates if t in naming.names]
+        a_sin = [n for n, _ in recorded if n[0].endswith(".a") and n[1] == "sin"]
+        b_sin = [n for n, _ in recorded if n[0].endswith(".b") and n[1] == "sin"]
+        self.assertEqual(len(a_sin), 2, f"Expected 2 sins for block a, got: {a_sin}")
+        self.assertEqual(len(b_sin), 2, f"Expected 2 sins for block b, got: {b_sin}")
+
+        # Counters should be 0 and 1 for each block independently
+        a_counts = sorted(n[2] for n in a_sin)
+        b_counts = sorted(n[2] for n in b_sin)
+        self.assertEqual(a_counts, [0, 1])
+        self.assertEqual(b_counts, [0, 1])
 
 
 class TestAutogradMultipleDispatch(TestCase):
