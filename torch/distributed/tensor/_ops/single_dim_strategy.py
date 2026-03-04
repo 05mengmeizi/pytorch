@@ -67,6 +67,7 @@ _ExpandedSingleDimStrategyFunc: TypeAlias = Callable[
 class _SingleDimStrategyInfo:
     func: _SingleDimStrategyFunc
     allow_unbacked_sharding: bool | None = field(default=None)
+    allow_uneven_sharding: bool = field(default=False)
 
     # Delegate to func so this can be used interchangeably with a raw
     # _SingleDimStrategyFunc (e.g. in tests that call strategy functions directly).
@@ -241,6 +242,7 @@ class _PreparedSingleDimStrategy:
     allowed_sharding_per_input: dict[int, set[Placement]]
     allowed_partial_per_input: dict[int, set[Placement]]
     allow_unbacked_sharding: bool | None
+    allow_uneven_sharding: bool
 
     def __init__(
         self,
@@ -258,9 +260,11 @@ class _PreparedSingleDimStrategy:
 
         if isinstance(strategy_fn, _SingleDimStrategyInfo):
             self.allow_unbacked_sharding = strategy_fn.allow_unbacked_sharding
+            self.allow_uneven_sharding = strategy_fn.allow_uneven_sharding
             func = strategy_fn.func
         else:
             self.allow_unbacked_sharding = None
+            self.allow_uneven_sharding = False
             func = strategy_fn
 
         if num_inputs is None:
@@ -421,6 +425,7 @@ def _expand_single_dim_strategy_to_mesh(
                 inplace_op=is_inplace,
                 input_index=prepared_strategy.num_outputs,
                 allow_unbacked_sharding=prepared_strategy.allow_unbacked_sharding,
+                allow_uneven_sharding=prepared_strategy.allow_uneven_sharding,
             )
 
         return expanded_strategy
@@ -533,6 +538,7 @@ def register_single_dim_strategy(
     op: Union[torch._ops.OpOverload, list[torch._ops.OpOverload]],
     schema_info: Optional[RuntimeSchemaInfo] = None,
     allow_unbacked_sharding: bool | None = None,
+    allow_uneven_sharding: bool = False,
 ) -> Callable[[_SingleDimStrategyFunc], _SingleDimStrategyFunc]:
     """
     Registers a single_dim_strategy function for the given op.
@@ -580,6 +586,7 @@ def register_single_dim_strategy(
         info = _SingleDimStrategyInfo(
             func=impl,
             allow_unbacked_sharding=allow_unbacked_sharding,
+            allow_uneven_sharding=allow_uneven_sharding,
         )
         registration_wrapper(info)
         return impl

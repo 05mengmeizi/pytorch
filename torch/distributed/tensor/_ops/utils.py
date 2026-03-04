@@ -360,6 +360,7 @@ def expand_to_full_mesh_op_strategy(
     input_index: int = 1,
     inplace_op: bool = False,
     allow_unbacked_sharding: bool | None = None,
+    allow_uneven_sharding: bool = False,
     is_valid_strategy_cb: Callable[
         [list[DTensorSpec], DTensorSpec | tuple[DTensorSpec | None, ...]], bool
     ]
@@ -511,15 +512,15 @@ def expand_to_full_mesh_op_strategy(
             else:
                 raise RuntimeError("output spec is None")
 
-        # check all inputs are shardable. The placement equality fallback
-        # is required: is_tensor_shardable rejects shapes smaller than the mesh
-        # (e.g. dim=2 on 4 ranks), but if the input is already at that placement
-        # no redistribution occurs, so the check is irrelevant.
+        # check all inputs are shardable
         if not all(
             is_tensor_shardable(
                 inp.shape, s, allow_unbacked_sharding=allow_unbacked_sharding
             )
-            or inp.strategies[0].output_spec.placements == s.placements
+            or (
+                allow_uneven_sharding
+                and inp.strategies[0].output_spec.placements == s.placements
+            )
             for inp, s in zip(input_args_strategy, input_specs)
         ):
             continue
