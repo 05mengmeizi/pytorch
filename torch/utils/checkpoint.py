@@ -14,6 +14,7 @@ import torch.fx.traceback as fx_traceback
 from torch.utils._pytree import tree_map
 from torch.testing._internal.logging_tensor import capture_logs, LoggingTensorMode
 from torch.utils._python_dispatch import TorchDispatchMode
+from torch.utils.weak import WeakTensorKeyDictionary
 from torch._C._autograd import _make_saved_tensor, SavedTensor
 from typing import NoReturn
 
@@ -1275,8 +1276,9 @@ class SelectiveCheckpointContext:
         >>>     context_fn=context_fn,
         >>> )
     """
-    def __init__(self, *, is_recompute) -> None:
+    def __init__(self, *, is_recompute, op_output=None) -> None:
         self.is_recompute = is_recompute
+        self.op_output = op_output
 
 
 class CheckpointPolicy(enum.Enum):
@@ -1327,6 +1329,78 @@ SAC_IGNORED_OPS = {
 } | set(torch._subclasses.functional_tensor.FunctionalTensor.metadata_fns)  # type: ignore[has-type]
 
 
+class AutoNamingMode(TorchDispatchMode):
+    """TorchDispatchMode that automatically names output tensors.
+
+    Names are tuples of ``(fqn, op_name, count, output_idx)``, e.g.
+    ``("layers.0.linear", "mm", 0, 0)``.  The count is tracked per
+    (module fqn, op) pair so that each module's invocations are numbered
+    independently.
+
+    Names are stored in ``self.names``, a ``WeakTensorKeyDictionary``
+    mapping output tensors to their names.  A SAC policy can look up
+    ``ctx.op_output`` in this dict to decide what to save.
+
+    If no ``ModuleTracker`` is supplied, one is created and managed
+    automatically.
+    """
+
+    def __init__(self, module_tracker=None) -> None:
+        self._external_tracker = module_tracker
+        self._tracker = module_tracker
+        self._func_counter: Dict[Tuple[str, Any], int] = defaultdict(int)
+        self.names: WeakTensorKeyDictionary = WeakTensorKeyDictionary()
+
+    def __enter__(self):
+        if self._external_tracker is None:
+            from torch.utils.module_tracker import ModuleTracker
+            self._tracker = ModuleTracker()
+            self._tracker.__enter__()
+        return super().__enter__()
+
+    def __exit__(self, *args):
+        if self._external_tracker is None and self._tracker is not None:
+            self._tracker.__exit__(*args)
+            self._tracker = None
+        return super().__exit__(*args)
+
+    def _get_current_fqn(self):
+        if self._tracker is None:
+            return "Global"
+        parents = self._tracker.parents - {"Global"}
+        if not parents:
+            return "Global"
+        return max(parents, key=len)
+
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        kwargs = kwargs or {}
+        out = func(*args, **kwargs)
+
+        fqn = self._get_current_fqn()
+        op_name = func.__name__.split(".")[0] if hasattr(func, "__name__") else str(func)
+
+        key = (fqn, func)
+        count = self._func_counter[key]
+        self._func_counter[key] += 1
+
+        if isinstance(out, torch.Tensor):
+            self.names[out] = (fqn, op_name, count, 0)
+        elif isinstance(out, (tuple, list)):
+            for i, o in enumerate(out):
+                if isinstance(o, torch.Tensor):
+                    self.names[o] = (fqn, op_name, count, i)
+
+        return out
+
+
+def _get_current_caching_mode():
+    from torch.utils._python_dispatch import _get_current_dispatch_mode_stack
+    for mode in reversed(_get_current_dispatch_mode_stack()):
+        if isinstance(mode, _CachingTorchDispatchMode):
+            return mode
+    return None
+
+
 class _CachingTorchDispatchMode(TorchDispatchMode):
     @classmethod
     def ignore_compile_internals(cls):
@@ -1336,23 +1410,38 @@ class _CachingTorchDispatchMode(TorchDispatchMode):
     def __init__(self, policy_fn, storage) -> None:
         self.policy_fn = policy_fn
         self.storage = storage
+        self.func_counter: Dict[Any, int] = defaultdict(int)
+
+    @staticmethod
+    def _set_policy_on_graph_nodes(graph_len_before, policy):
+        """Set recompute policy on all FX nodes added by the op, post-hoc."""
+        from torch.fx.experimental.proxy_tensor import get_proxy_mode
+
+        mode = get_proxy_mode()
+        if mode is None or graph_len_before is None:
+            return
+
+        new_nodes = list(mode.tracer.graph.nodes)[graph_len_before:]
+        for node in new_nodes:
+            node.meta["recompute"] = policy
+
+    @staticmethod
+    def _get_graph_len():
+        """Return the current FX graph node count if compiling, else None."""
+        from torch.fx.experimental.proxy_tensor import get_proxy_mode
+
+        mode = get_proxy_mode()
+        if mode is None:
+            return None
+        return len(list(mode.tracer.graph.nodes))
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         if func in SAC_IGNORED_OPS:
             return func(*args, **kwargs)
 
         kwargs = {} if kwargs is None else kwargs
-        policy = self.policy_fn(SelectiveCheckpointContext(is_recompute=False),
-                                func, *args, **kwargs)
-        if isinstance(policy, bool):
-            policy = _policy_from_bool(policy)
 
-        is_compiling = _is_compiling(func, args, kwargs)
-
-        if is_compiling:
-            # Overwrite each node's "recompute" tag to add in the user annotation.
-            fx_traceback.current_meta["recompute"] = policy
-
+        graph_len_before = self._get_graph_len()
         out = func(*args, **kwargs)
 
         # HOPs don't support func._schema
@@ -1363,20 +1452,39 @@ class _CachingTorchDispatchMode(TorchDispatchMode):
         else:
             any_ret_has_alias_info = any(ret.alias_info is not None for ret in func._schema.returns)
 
+        idx = self.func_counter[func]
+        self.func_counter[func] += 1
+
+        # Call policy after the op. The output already exists, so inner modes
+        # (e.g. AutoNamingMode) have had a chance to name the output.
+        policy = self.policy_fn(SelectiveCheckpointContext(is_recompute=False, op_output=out),
+                                func, *args, **kwargs)
+        if isinstance(policy, bool):
+            policy = _policy_from_bool(policy)
+
+        is_compiling = _is_compiling(func, args, kwargs)
+        if is_compiling:
+            self._set_policy_on_graph_nodes(graph_len_before, policy)
+            # Update current_meta so SAC_IGNORED_OPS (e.g. detach) that follow
+            # this op inherit the recompute policy via fx_traceback.
+            fx_traceback.current_meta["recompute"] = policy
+
         if policy in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE) or is_compiling:
-            self.storage[func].append(tree_map(lambda x: _VersionWrapper(_maybe_detach(x, any_ret_has_alias_info)), out))
+            self.storage[func][idx] = tree_map(lambda x: _VersionWrapper(_maybe_detach(x, any_ret_has_alias_info)), out)
         return out
+
 
 class _CachedTorchDispatchMode(TorchDispatchMode):
     @classmethod
     def ignore_compile_internals(cls):
         return True
 
-    # Used together with _CachedTorchDispatchMode to implement SAC.
+    # Used together with _CachingTorchDispatchMode to implement SAC.
     def __init__(self, policy_fn, storage, allow_cache_entry_mutation) -> None:
         self.policy_fn = policy_fn
         self.storage = storage
         self.allow_cache_entry_mutation = allow_cache_entry_mutation
+        self.func_counter: Dict[Any, int] = defaultdict(int)
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         if func in SAC_IGNORED_OPS:
@@ -1390,16 +1498,19 @@ class _CachedTorchDispatchMode(TorchDispatchMode):
 
         is_compiling = _is_compiling(func, args, kwargs)
 
-        if policy in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE) or is_compiling:
-            storage = self.storage.get(func)
-            if storage is None:
+        idx = self.func_counter[func]
+        self.func_counter[func] += 1
+
+        cached = self.storage.get(func, {}).pop(idx, None)
+        if cached is not None:
+            out = tree_map(lambda x: x.get_val(self.allow_cache_entry_mutation), cached)
+        elif policy in (CheckpointPolicy.MUST_SAVE, CheckpointPolicy.PREFER_SAVE) or is_compiling:
+            if func not in self.storage:
                 raise RuntimeError(f"{func} encountered during backward, but not found in storage")
-            if len(storage) == 0:
-                raise RuntimeError(
-                    "Trying to backward an extra time. You are only allowed to backward once "
-                    "on any region computed under selective activation checkpoint."
-                )
-            out = tree_map(lambda x: x.get_val(self.allow_cache_entry_mutation), storage.pop(0))
+            raise RuntimeError(
+                "Trying to backward an extra time. You are only allowed to backward once "
+                "on any region computed under selective activation checkpoint."
+            )
         else:
             out = func(*args, **kwargs)
         return out
@@ -1484,11 +1595,12 @@ def create_selective_checkpoint_contexts(policy_fn_or_list, allow_cache_entry_mu
     else:
         raise TypeError("policy_fn_or_list must be either a function or a list of ops.")
 
-    storage: Dict[Any, List[Any]] = defaultdict(list)
+    storage: Dict[Any, Dict[int, Any]] = defaultdict(dict)
     return (
         _CachingTorchDispatchMode(policy_fn, storage),
         _CachedTorchDispatchMode(policy_fn, storage, allow_cache_entry_mutation),
     )
+
 
 # NB: this helper wraps fn before calling checkpoint_impl. kwargs and
 #     saving/restoring of global state is handled here.
