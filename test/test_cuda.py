@@ -4203,6 +4203,7 @@ class TestCudaMallocAsync(TestCase):
             torch.cuda.memory._record_memory_history(None)
 
     def test_allocation_traceback_no_recording(self):
+        torch.cuda.memory._record_memory_history(None)
         x = torch.rand(64, device="cuda")
         self.assertIsNone(torch.cuda.memory._allocation_traceback(x.data_ptr()))
 
