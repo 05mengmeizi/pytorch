@@ -9103,6 +9103,43 @@ not ___dict_contains('cccccccc', G['sys'].modules)""",
         with self.assertRaises(ConstraintViolationError):
             torch.compile(my_dyn_fn, backend="eager")(y)
 
+    def test_mark_dynamic_negative_index(self):
+        counter = CompileCounter()
+
+        def my_dyn_fn(x):
+            return x.cos()
+
+        # mark_dynamic with negative index should work the same as positive
+        y = torch.randn([3, 4])
+        torch._dynamo.mark_dynamic(y, -1)
+        torch.compile(my_dyn_fn, backend=counter)(y)
+
+        z = torch.randn([3, 5])
+        torch._dynamo.mark_dynamic(z, -1)
+        torch.compile(my_dyn_fn, backend=counter)(z)
+
+        # The last dim is dynamic, so changing it shouldn't cause recompilation
+        self.assertEqual(counter.frame_count, 1)
+
+    def test_mark_dynamic_out_of_bounds(self):
+        y = torch.randn([3, 4])
+        with self.assertRaises(IndexError):
+            torch._dynamo.mark_dynamic(y, 2)
+        with self.assertRaises(IndexError):
+            torch._dynamo.mark_dynamic(y, -3)
+
+    def test_mark_dynamic_on_parameter_errors(self):
+        mod = torch.nn.Linear(3, 4)
+        torch._dynamo.mark_dynamic(mod.weight, 0)
+        with self.assertRaises(torch._dynamo.exc.UserError):
+            torch.compile(mod, backend="eager", fullgraph=True)(torch.randn(3))
+
+    def test_mark_unbacked_on_parameter_errors(self):
+        mod = torch.nn.Linear(3, 4)
+        torch._dynamo.decorators.mark_unbacked(mod.weight, 0)
+        with self.assertRaises(torch._dynamo.exc.UserError):
+            torch.compile(mod, backend="eager", fullgraph=True)(torch.randn(3))
+
     def test_mark_static(self):
         counter = CompileCounter()
 

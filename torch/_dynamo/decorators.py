@@ -1069,7 +1069,12 @@ def mark_unbacked(
 
     Args:
         t (Any): The tensor to mark as having an unbacked dimension.
-        index (int or list/tuple of int): The dimension(s) to mark as unbacked. Can be a single integer or a list/tuple of integers.
+        index (int or list/tuple of int): The dimension(s) to mark as unbacked. Can be a single
+            integer or a list/tuple of integers. Pass an empty list [] to explicitly mark the
+            tensor as having NO unbacked dims (different from not calling this function at all,
+            which would not cause recompilation). For details on guard semantics and recompilation
+            behavior, see [Note: Dimension Marking Guards] in torch/_dynamo/guards.py.
+        hint_override (Optional[int], default=None):
         hint_override (Optional[int], default=None): An optional integer to override the size hint for this dimension.
             This is only used by the inductor backend for size hint queries, such as during autotuning.
             NOTE: changing hint_override values will cause FxGraphCache misses, since hint overrides
@@ -1142,8 +1147,14 @@ def mark_unbacked(
         return
 
     assert isinstance(index, (list, tuple))
-    for i in index:
-        mark_unbacked(t, i, shape_id=shape_id, min=min, max=max)
+    if len(index) == 0:
+        # Empty list explicitly means "no unbacked dims"
+        # This is different from not calling mark_unbacked at all (unspecified)
+        if not hasattr(t, "_dynamo_unbacked_indices"):
+            t._dynamo_unbacked_indices = set()
+    else:
+        for i in index:
+            mark_unbacked(t, i, shape_id=shape_id, min=min, max=max)
 
 
 @forbid_in_graph
@@ -1158,6 +1169,12 @@ def mark_dynamic(
 ) -> None:
     """
     Mark a tensor as having a dynamic dim and set corresponding min and max range for the dim.
+
+    The ``index`` argument follows standard Python indexing conventions: negative values
+    are supported (e.g., -1 for the last dimension) and out-of-range values raise
+    ``IndexError``. Pass an empty list [] to explicitly mark the tensor as having NO
+    dynamic dims (different from not calling this function at all, which would not
+    cause recompilation).
 
     [Note - on the state of mark_dynamic]
 
@@ -1198,6 +1215,8 @@ def mark_dynamic(
     at runtime, execution will be directed to the specialized compiled region. Performance measurements indicate
     2-8x speedups depending on the specific specialization and model architecture.
 
+    For details on guard semantics and recompilation behavior, see
+    [Note: Dimension Marking Guards] in torch/_dynamo/guards.py.
     """
     if is_traceable_wrapper_subclass(t):
         # default behavior: mirror mark_dynamic() on all inner tensors with same dim as t
@@ -1235,9 +1254,17 @@ def mark_dynamic(
         return
 
     assert isinstance(index, (list, tuple))
-    for i in index:
-        mark_dynamic(t, i, min=min, max=max)
-        mark_dynamic(t, i, min=min, max=max, specialize_on=specialize_on)
+    if len(index) == 0:
+        # Empty list explicitly means "no dynamic dims"
+        # This is different from not calling mark_dynamic at all (unspecified)
+        if not hasattr(t, "_dynamo_dynamic_indices"):
+            t._dynamo_dynamic_indices = set()
+            t._dynamo_dynamic_range = set()
+            t._dynamo_hint_overrides = {}  # type: ignore[assignment]
+    else:
+        for i in index:
+            mark_dynamic(t, i, min=min, max=max)
+            mark_dynamic(t, i, min=min, max=max, specialize_on=specialize_on)
 
 
 @forbid_in_graph
@@ -1245,6 +1272,11 @@ def maybe_mark_dynamic(t: Any, index: int | list[Any] | tuple[Any]) -> None:
     """
     Mark a tensor as having a dynamic dim, but don't enforce it (i.e., if this
     dimension ends up getting specialized, don't error).
+
+    Pass an empty list [] to explicitly mark the tensor as having NO weak dynamic dims
+    (different from not calling this function at all, which would not cause recompilation).
+    For details on guard semantics and recompilation behavior, see
+    [Note: Dimension Marking Guards] in torch/_dynamo/guards.py.
     """
     if is_traceable_wrapper_subclass(t):
         # default behavior: mirror maybe_mark_dynamic() on all inner tensors with same dim as t
@@ -1260,8 +1292,14 @@ def maybe_mark_dynamic(t: Any, index: int | list[Any] | tuple[Any]) -> None:
         return
 
     assert isinstance(index, (list, tuple))
-    for i in index:
-        maybe_mark_dynamic(t, i)
+    if len(index) == 0:
+        # Empty list explicitly means "no weak dynamic dims"
+        # This is different from not calling maybe_mark_dynamic at all (unspecified)
+        if not hasattr(t, "_dynamo_weak_dynamic_indices"):
+            t._dynamo_weak_dynamic_indices = set()
+    else:
+        for i in index:
+            maybe_mark_dynamic(t, i)
 
 
 def mark_static(t: Any, index: int | list[Any] | tuple[Any] | None = None) -> None:
@@ -1277,6 +1315,11 @@ def mark_static(t: Any, index: int | list[Any] | tuple[Any] | None = None) -> No
 
     Unlike mark_dynamic, this can be done inside a graph, in which case it
     induces specialization on the tensor.
+
+    Pass an empty list [] to explicitly mark the tensor as having NO static dims
+    (different from not calling this function at all, which would not cause recompilation).
+    For details on guard semantics and recompilation behavior, see
+    [Note: Dimension Marking Guards] in torch/_dynamo/guards.py.
 
     For nn.Module classes
     =====================
@@ -1325,8 +1368,14 @@ def mark_static(t: Any, index: int | list[Any] | tuple[Any] | None = None) -> No
             mark_static(t, i)
     else:
         assert isinstance(index, (list, tuple))
-        for i in index:
-            mark_static(t, i)
+        if len(index) == 0:
+            # Empty list explicitly means "no static dims"
+            # This is different from not calling mark_static at all (unspecified)
+            if not hasattr(t, "_dynamo_static_indices"):
+                t._dynamo_static_indices = set()  # type: ignore[attr-defined]
+        else:
+            for i in index:
+                mark_static(t, i)
 
 
 @forbid_in_graph
