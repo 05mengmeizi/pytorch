@@ -628,6 +628,10 @@ class OutputGraph(OutputGraphCommon):
             _aotautograd_guards=[],
         )
         self.tracers = [SubgraphTracer(self, is_export=export)]
+        # When non-None, VariableBuilder records every source it processes
+        # into this set. Used by invoke_subgraph reuse to capture all sources
+        # accessed during a subgraph trace (see build_reuse_condition).
+        self.traced_sources: set[Source] | None = None
         # Map from graph input's `Source` to its `VariableTracker` to
         # de-duplicate graph inputs by source and reuse the tracker
         self.input_source_to_var: dict[Source, VariableTracker] = {}

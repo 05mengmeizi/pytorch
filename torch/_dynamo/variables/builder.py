@@ -479,6 +479,9 @@ class VariableBuilder:
     def __call__(self, value: object) -> VariableTracker:
         _t0 = time.time_ns()
         try:
+            traced_sources = self.tx.output.traced_sources
+            if traced_sources is not None:
+                traced_sources.add(self.source)
             return self._call_impl(value)
         finally:
             self.tx.output.bytecode_tracing_timings.variable_builder_call_ns += (
