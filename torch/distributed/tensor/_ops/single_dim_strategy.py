@@ -242,6 +242,12 @@ class _PreparedSingleDimStrategy:
     allowed_sharding_per_input: dict[int, set[Placement]]
     allowed_partial_per_input: dict[int, set[Placement]]
     allow_unbacked_sharding: bool | None
+
+    # many, but not all ops are able to support unevenly sharded tensors
+    # there are existing BC expectations even if we wanted to ban for
+    # simplicity, see why justification for why pointwise_ops always work
+    # with uneven sharding at
+    # https://github.com/pytorch/pytorch/pull/174874#issuecomment-3995152777
     allow_uneven_sharding: bool
 
     def __init__(
