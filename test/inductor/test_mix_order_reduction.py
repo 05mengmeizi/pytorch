@@ -12,6 +12,7 @@ from torch._inductor import metrics, utils
 from torch._inductor.scheduler import MixOrderReduction
 from torch._inductor.test_case import run_tests, TestCase
 from torch.testing import FileCheck
+from torch.testing._internal.common_device_type import largeTensorTest
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
     isRocmArchAnyOf,
@@ -753,6 +754,7 @@ class MixOrderReductionTest(TestBase):
 
         torch.testing.assert_close(ref, act, atol=1e-3, rtol=1e-3)
 
+    @largeTensorTest("36GB", device=GPU_TYPE, inductor=True)
     def test_out_of_shared_memory(self):
         """
         Fix https://github.com/pytorch/pytorch/issues/175250
