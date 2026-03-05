@@ -2843,6 +2843,17 @@ class TestFxGraphCacheHashing(TestCase):
                 torch.fx.experimental._backward_state.BackwardState()
             )
 
+    def test_bypass_cyclic_objects(self):
+        """
+        Test that cyclic objects (which raise ValueError under pickler.fast=True)
+        are caught and converted to BypassFxGraphCache.
+        """
+        gm = torch.fx.GraphModule({}, torch.fx.Graph())
+        cyclic_dict: dict = {}
+        cyclic_dict["self"] = cyclic_dict
+        with self.assertRaises(BypassFxGraphCache):
+            FxGraphCachePickler(gm).dumps(cyclic_dict)
+
     def test_stable_strings(self):
         """
         Test that objects containing identical strings pickle the same

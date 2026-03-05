@@ -625,8 +625,10 @@ class FxGraphCachePickler(pickle.Pickler):
         try:
             self.dump(obj)
             return self._stream.getvalue()
-        except (TypeError, AttributeError, pickle.PicklingError) as e:
-            # Some configs options may not pickle.
+        except (TypeError, AttributeError, pickle.PicklingError, ValueError) as e:
+            # Some configs options may not pickle. ValueError is raised when
+            # pickler.fast=True encounters cyclic references (e.g., from
+            # DTensor/process group objects in tensor parallel setups).
             log.warning("Failed to pickle cache key", exc_info=True)
             raise BypassFxGraphCache("Failed to pickle cache key") from e
         finally:
