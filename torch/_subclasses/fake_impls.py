@@ -6,7 +6,7 @@ import math
 import operator
 import sys
 from functools import reduce
-from typing import Any, cast as typing_cast, TYPE_CHECKING, TypeVar, Union
+from typing import Any, cast as typing_cast, TYPE_CHECKING, TypeVar
 from typing_extensions import ParamSpec
 
 import torch
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from torch.types import IntLikeType
 
 
-FakeTensorLike = Union[FakeTensor, torch.Tensor]
+FakeTensorLike = FakeTensor | torch.Tensor
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _T = TypeVar("_T")
@@ -61,7 +61,9 @@ __all__ = [
     "has_meta",
 ]
 
+# pyrefly: ignore [implicit-any]
 op_implementations_dict = {}
+# pyrefly: ignore [implicit-any]
 op_implementations_checks = []
 
 
@@ -639,14 +641,14 @@ def _compute_stride(
 def _view_has_unbacked_input(
     a: torch.Tensor, shape: ShapeType | tuple[ShapeType]
 ) -> bool:
-    from torch.fx.experimental.symbolic_shapes import has_hint
+    from torch.fx.experimental.symbolic_shapes import has_guarding_hint
 
     shape = utils.extract_shape_from_varargs(shape, validate=False)
 
     return (
-        any(not has_hint(s) for s in a.size())
-        or any(not has_hint(s) for s in a.stride())
-        or any(not has_hint(s) for s in shape)
+        any(not has_guarding_hint(s) for s in a.size())
+        or any(not has_guarding_hint(s) for s in a.stride())
+        or any(not has_guarding_hint(s) for s in shape)
     )
 
 
@@ -1315,12 +1317,15 @@ def conv(
     with fake_mode:
         # if the input is unsqueezed is done in Convolution.cpp we get segfault
         k = new_kwargs["weight"].ndim
-        batch = new_kwargs["input"].shape[0]
 
         # Avoid importing sympy at a module level
-        from torch.fx.experimental.symbolic_shapes import has_hint
+        from torch.fx.experimental.symbolic_shapes import has_guarding_hint
 
-        if not has_hint(batch):
+        all_hinted = all(
+            has_guarding_hint(s) for s in new_kwargs["input"].shape
+        ) and all(has_guarding_hint(s) for s in new_kwargs["weight"].shape)
+
+        if not all_hinted:
             # TODO: We can make this a little more faithful with best effort
             # channels last detection (but only if it's statically obvious!)
             mem_fmt = None
@@ -1454,6 +1459,7 @@ def _pack_padded_sequence(
     return (packed_data, batch_size)  # type: ignore[return]
 
 
+# pyrefly: ignore [implicit-any]
 FAST_OP_IMPLEMENTATIONS = {}
 
 
