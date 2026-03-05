@@ -5738,9 +5738,10 @@ def stamp_out_subgraph(
         elif user_arg_idx == -2:
             # TorchScriptObject with SyntheticLocalSource: create a
             # fresh synthetic graph input using the cached constructor.
-            # If ctor_arg_sources are available, use source replacement
-            # to resolve new arg values (e.g. different string per layer).
-            ctor_fn, ctor_args, ctor_arg_sources = data
+            # If ctor_arg/kwarg_sources are available, use source
+            # replacement to resolve new values (e.g. different string
+            # per layer).
+            ctor_fn, ctor_args, ctor_kwargs, ctor_arg_sources, ctor_kwarg_sources = data
             if ctor_arg_sources and source_replacement:
                 new_ctor_args = []
                 for val, arg_src in zip(ctor_args, ctor_arg_sources):
@@ -5751,7 +5752,24 @@ def stamp_out_subgraph(
                         )
                     new_ctor_args.append(val)
                 ctor_args = tuple(new_ctor_args)
-            vt = tx.output.synthetic_graph_input(ctor_fn, ctor_args, ctor_arg_sources)
+            if ctor_kwarg_sources and source_replacement:
+                new_ctor_kwargs = {}
+                for key, val in ctor_kwargs.items():
+                    kw_src = ctor_kwarg_sources.get(key)
+                    if kw_src is not None:
+                        new_src = kw_src.clone(lambda s: source_replacement.get(s, s))
+                        val = new_src.get_value(
+                            resolve_globals, resolve_locals, resolve_cache
+                        )
+                    new_ctor_kwargs[key] = val
+                ctor_kwargs = new_ctor_kwargs
+            vt = tx.output.synthetic_graph_input(
+                ctor_fn,
+                ctor_args,
+                kwargs=ctor_kwargs or None,
+                ctor_arg_sources=ctor_arg_sources,
+                ctor_kwarg_sources=ctor_kwarg_sources,
+            )
             new_lifted_args.append(vt.as_proxy())
         else:
             source = data
