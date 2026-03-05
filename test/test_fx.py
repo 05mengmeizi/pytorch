@@ -4667,6 +4667,70 @@ def run_getitem_target():
         _wrapped_methods_to_patch.pop()
 
 
+class TestNamespaceCreateName(JitTestCase):
+    def test_create_name_suffixed_candidates_not_quadratic(self):
+        """Repeatedly passing the same suffixed candidate (e.g. "sin_1")
+        should be O(1) amortized per call, not O(calls).
+
+        There is a known asymmetry in _NamespaceBase.create_name: it looks up
+        base_count[candidate] (e.g. "sin_1") but stores base_count[base]
+        (e.g. "sin").  When the candidate already has a numeric suffix the
+        lookup always misses and the while-loop degrades to O(calls).
+
+        This test exposes the quadratic behavior by copying the same small
+        subgraph N times and checking that the time is sub-quadratic.
+        """
+        import time
+
+        import torch.fx
+
+        # Build a small subgraph with nodes that have numeric suffixes
+        sub = torch.fx.Graph()
+        x = sub.placeholder("x")
+        # These will get names like "sin", "sin_1", "cos", "cos_1"
+        a = sub.call_function(torch.sin, (x,))
+        b = sub.call_function(torch.sin, (x,))
+        c = sub.call_function(torch.cos, (a,))
+        d = sub.call_function(torch.cos, (b,))
+        e = sub.call_function(torch.add, (c, d))
+        sub.output(e)
+
+        def do_copies(n_copies):
+            parent = torch.fx.Graph()
+            px = parent.placeholder("x")
+            last = px
+            for _ in range(n_copies):
+                env = {x: last}
+                for node in sub.nodes:
+                    if node.op in ("placeholder", "output"):
+                        continue
+                    env[node] = parent.node_copy(node, lambda n: env[n])
+                last = env[e]
+            parent.output(last)
+            return parent
+
+        # Time N=100 and N=800.  If quadratic, 800 is ~64x slower than 100.
+        # If linear, 800 is ~8x slower.  Use larger N to escape the noise
+        # floor where Python overhead dominates.
+        t0 = time.perf_counter()
+        do_copies(100)
+        t_small = time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        do_copies(800)
+        t_large = time.perf_counter() - t0
+
+        ratio = t_large / max(t_small, 1e-9)
+        # Linear would give ratio ≈ 8, quadratic ≈ 64.
+        # Allow up to 16x to account for noise, but catch gross quadratic.
+        self.assertLess(
+            ratio,
+            16.0,
+            f"create_name appears quadratic: {t_small:.4f}s for 100 copies, "
+            f"{t_large:.4f}s for 800 copies (ratio={ratio:.1f}x, expected ~8x)",
+        )
+
+
 class TestOperatorSignatures(JitTestCase):
     def setUp(self):
         # Checking for mutable operations while tracing is feature flagged
