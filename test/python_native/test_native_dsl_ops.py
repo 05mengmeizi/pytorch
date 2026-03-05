@@ -1,4 +1,4 @@
-# Owner(s): ["module: unknown"]
+# Owner(s): ["module: dsl-native-ops"]
 
 import os
 import subprocess
@@ -152,6 +152,77 @@ class TestNativeDSLOps(TestCase):
         env["TORCH_DISABLE_NATIVE_JIT"] = "1"
         result = _subprocess_lastline(script, env=env)
         self.assertEqual(result, "True")
+
+    def test_version_skip_env_var_overrides(self):
+        """TORCH_NATIVE_SKIP_VERSION_CHECK=1 allows non-blessed versions."""
+        script = textwrap.dedent("""\
+            from torch._native import triton_utils, cutedsl_utils
+            from torch._native.registry import _RegisteredFns
+
+            # Force runtime "available" with a non-blessed version
+            triton_utils._TRITON_AVAILABLE = True
+            triton_utils._TRITON_VERSION = (99, 99, 99)
+            cutedsl_utils._CUTEDSL_AVAILABLE = True
+            cutedsl_utils._CUTEDSL_VERSION = (99, 99, 99)
+
+            before = len(_RegisteredFns)
+            triton_utils.register_op(lambda: None)
+            cutedsl_utils.register_op(lambda: None)
+            after = len(_RegisteredFns)
+            print(after - before)
+        """)
+        env = os.environ.copy()
+        env["TORCH_NATIVE_SKIP_VERSION_CHECK"] = "1"
+        result = _subprocess_lastline(script, env=env)
+        self.assertEqual(result, "2")
+
+    def test_check_native_version_skip_default(self):
+        """TORCH_NATIVE_SKIP_VERSION_CHECK unset -> returns False."""
+        script = textwrap.dedent("""\
+            import os
+            os.environ.pop("TORCH_NATIVE_SKIP_VERSION_CHECK", None)
+            from torch._native.common_utils import check_native_version_skip
+            print(check_native_version_skip())
+        """)
+        result = _subprocess_lastline(script)
+        self.assertEqual(result, "False")
+
+    def test_check_native_version_skip_set(self):
+        """TORCH_NATIVE_SKIP_VERSION_CHECK=1 -> returns True."""
+        script = textwrap.dedent("""\
+            from torch._native.common_utils import check_native_version_skip
+            print(check_native_version_skip())
+        """)
+        env = os.environ.copy()
+        env["TORCH_NATIVE_SKIP_VERSION_CHECK"] = "1"
+        result = _subprocess_lastline(script, env=env)
+        self.assertEqual(result, "True")
+
+    def test_available_version_prerelease(self):
+        """_available_version handles pre-release suffixes correctly."""
+        from unittest.mock import patch
+
+        from torch._native.common_utils import _available_version
+
+        cases = [
+            ("0.7.0rc1", (0, 7, 0)),
+            ("3.1.0.post1", (3, 1, 0)),
+            ("2.4.0a1", (2, 4, 0)),
+            ("1.2.3", (1, 2, 3)),
+        ]
+        for version_str, expected in cases:
+            with patch("importlib.metadata.version", return_value=version_str):
+                result = _available_version("fake_package")
+                self.assertEqual(
+                    result,
+                    expected,
+                    f"_available_version({version_str!r}) = {result}, expected {expected}",
+                )
+
+        # Completely unparsable -> None
+        with patch("importlib.metadata.version", return_value="abc"):
+            result = _available_version("fake_package")
+            self.assertIsNone(result)
 
 
 if __name__ == "__main__":

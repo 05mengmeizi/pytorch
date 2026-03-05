@@ -1,6 +1,6 @@
 # Native Ops (and DSLs)
 
-The `torch._native` directory provides a place for ops written in python and DSLs, along with utilities to help facilitate this.
+The `torch._native` directory provides a place for PyTorch native ops written in python and DSLs, along with utilities to help facilitate this.
 
 # Creating & Registering a native op
 
@@ -8,72 +8,16 @@ The `torch._native` directory provides a place for ops written in python and DSL
 
 When writing native ops, they are required to interact meaningfully with torch's dispatcher, and thus must be registered correctly.
 
-As a further restriction, ops cannot be labelled as `CompositeImplicitAutograd` in `native_functions.yaml`, as-in the op must have an explicit autograd function registered, or at minimum an explicit implementation registered for the same backend as being overridden/added.
+As a further clarification, ops cannot be labelled as `CompositeImplicitAutograd` in `native_functions.yaml`, as-in the op must have an explicit autograd function registered, or at minimum an explicit implementation registered for the same backend as being overridden/added.
 
 ## A Note on Imports
 
 All registrations will happen at the end of `import torch`. It is expected at that point that **no DSL runtime library is loaded** - this means that the runtime(s) must only be imported lazily. We can still check the presence of a module, and get it's version without importing, but special care must be taken when writing op kernels to not import DSLs too early. An illustrative example is below, using `triton`:
 
-This is a simplified version of how one might naively write the op and it's registration code - first the registration
-```
-# torch/_native/op/test_op/__init__.py
-from ... import triton_utils as tu
-
-from .triton_impl import register_to_dispatch
-
-tu.register_kernel(register_to_dispatch
-```
-
-Then the op implementation itself.
+First, we're going to write the registration function, and a top-level call, being very careful to not pull in the `triton` package early:
 
 ```
-# torch/_native/op/test_op/triton_impl.py
-
-import triton
-
-@triton.jit
-def inner_fn(...) -> ...:
-  # depends internally on triton, triton.language
-    pass
-
-@triton.jit
-def outer_fn(...) -> ...:
-    # depends internally on triton, triton.language
-    inner_fn(...)
-
-def calling_fn(...):
-    torch.library.wrap_triton(outer_fn)(...)
-
-def register_to_dispatch():
-    torch.library.custom_op(...)(calling_fn)
-    torch.library.register_autograd(...)
-    torch.library.register_fake(...)
-
-register_to_dispatch()
-```
-
-Unfortunately, when `register_to_dispatch` is imported from `triton_impl.py`, the entire file is pulled in, including the `import triton` statement -- this causes triton to be imported during op registration, which for both time and memory reasons we do not wish to happen - instead we need `triton` imported lazily. We can work around this by splitting `triton_impl.py` into two files - one contains the methods that rely on `triton.jit` (and must therefore call `import triton`, and one that doesn't depend on triton, and can be safely imported during registration.
-
-First, the kernels are in their own file:
-
-```
-# torch/_native/ops/test_op/triton_kernels.py
-import triton
-
-@triton.jit
-def inner_fn(...) -> ...:
-  # depends internally on triton, triton.language
-    pass
-
-@triton.jit
-def outer_fn(...) -> ...:
-    # depends internally on triton, triton.language
-    inner_fn(...)
-```
-Then the calling / registration code can go in another, lazily importing the kernels:
-
-```
-# torch/_native/op/test_op/triton_impl.py
+# torch/_native/ops/test_op/triton_impl.py
 
 # NOTE: no triton import in the file
 
@@ -87,6 +31,23 @@ def register_to_dispatch():
     torch.library.register_autograd(...)
     torch.library.register_fake(...)
 
+```
+
+Note the lazy import of kernels inside `calling_fn` - this function isn't called during registration (it just needs to be defined), and on first call it'll import the `triton_kernels` module, with all its dependencies. This kernels module can import anything it wants internally, our restriction on no DSL imports during registration has been met. Quick example of `triton_kernels.py` below:
+
+```
+# torch/_native/ops/test_op/triton_kernels.py
+import triton
+
+@triton.jit
+def inner_fn(...) -> ...:
+    # depends internally on triton, triton.language
+    pass
+
+@triton.jit
+def outer_fn(...) -> ...:
+    # depends internally on triton, triton.language
+    inner_fn(...)
 ```
 
 
@@ -136,9 +97,10 @@ lib = None
 
 def my_impl(...) -> ...:
     """
-    Replacement implementation
+    Replacement implementation - laxy import actual implementation and run it
     """
-    pass
+    from .my_impl_kernel import my_kernel
+    return my_kernel(...)
 
 # Override the symbol `aten._scaled_grouped_mm_v2` in this example with the implementation in `my_impl`,
 # only when the check-method `enable_my_impl` returns `True`
@@ -172,11 +134,16 @@ def register_kernel_override():
 
 ## Registering a New Operator
 
-TODO
+We currently don't have any use for this, please come talk to us if you want this!
 
 # Adding a new DSL
 
 Adding a new DSL is as simple as adding a single helper utils file, then writing your op.
+
+Some universal utilities are provided in `common_utils.py`:
+* `check_native_jit_disabled() -> bool` : returns `True` if native DSL ops have been globally disabled.
+* `_available_version(package: str) -> tuple[int,int,int] | None` : Gets the installed version of `package` without importing it
+* `_unavailable_reasons(deps: list[tuple[str,str]]) -> str | None` : For a list of `(package_name, module_name)` pairs, check (without importing) if the module is available, returning a string describing the mitigation step if it isn't.
 
 ## DSL utils file spec
 
@@ -186,4 +153,4 @@ A DSL utils file, named `$dsl_utils.py` (i.e. `cutedsl_utils.py` for `$dsl=cuted
 2. `runtime_version() -> tuple[int, int, int]` : return the `(major, minor, update)` version of the installed package.
 3. `register_op(Callable[..., None])` : Register a given op, where `Callable[..., None]` is similar to those defined in [Creating and registering...]. This can contain DSL-specific checks / features, for example one might choose to only register ops only if the DSL version is one of a pre-approved list.
 
-An example of an implementation of this spec can be found in [cutedsl_utils.py](cutedsl_utils.py).
+An example of an implementation of this spec can be found in [cutedsl_utils.py](cutedsl_utils.py), but please talk to us if you're planning on adding a new DSL.

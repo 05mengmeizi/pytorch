@@ -22,8 +22,7 @@ def _unavailable_reason(deps: list[tuple[str, str]]) -> None | str:
     NOTE: Doesn't actually import anything.
     """
     for package_name, module_name in deps:
-        # This doesn't actually import the packages, to reduce
-        # overall import time & memory.
+        # Note this doesn't actually import the packages
         if importlib.util.find_spec(module_name) is None:
             return (
                 f"missing optional dependency `{package_name}` "
@@ -32,14 +31,34 @@ def _unavailable_reason(deps: list[tuple[str, str]]) -> None | str:
     return None
 
 
-def _available_version(package: str) -> tuple[int, int, int]:
+def _available_version(package: str) -> tuple[int, int, int] | None:
     """
-    Get version of the installed "nvidia-cutlass-dsl" package
+    Get the installed version of a package as (major, minor, patch).
 
-    Assumes the package exists, i.e. will fail if it doesn't
+    Handles pre-release suffixes like "0.7.0rc1" or "3.1.0.post1" by
+    stripping non-numeric tails from each component. Returns None on
+    parse failure.
     """
-    version = importlib.metadata.version(package)
+    try:
+        version = importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
-    major, minor, update = (int(vi) for vi in version.split("."))
+    import packaging.version
 
-    return (major, minor, update)
+    try:
+        v = packaging.version.parse(version)
+    except packaging.version.InvalidVersion:
+        return None
+
+    return (v.major, v.minor, v.micro)
+
+
+@cache
+def check_native_version_skip() -> bool:
+    """
+    Single point to check if native DSL version gating should be skipped,
+    checked via:
+    TORCH_NATIVE_SKIP_VERSION_CHECK=1
+    """
+    return int(os.getenv("TORCH_NATIVE_SKIP_VERSION_CHECK", 0)) == 1

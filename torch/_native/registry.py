@@ -11,6 +11,5 @@ def register_op_registerer(fn: _RegisterFn) -> None:
 
 
 def register_all_operators() -> None:
-    print(f"{__name__=} registering {len(_RegisteredFns)} ops")
     for fn in _RegisteredFns:
         fn()
