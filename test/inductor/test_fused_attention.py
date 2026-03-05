@@ -382,11 +382,10 @@ class TestSDPAPatternRewriterTemplate(TestCase):
         self._check_common(checkpoint_wrapper(sfdp_pattern_5_v1), contains=False)
         self._check_common(sfdp_pattern_5_v2, contains=False)
         self._check_common(checkpoint_wrapper(sfdp_pattern_5_v2), contains=False)
-        self._check_common(sfdp_pattern_5_v3, contains=False, has_fuse_pattern=False)
+        self._check_common(sfdp_pattern_5_v3, contains=False)
         self._check_common(
             checkpoint_wrapper(sfdp_pattern_5_v3),
             contains=False,
-            has_fuse_pattern=False,
         )
 
     def _test_sdpa_rewriter_6(self):
@@ -423,14 +422,11 @@ class TestSDPAPatternRewriterTemplate(TestCase):
         self._check_common(
             checkpoint_wrapper(sfdp_pattern_6), contains=False, has_dropout=True
         )
-        self._check_common(
-            sfdp_pattern_6_v2, contains=False, has_dropout=True, has_fuse_pattern=False
-        )
+        self._check_common(sfdp_pattern_6_v2, contains=False, has_dropout=True)
         self._check_common(
             checkpoint_wrapper(sfdp_pattern_6_v2),
             contains=False,
             has_dropout=True,
-            has_fuse_pattern=False,
         )
 
     def _test_sdpa_rewriter_7(self):
@@ -476,7 +472,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             args,
             contains=False,
             has_dropout=True,
-            has_fuse_pattern=False,
             override_check_equal=True,
             atol=2e-3,
         )
@@ -497,9 +492,8 @@ class TestSDPAPatternRewriterTemplate(TestCase):
         self._check_common(
             checkpoint_wrapper(sfdp_pattern_7_v2),
             args,
-            contains=False,
+            contains=SM80OrLater,
             has_dropout=True,
-            has_fuse_pattern=False,
             override_check_equal=True,
             atol=2e-3,
         )
@@ -531,9 +525,7 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             torch.randn((2, 8, 4, 16), device=self.device, dtype=torch.half),
         )
         self._check_common(sfdp_pattern_8, args, atol=2e-3)
-        self._check_common(
-            sfdp_pattern_8_v2, args, atol=2e-3, contains=False, has_fuse_pattern=False
-        )
+        self._check_common(sfdp_pattern_8_v2, args, atol=2e-3, contains=False)
 
         args = (
             torch.randn((2, 8, 4, 16), device=GPU_TYPE, dtype=torch.half),
@@ -546,7 +538,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             args,
             atol=2e-3,
             contains=False,
-            has_fuse_pattern=False,
         )
 
     def _test_sdpa_rewriter_9(self):
@@ -592,9 +583,8 @@ class TestSDPAPatternRewriterTemplate(TestCase):
         self._check_common(
             sfdp_pattern_9_v2,
             args,
-            contains=False,
+            contains=SM80OrLater,
             has_dropout=True,
-            has_fuse_pattern=False,
             override_check_equal=True,
             atol=2e-3,
         )
@@ -614,9 +604,8 @@ class TestSDPAPatternRewriterTemplate(TestCase):
         self._check_common(
             checkpoint_wrapper(sfdp_pattern_9_v2),
             args,
-            contains=False,
+            contains=SM80OrLater,
             has_dropout=True,
-            has_fuse_pattern=False,
             override_check_equal=True,
             atol=2e-3,
         )
@@ -655,7 +644,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             args,
             atol=2e-3,
             contains=False,
-            has_fuse_pattern=False,
         )
 
         args = (
@@ -669,7 +657,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             args,
             atol=2e-3,
             contains=False,
-            has_fuse_pattern=False,
         )
 
     def _test_pattern_fails_with_tensor_factor(self):
@@ -1094,7 +1081,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             atol=2e-3,
             contains=False,
             has_dropout=False,
-            has_fuse_pattern=False,
             check_train=False,
         )
 
@@ -1119,7 +1105,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             contains=False,
             atol=2e-3,
             has_dropout=False,
-            has_fuse_pattern=False,
             check_train=False,
         )
 
@@ -1206,7 +1191,6 @@ class TestSDPAPatternRewriterTemplate(TestCase):
             args1=args,
             contains=False,
             has_dropout=True,
-            has_fuse_pattern=False,
             check_train=False,
         )
 
