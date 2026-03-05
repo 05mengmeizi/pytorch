@@ -816,14 +816,19 @@ class OutputGraph(OutputGraphCommon):
         # Bytecode to insert right before we call the graph
         self.pregraph_bytecode: list[Instruction] = []
 
-        # Maps SyntheticLocalSource → (fn, args, arg_sources) for hoisted
-        # graph inputs created by synthetic_graph_input, so invoke_subgraph
-        # reuse can recreate them on cache hit. arg_sources allows stamp-out
-        # to resolve new ctor arg values via source replacement.
+        # Maps SyntheticLocalSource → (fn, args, kwargs, arg_sources,
+        # kwarg_sources) for hoisted graph inputs created by
+        # synthetic_graph_input, so invoke_subgraph reuse can recreate them
+        # on cache hit. arg/kwarg_sources allow stamp-out to resolve new
+        # ctor values via source replacement.
         self.synthetic_source_ctor_info: dict[
             SyntheticLocalSource,
             tuple[
-                Callable[..., Any], tuple[Any, ...], tuple[Source | None, ...] | None
+                Callable[..., Any],
+                tuple[Any, ...],
+                dict[str, Any],
+                tuple[Source | None, ...] | None,
+                dict[str, Source | None] | None,
             ],
         ] = {}
 
@@ -1033,12 +1038,16 @@ class OutputGraph(OutputGraphCommon):
         self,
         fn: Callable[..., Any],
         args: tuple[Any, ...],
+        kwargs: dict[str, Any] | None = None,
         ctor_arg_sources: tuple[Source | None, ...] | None = None,
+        ctor_kwarg_sources: dict[str, Source | None] | None = None,
     ) -> VariableTracker:
         """
-        call fn(*args) before the graph runs and turn the result into a fake input.
+        call fn(*args, **kwargs) before the graph runs and turn the result into a fake input.
         """
-        example_value = fn(*args)
+        if kwargs is None:
+            kwargs = {}
+        example_value = fn(*args, **kwargs)
         varname = self.new_var()
         cg = PyCodegen(self.root_tx)
         cg.add_push_null(
@@ -1048,11 +1057,24 @@ class OutputGraph(OutputGraphCommon):
             )
         )
         cg.foreach(map(variables.ConstantVariable.create, args))
-        cg.call_function(len(args), False)
+        if kwargs:
+            cg.foreach(map(variables.ConstantVariable.create, kwargs.values()))
+            nargs = len(args) + len(kwargs)
+            cg.extend_output(
+                cg.create_call_function_kw(nargs, tuple(kwargs.keys()), False)
+            )
+        else:
+            cg.call_function(len(args), False)
         cg.store(varname)
         self.pregraph_bytecode.extend(cg.get_instructions())
         source = SyntheticLocalSource(varname)
-        self.synthetic_source_ctor_info[source] = (fn, args, ctor_arg_sources)
+        self.synthetic_source_ctor_info[source] = (
+            fn,
+            args,
+            kwargs,
+            ctor_arg_sources,
+            ctor_kwarg_sources,
+        )
         result = VariableTracker.build(self.root_tx, example_value, source)
         # Realize the VT because we will delete the guards on it in the next line.
         result = result.realize()
