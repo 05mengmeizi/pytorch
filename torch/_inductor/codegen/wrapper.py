@@ -616,7 +616,7 @@ class ExternKernelMultiOutLine(WrapperLine):
     """Codegen line for multi-output .out() variant calls.
 
     Generates a kernel call with pre-allocated output buffers passed as
-    keyword arguments (e.g. ``kernel(x, out0=buf0, out1=buf1)``).
+    keyword arguments. E.g. kernel(x, out0=buf0, out1=buf1).
     """
 
     wrapper: PythonWrapperCodegen
