@@ -225,9 +225,8 @@ class _PreparedSingleDimStrategy:
 
     Expands a strategy function's placeholder-based rules into concrete
     placement rules by filling in the actual shard/partial placements from
-    the op_schema. The result is a lookup table (strategy_lookup) that maps
+    the op_schema. The result is a lookup table (strategylooku) that maps
     input placements to output placements for one mesh dimension.
-
     Provides try_propagate() for matching a multi-dim placement tuple against
     the per-dim rules, and exposes allowed_sharding_per_input /
     allowed_partial_per_input for graph search neighbor generation.
