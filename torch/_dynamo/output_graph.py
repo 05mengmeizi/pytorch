@@ -1019,7 +1019,10 @@ class OutputGraph(OutputGraphCommon):
         return [pack_subgraph_name, unpack_subgraph_name]
 
     def synthetic_graph_input(
-        self, fn: Callable[..., Any], args: tuple[Any, ...]
+        self,
+        fn: Callable[..., Any],
+        args: tuple[Any, ...],
+        ctor_arg_sources: tuple[Source | None, ...] | None = None,
     ) -> VariableTracker:
         """
         call fn(*args) before the graph runs and turn the result into a fake input.
