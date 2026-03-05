@@ -45,7 +45,7 @@ void histogramdd_kernel_impl(Tensor& hist_output,
     TORCH_INTERNAL_ASSERT(weight.value().scalar_type() == input.scalar_type());
   }
 
-  const int64_t weight_stride = has_weight ? weight.value().stride(0) : 0;
+  const int64_t weight_stride = has_weight ? weight.value().stride(0) : -1;
   const int64_t D = input.size(1);
   size_t bin_edges_numel = 0;
   TORCH_INTERNAL_ASSERT(int64_t(bin_edges.size()) == D);
@@ -135,7 +135,6 @@ void histogramdd_kernel_impl(Tensor& hist_output,
                      rightmost_edge,
                      thread_histograms.strides(),
                      bin_selection_algorithm,
-                     has_weight,
                      weight_stride);
 
       mtl_dispatch1DJob(computeEncoder, histogramPSO, numThreads);
