@@ -20,7 +20,7 @@ from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_fsdp import (
     DEVICEInitMode,
     FSDPInitMode,
-    FSDPTest,
+    FSDPTestContinuous,
     get_devtype,
     NestedWrappedModule,
     TransformerWithSharedParams,
@@ -41,7 +41,7 @@ if TEST_WITH_DEV_DBG_ASAN:
     sys.exit(0)
 
 
-class TestClipGradNorm(FSDPTest):
+class TestClipGradNorm(FSDPTestContinuous):
     """Tests :meth:`FullyShardedDataParallel.clip_grad_norm_`."""
 
     @skip_if_lt_x_gpu(2)
@@ -193,12 +193,18 @@ class TestClipGradNorm(FSDPTest):
         self.assertEqual(ddp_total_norm, fsdp_total_norm)
         # Check that the gradients were modified by `clip_grad_norm_()`
         for param, orig_grad in zip(ddp_model.parameters(), orig_ddp_grads):
-            assert not torch.equal(param.grad, orig_grad)
+            if torch.equal(param.grad, orig_grad):
+                raise AssertionError(
+                    "Expected gradient to be modified by clip_grad_norm_()"
+                )
         for param, orig_grad in zip(fsdp_model.parameters(), orig_fsdp_grads):
             if param.grad is None:
                 self.assertEqual(param.grad, orig_grad)  # `None`
             else:
-                assert not torch.equal(param.grad, orig_grad)
+                if torch.equal(param.grad, orig_grad):
+                    raise AssertionError(
+                        "Expected gradient to be modified by clip_grad_norm_()"
+                    )
         # Run an optimizer step to ensure gradients matched after clipping
         ddp_optim.step()
         fsdp_optim.step()
