@@ -2983,6 +2983,7 @@ class GuardBuilder(GuardBuilderBase):
             get_verbose_code_parts(code, guard), guard.user_stack
         )
 
+    @skip_guard_check_spec
     def SHAPE_ENV(self, guard: Guard) -> None:
         from torch._dynamo.output_graph import OutputGraphCommon
 
@@ -5218,3 +5219,23 @@ GUARD_VALUE_DISPATCH: dict[str, GuardCheckSpec | object] = {
     if (handler := getattr(getattr(GuardBuilder, name), "guard_check_spec", None))
     is not None
 }
+
+# Validate that every guard method has an explicit guard_check_spec.
+# Guard methods are identified by: uppercase name, callable, and first
+# non-self parameter is 'guard'.
+_missing_specs = [
+    _name
+    for _name in dir(GuardBuilder)
+    if _name[0].isupper()
+    and not _name.startswith("_")
+    and callable(_method := getattr(GuardBuilder, _name, None))
+    and len(_params := list(inspect.signature(_method).parameters)) >= 2
+    and _params[1] == "guard"
+    and not hasattr(_method, "guard_check_spec")
+]
+if _missing_specs:
+    raise RuntimeError(
+        f"GuardBuilder methods missing guard_check_spec decorator: "
+        f"{', '.join(_missing_specs)}. Use @register_guard_check_spec, "
+        f"@skip_guard_check_spec, or @unsupported_guard_check_spec."
+    )
