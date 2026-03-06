@@ -10,6 +10,8 @@ When writing native ops, they are required to interact meaningfully with torch's
 
 As a further clarification, ops cannot be labelled as `CompositeImplicitAutograd` in `native_functions.yaml`, as-in the op must have an explicit autograd function registered, or at minimum an explicit implementation registered for the same backend as being overridden/added.
 
+Further, we expect the overriding function to take as the first argument `dispatch_keys` (of type `torch.DispatchKeySet`), which is necessary for fallback implementations.
+
 ## A Note on Imports
 
 All registrations will happen at the end of `import torch`. It is expected at that point that **no DSL runtime library is loaded** - this means that the runtime(s) must only be imported lazily. We can still check the presence of a module, and get it's version without importing, but special care must be taken when writing op kernels to not import DSLs too early. An illustrative example is below, using `triton`:
@@ -21,15 +23,20 @@ First, we're going to write the registration function, and a top-level call, bei
 
 # NOTE: no triton import in the file
 
-def calling_fn(...):
+from ... import triton_utils as tu
+
+def calling_fn(dispatch_key, ...):
     # Lazily import the kernels (and triton) on first call
     from .triton_kernels import outer_fn
     torch.library.wrap_triton(outer_fn)(...)
 
 def register_to_dispatch():
-    torch.library.custom_op(...)(calling_fn)
-    torch.library.register_autograd(...)
-    torch.library.register_fake(...)
+    tu.register_op_override(
+        "aten",
+        "_scaled_mm_v2",
+        "CUDA",
+        calling_fn,
+    )
 
 ```
 
@@ -66,10 +73,9 @@ This follows a simple and standard path, with a good example being the implement
 The following example replaces the implementation of `aten._scaled_grouped_mm_v2` on `CUDA` devices:
 
 ```
-# Note this must be global to avoid getting garbage collected
-lib = None
+from ... import cutedsl_utils as cu
 
-def my_impl(...) -> ...:
+def my_impl(dispatch_key, ...) -> ...:
     """
     Replacement implementation
     """
@@ -78,14 +84,12 @@ def my_impl(...) -> ...:
 # Override the symbol `aten._scaled_grouped_mm_v2` in this example with the implementation in `my_impl`,
 # noting the function signatures must match
 def register_kernel_override():
-    global lib
-
-    # If already registered, don't do it again
-    if lib is not None:
-        return
-
-    lib = torch.library.Library("aten", "IMPL", "CUDA")
-    lib.impl("_scaled_grouped_mm_v2", my_impl, "CUDA")
+    tu.register_op_override(
+        "aten",
+        "_scaled_grouped_mm_v2",
+        "CUDA",
+        my_impl,
+    )
 ```
 
 ### Replacing a Subset of Calls
@@ -93,7 +97,7 @@ def register_kernel_override():
 This time we only want to override the behavior of a subset of `aten._scaled_grouped_mm_v2` calls, and choose whether to invoke our implementation or the original depending on some input arguments. Note that the core of the example -- creating a `torch.library.Library`, and registering our function using `lib.impl(...)` are the same as in [Replacing an Operator](#Replacing-an-Operator).
 
 ```
-lib = None
+from ... import cutedsl_utils as cu
 
 def my_impl(...) -> ...:
     """
@@ -105,11 +109,6 @@ def my_impl(...) -> ...:
 # Override the symbol `aten._scaled_grouped_mm_v2` in this example with the implementation in `my_impl`,
 # only when the check-method `enable_my_impl` returns `True`
 def register_kernel_override():
-    global lib
-
-    # If already registered, don't do it again
-    if lib is not None:
-        return
 
     # Get the original implementation for fallback purposes
     fallback_kernel = torch.library.get_kernel("aten::_scaled_grouped_mm_v2", "CUDA")
@@ -126,15 +125,17 @@ def register_kernel_override():
                                    arg1, arg2, *args, **kwargs)
 
     # Same as before
-    lib = torch.library.Library("aten", "IMPL", "CUDA")
-    # Pass the enablement function, note needed with_keyset=True argument to
-    # get and pass dispatch keys
-    lib.impl("_scaled_grouped_mm_v2", enable_my_impl, "CUDA", with_keyset=True)
+    cu.register_op_override(
+        "aten",
+        "_scaled_grouped_mm_v2",
+        "CUDA",
+        enable_my_impl,
+    )
 ```
 
 ## Registering a New Operator
 
-We currently don't have any use for this, please come talk to us if you want this!
+We currently don't have a use for this functionality, please come talk to us if you want it!
 
 # Adding a new DSL
 
@@ -149,8 +150,19 @@ Some universal utilities are provided in `common_utils.py`:
 
 A DSL utils file, named `$dsl_utils.py` (i.e. `cutedsl_utils.py` for `$dsl=cutedsl`) requires three methods to be implemented.
 
-1. `runtime_available() -> bool` : tell the user if the runtime is available - note that this needs to be available during init, and must be fork-safe. Packages should also not be imported at this time - rely on `importlib.util.find_spec(package_name)` or similar to get the necessary information without importing.
-2. `runtime_version() -> tuple[int, int, int]` : return the `(major, minor, update)` version of the installed package.
-3. `register_op(Callable[..., None])` : Register a given op, where `Callable[..., None]` is similar to those defined in [Creating and registering...]. This can contain DSL-specific checks / features, for example one might choose to only register ops only if the DSL version is one of a pre-approved list.
+`runtime_available() -> bool` : tell the user if the runtime is available - note that this needs to be available during init, and must be fork-safe. Packages should also not be imported at this time - rely on `importlib.util.find_spec(package_name)` or similar to get the necessary information without importing.
+
+`runtime_version() -> tuple[int, int, int]` : return the `(major, minor, update)` version of the installed package.
+
+
+```
+register_op_override(
+    lib_symbol: str,
+    op_symbol: str,
+    dispatch_key: str,
+    implementation_fn: _OpOverrideFn,
+) -> None
+```
+Register a given implementation to a library - `lib_symbol = "aten"` for most cases, `op_symbol` refers to the library method you wish to override (ex. `"_scaled_grouped_mm_v2"` from above), and dispatch key will generally be one of `("CPU", "CUDA")` depending on what backend you're overriding.
 
 An example of an implementation of this spec can be found in [cutedsl_utils.py](cutedsl_utils.py), but please talk to us if you're planning on adding a new DSL.

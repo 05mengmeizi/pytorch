@@ -7,7 +7,7 @@ from .common_utils import (
     check_native_jit_disabled,
     check_native_version_skip,
 )
-from .registry import _RegisterFn, register_op_registerer
+from .registry import _OpOverrideFn, _register_op_override
 
 
 log = logging.getLogger(__name__)
@@ -61,7 +61,14 @@ def _version_is_sufficient() -> bool:
     return major_ok and minor_ok
 
 
-def register_op(fn: _RegisterFn) -> None:
+def register_op_override(
+    lib_symbol: str,
+    op_symbol: str,
+    dispatch_key: str,
+    impl: _OpOverrideFn,
+    *,
+    allow_override=False,
+) -> None:
     available, version = _check_runtime_available()
     if (not available) or check_native_jit_disabled():
         return
@@ -76,4 +83,10 @@ def register_op(fn: _RegisterFn) -> None:
         )
         return
 
-    register_op_registerer(fn)
+    _register_op_override(
+        lib_symbol,
+        op_symbol,
+        dispatch_key,
+        impl,
+        allow_override=allow_override,
+    )
