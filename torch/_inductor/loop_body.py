@@ -243,9 +243,11 @@ class LoopBody:
         self, dimension: int, new_range: int
     ) -> LoopBody:
         """
-        Expand node on `dimension` to `new_range` and rely on index modular to avoid
-        out-of-boundary access.
+        Expand node on `dimension` to `new_range` using out mask to skip
+        loads/stores for out-of-bounds indices. Uses ops.masked so that
+        codegen emits masked tl.load/tl.store with the dimension bound check.
         """
+        import torch
 
         old_body = self
         old_sizes = self.sizes
@@ -267,10 +269,25 @@ class LoopBody:
             iter_idx = index[: len(iter_size)]
             reduce_idx = index[len(iter_size) :]
 
+            # Out mask: only execute loads/stores when index is in original range
+            mask = ops.lt(
+                ops.index_expr(iter_idx[dimension], torch.int64),
+                ops.index_expr(sympy.Integer(original_range), torch.int64),
+            )
+
+            # Use % wrapping for index computation so that address expressions
+            # stay in bounds (masked-out threads still compute addresses)
             new_iter_idx = list(iter_idx)
             new_iter_idx[dimension] = iter_idx[dimension] % original_range
 
-            return old_body(new_iter_idx, reduce_idx)
+            def masked_body():
+                old_body(new_iter_idx, reduce_idx)
+                # Return a dummy value since ops.masked expects a return value,
+                # but the real outputs are stores (side effects masked by
+                # the _load_mask context)
+                return ops.constant(0, torch.int32)
+
+            return ops.masked(mask, masked_body, 0)
 
         loop_body = LoopBody(
             new_body, (iter_vars, reduce_vars), var_ranges, iter_vars, reduce_vars
