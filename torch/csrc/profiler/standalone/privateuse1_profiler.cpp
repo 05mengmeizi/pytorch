@@ -37,6 +37,11 @@ bool PrivateUse1ProfilerRegistry::hasFactory() const {
   return factory_ != nullptr;
 }
 
+bool PrivateUse1ProfilerRegistry::isForwardedToKineto() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return forwarded_to_kineto_;
+}
+
 void PrivateUse1ProfilerRegistry::forwardToKineto() {
   // Note: Caller must hold mutex_
   if (!factory_ || forwarded_to_kineto_) {

@@ -41,8 +41,9 @@ using PrivateUse1ProfilerFactory =
 // Example:
 //   class MyAcceleratorProfiler : public libkineto::IActivityProfiler {
 //     const std::string& name() const override { return name_; }
-//     const std::set<libkineto::ActivityType>& availableActivities() const override;
-//     std::unique_ptr<libkineto::IActivityProfilerSession> configure(...) override;
+//     const std::set<libkineto::ActivityType>& availableActivities() const
+//     override; std::unique_ptr<libkineto::IActivityProfilerSession>
+//     configure(...) override;
 //   private:
 //     std::string name_{"my_accelerator"};
 //   };
@@ -59,6 +60,10 @@ class TORCH_API PrivateUse1ProfilerRegistry {
 
   // Check if a factory has been registered.
   bool hasFactory() const;
+
+  // Check if the factory has been forwarded to Kineto.
+  // Useful for testing to verify the forwarding logic.
+  bool isForwardedToKineto() const;
 
   // Forward the registered factory to Kineto's activity profiler.
   // This should be called after Kineto has been initialized.
@@ -103,7 +108,7 @@ struct RegisterPrivateUse1Profiler {
 //   REGISTER_PRIVATEUSE1_PROFILER(MyAcceleratorProfiler)
 #define REGISTER_PRIVATEUSE1_PROFILER(ProfilerClass)          \
   static ::torch::profiler::impl::RegisterPrivateUse1Profiler \
-      privateuse1_profiler_register_##ProfilerClass(        \
+      privateuse1_profiler_register_##ProfilerClass(          \
           static_cast<ProfilerClass*>(nullptr))
 
 #endif // USE_KINETO
