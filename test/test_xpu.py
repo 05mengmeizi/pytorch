@@ -2967,7 +2967,7 @@ class TestFreezeRNG(TestCase):
     def test_freeze_rng(self):
         with freeze_rng_state():
             x1 = torch.rand(10, device="xpu")
-        
+
         x2 = torch.rand(10, device="xpu")
         self.assertEqual(x1, x2)
 
