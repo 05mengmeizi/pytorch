@@ -16,8 +16,8 @@ def _subprocess_lastline(script, env=None):
             cwd=os.path.dirname(os.path.realpath(__file__)),
             env=env,
             stderr=subprocess.DEVNULL,
+            text=True,
         )
-        .decode("ascii")
         .strip()
     )
     return result.rsplit("\n", 1)[-1]

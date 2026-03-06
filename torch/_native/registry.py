@@ -24,7 +24,6 @@ def _get_library(lib_symbol: str, dispatch_key: str) -> torch.library.Library:
     global libs
 
     if (lib_symbol, dispatch_key) not in libs:
-        print(f"CREATING LIB: {lib_symbol=} : {dispatch_key=}")
         libs[(lib_symbol, dispatch_key)] = torch.library.Library(
             lib_symbol, "IMPL", dispatch_key
         )
