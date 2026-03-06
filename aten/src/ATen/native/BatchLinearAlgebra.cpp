@@ -3517,7 +3517,7 @@ static std::string get_default_lstsq_driver(std::optional<std::string_view> driv
       };
       TORCH_CHECK(
         allowed_drivers_cuda.find(driver_str) != allowed_drivers_cuda.end(),
-        "torch.linalg.lstsq: `driver` other than `gels` or 'gelsd' is not supported on CUDA"
+        "torch.linalg.lstsq: `driver` other than `gels` or `gelsd` is not supported on CUDA"
       );
     }
   } else {
