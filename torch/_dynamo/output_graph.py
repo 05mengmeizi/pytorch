@@ -2688,7 +2688,8 @@ class OutputGraph(OutputGraphCommon):
 
         # Check for per-graph inductor config override (for debugging/bisecting)
         inductor_config_override = get_inductor_config_override_for_compile_id(
-            self.dynamo_compile_id, config.debug_inductor_config_override
+            self.dynamo_compile_id,
+            config.debug_inductor_config_override,
         )
         if inductor_config_override:
             compiler_fn = _wrap_with_inductor_config(
