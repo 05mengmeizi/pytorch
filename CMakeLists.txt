@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.27 FATAL_ERROR)
 
+# DO NOT COMMIT
+
 # Use compiler ID "AppleClang" instead of "Clang" for XCode. Not setting this
 # sometimes makes XCode C compiler gets detected as "Clang", even when the C++
 # one is detected as "AppleClang".
