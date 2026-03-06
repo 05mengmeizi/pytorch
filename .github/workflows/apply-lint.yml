@@ -10,6 +10,7 @@ jobs:
     environment: mergebot
     env:
       GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      LINTERS: CLANGFORMAT,NATIVEFUNCTIONS,NEWLINE,CODESPELL,PYFMT,BAZEL_LINTER,RUFF,MERGE_CONFLICTLESS_CSV,ATEN_CPU_GPU_AGNOSTIC,SET_LINTER
     steps:
       - name: Checkout repo
         id: checkout
@@ -36,7 +37,7 @@ jobs:
       - name: Install and initialize lintrunner
         run: |
           pip install lintrunner pyyaml==6.0.2
-          lintrunner init
+          lintrunner init --take "$LINTERS"
 
       - name: Setup committer id
         run: |
@@ -55,7 +56,7 @@ jobs:
 
           # Only run linters that produce auto-fixable patches (is_formatter = true)
           lintrunner -a \
-            --take CLANGFORMAT,NATIVEFUNCTIONS,NEWLINE,CODESPELL,PYFMT,BAZEL_LINTER,RUFF,MERGE_CONFLICTLESS_CSV,ATEN_CPU_GPU_AGNOSTIC,SET_LINTER \
+            --take "$LINTERS" \
             -m "origin/${BASE_BRANCH}" 2>/dev/null || true
 
           if git diff --quiet; then
