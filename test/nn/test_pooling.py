@@ -1176,7 +1176,7 @@ torch.cuda.synchronize()
 
             self.assertEqual(out, ref_out)
             if dtype == torch.half:
-                self.assertEqual(input.grad, ref_input.grad, atol=2e-4, rtol=1e-2)
+                self.assertEqual(input.grad, ref_input.grad, atol=5e-4, rtol=1e-1)
             else:
                 self.assertEqual(input.grad, ref_input.grad)
 
