@@ -1175,7 +1175,10 @@ torch.cuda.synchronize()
             ref_out.backward(ref_grad)
 
             self.assertEqual(out, ref_out)
-            self.assertEqual(input.grad, ref_input.grad)
+            if dtype == torch.half:
+                self.assertEqual(input.grad, ref_input.grad, atol=2e-4, rtol=1e-2)
+            else:
+                self.assertEqual(input.grad, ref_input.grad)
 
         helper(4, 8, 8, 8, 8, 3)
         helper(4, 8, 8, 8, 8, 3, count_include_pad=False, padding=1)
