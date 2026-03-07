@@ -1430,14 +1430,7 @@ class TensorVariable(VariableTracker):
         *,
         value: Any | None = None,
     ) -> Any | None:
-        # Only decompose when value is a tensor (to avoid item() graph breaks).
-        # For scalar values, let addcmul_ pass through to ATen so that the
-        # inductor lowering can emit FMA + mul_rn for bitwise parity with eager.
-        if (
-            value is not None
-            and isinstance(value, TensorVariable)
-            and config.enable_dynamo_decompositions
-        ):
+        if value is not None and config.enable_dynamo_decompositions:
             from .. import polyfills
 
             return tx.inline_user_function_return(
@@ -1561,9 +1554,10 @@ class TensorVariable(VariableTracker):
         *,
         alpha: VariableTracker | None = None,
     ) -> VariableTracker | None:
-        # Only decompose when alpha is a tensor (to avoid item() graph breaks).
-        # For scalar alpha, let add_ pass through to ATen so that the inductor
-        # lowering can emit FMA for bitwise parity with eager.
+        # Decompose only for tensor alpha to avoid item() graph breaks.
+        # Scalar alpha passes through to ATen where the inductor lowering emits
+        # FMA. addcmul_ and addcdiv_ route through here via alpha=value so this
+        # is the single place that handles the scalar/tensor distinction.
         if (
             alpha is not None
             and isinstance(alpha, TensorVariable)
@@ -1583,21 +1577,11 @@ class TensorVariable(VariableTracker):
         *,
         value: VariableTracker | None = None,
     ) -> VariableTracker | None:
-        # Only decompose when value is a tensor (to avoid item() graph breaks).
-        # For scalar values, let addcdiv_ pass through to ATen so that the
-        # inductor lowering can emit FMA + div_rn for bitwise parity with eager.
-        if (
-            value is not None
-            and isinstance(value, TensorVariable)
-            and config.enable_dynamo_decompositions
-        ):
+        if value is not None and config.enable_dynamo_decompositions:
             result = variables.TorchInGraphFunctionVariable(torch.div).call_function(
                 tx, [tensor1, tensor2], {}
             )
-            result = variables.TorchInGraphFunctionVariable(torch.mul).call_function(
-                tx, [result, value], {}
-            )
-            return self.call_method(tx, "add_", [result], {})
+            return self.call_method(tx, "add_", [result], {"alpha": value})
         return None
 
     def method___contains__(
