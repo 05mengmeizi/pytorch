@@ -1114,11 +1114,11 @@ torch.cuda.synchronize()
         helper(10, 512, 31, 31, 3, stride=2)
         helper(1, 129, 8, 8, 3, stride=2)
 
-    @expectedFailureMPS  # TODO: fixme
     @onlyNativeDeviceTypes
     @gcIfJetson
     @dtypes(torch.float, torch.double)
     @dtypesIfCUDA(torch.half, torch.float, torch.double)
+    @dtypesIfMPS(torch.float)
     def test_avg_pool3d_nhwc(self, device, dtype):
         def helper(
             n,
