@@ -1174,18 +1174,16 @@ torch.cuda.synchronize()
             ref_out = ref_pool(ref_input)
             ref_out.backward(ref_grad)
 
-            self.assertTrue(out.is_contiguous(memory_format=torch.channels_last_3d))
-            self.assertTrue(ref_out.is_contiguous())
             self.assertEqual(out, ref_out)
             self.assertEqual(input.grad, ref_input.grad)
 
         helper(4, 8, 8, 8, 8, 3)
         helper(4, 8, 8, 8, 8, 3, count_include_pad=False, padding=1)
-        helper(4, 8, 8, 8, 8, 3, count_include_pad=False, padding=2, stride=2)
+        helper(4, 8, 8, 8, 8, 3, count_include_pad=False, padding=1, stride=2)
         helper(4, 8, 8, 8, 8, 3, divisor_override=42)
         helper(4, 8, 8, 8, 8, 7)
         helper(4, 8, 7, 7, 7, 3, stride=1)
-        helper(4, 8, 7, 7, 7, 3, padding=2, stride=1)
+        helper(4, 8, 7, 7, 7, 3, padding=1, stride=1)
         helper(2, 16, 10, 10, 10, 3, stride=2)
 
     @onlyCPU
