@@ -3,6 +3,7 @@
 # To run:
 # python test/distributed/test_nvshmem.py
 
+
 import os
 
 import torch
@@ -31,12 +32,26 @@ def requires_nvshmem():
     )
 
 
+def has_nvls_support():
+    if not symm_mem.is_nvshmem_available():
+        return False
+
+    if os.environ.get("NVSHMEM_DISABLE_NVLS", "0") == "1":
+        return False
+
+    # Set NVSHMEM as SymmMem backend before running the check
+    symm_mem.set_backend("NVSHMEM")
+    from torch._C._autograd import DeviceType
+    from torch._C._distributed_c10d import _SymmetricMemory
+
+    return _SymmetricMemory.has_multicast_support(DeviceType.CUDA, 0)
+
+
 def requires_nvls():
-    """Skip test if NVLS (NVLink Switch) is not available."""
-    nvls_disabled = os.environ.get("NVSHMEM_DISABLE_NVLS", "0") == "1"
+    """Skip test if NVLS (NVLink SHARP) is not available."""
     return skip_but_pass_in_sandcastle_if(
-        nvls_disabled,
-        "Test requires NVLS which is disabled via NVSHMEM_DISABLE_NVLS=1",
+        not has_nvls_support(),
+        "Test requires NVLink SHARP support",
     )
 
 
@@ -224,6 +239,20 @@ class NVSHMEMSymmetricMemoryTest(MultiProcContinuousTest):
 
         for peer, tensor in enumerate(remote_tensors):
             self.assertEqual(tensor, peer)
+
+    def test_multicast_ptr(self) -> None:
+        """
+        Get the multicast pointer
+        """
+        self._init_device()
+        group_name = dist.group.WORLD.group_name
+
+        tensor = symm_mem.empty(1, device=self.device)
+        handle = symm_mem.rendezvous(tensor, group_name)
+        if has_nvls_support():
+            self.assertNotEqual(handle.multicast_ptr, 0)
+        else:
+            self.assertEqual(handle.multicast_ptr, 0)
 
     @skipIfRocm
     def test_nvshmem_put(self) -> None:
@@ -754,7 +783,10 @@ class NVSHMEMTileCommTest(MultiProcContinuousTest):
     @parametrize("dtype", [torch.float, torch.half, torch.bfloat16])
     def test_tile_reduce(self, tile_size: int, dtype: torch.dtype) -> None:
         full_size = 1024
-        assert tile_size <= full_size
+        if not (tile_size <= full_size):
+            raise AssertionError(
+                f"Expected tile_size <= full_size, got {tile_size} vs {full_size}"
+            )
 
         self._init_device()
         group_name = dist.group.WORLD.group_name
@@ -797,8 +829,16 @@ class NVSHMEMTileCommTest(MultiProcContinuousTest):
         num_slices_row = (
             self.world_size // num_slices_col
         )  # number of tiles on row dimension
-        assert tile_size * num_slices_col <= full_size
-        assert tile_size * num_slices_row <= full_size
+        if not (tile_size * num_slices_col <= full_size):
+            raise AssertionError(
+                f"tile_size * num_slices_col > full_size: "
+                f"{tile_size * num_slices_col} vs {full_size}"
+            )
+        if not (tile_size * num_slices_row <= full_size):
+            raise AssertionError(
+                f"tile_size * num_slices_row > full_size: "
+                f"{tile_size * num_slices_row} vs {full_size}"
+            )
 
         self._init_device()
         group_name = dist.group.WORLD.group_name

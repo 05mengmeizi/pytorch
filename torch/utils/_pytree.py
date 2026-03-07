@@ -39,7 +39,6 @@ from typing import (
     TYPE_CHECKING,
     TypeAlias,
     TypeVar,
-    Union,
 )
 from typing_extensions import deprecated, NamedTuple, Self, TypeIs
 
@@ -610,7 +609,7 @@ def _private_register_pytree_node(
     """
     from torch._library.opaque_object import is_opaque_type
 
-    if is_opaque_type(cls):
+    if isinstance(cls, type) and is_opaque_type(cls):
         raise ValueError(
             f"{cls} cannot be registered as a pytree as it has been "
             "registered as an opaque object. Opaque objects must be pytree leaves."
@@ -1099,7 +1098,7 @@ def _is_leaf(tree: PyTree, is_leaf: Callable[[PyTree], bool] | None = None) -> b
 #   num_leaves: the number of leaves
 #   num_children: the number of children of the root Node (i.e., len(children()))
 #   is_leaf(): whether the root Node is a leaf
-@dataclasses.dataclass(init=False, frozen=True, eq=True, repr=False)
+@dataclasses.dataclass(init=False, frozen=True, eq=True, repr=False, slots=True)
 class TreeSpec:
     type: Any
     _context: Context
@@ -1333,7 +1332,7 @@ PyTreeSpec: TypeAlias = TreeSpec
     "use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.",
     category=FutureWarning,
 )
-@dataclasses.dataclass(init=True, frozen=True, eq=False, repr=False)
+@dataclasses.dataclass(init=True, frozen=True, eq=False, repr=False, slots=True)
 class LeafSpec(TreeSpec):
     type: Any = dataclasses.field(default=None, init=False)
     _context: Context = dataclasses.field(default=None, init=False)
@@ -1385,7 +1384,7 @@ def treespec_dict(
 
 def _is_pytreespec_instance(
     obj: Any,
-) -> TypeIs[Union[TreeSpec, "cxx_pytree.PyTreeSpec"]]:
+) -> TypeIs["TreeSpec | cxx_pytree.PyTreeSpec"]:
     if isinstance(obj, TreeSpec):
         return True
     if "torch.utils._cxx_pytree" in sys.modules:
@@ -1407,7 +1406,7 @@ def _is_pytreespec_instance(
 
 
 def _ensure_python_treespec_instance(
-    treespec: Union[TreeSpec, "cxx_pytree.PyTreeSpec"],
+    treespec: "TreeSpec | cxx_pytree.PyTreeSpec",
 ) -> TreeSpec:
     if isinstance(treespec, TreeSpec):
         return treespec

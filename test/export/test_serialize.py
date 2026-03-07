@@ -574,7 +574,10 @@ def forward(self, x):
         )
 
         range_constraints = list(ep.range_constraints.keys())
-        assert len(range_constraints) == 1
+        if len(range_constraints) != 1:
+            raise AssertionError(
+                f"Expected 1 range constraint, got {len(range_constraints)}"
+            )
         symint = range_constraints[0]
 
         import sympy
@@ -654,7 +657,10 @@ def forward(self, x):
             args = (torch.randn(3, device=device), torch.randn(3, device=device))
             ep = torch.export.export(m, args=args)
             ep = ep.run_decompositions(decompose_custom_triton_ops=False)
-            assert torch.allclose(m(*args), ep.module()(*args))
+            if not torch.allclose(m(*args), ep.module()(*args)):
+                raise AssertionError(
+                    "Exported model output does not match eager output"
+                )
 
             serialized = ExportedProgramSerializer().serialize(ep)
 
@@ -719,6 +725,74 @@ def forward(self, x):
                     serialized.constants,
                     serialized.example_inputs,
                 )
+
+    @unittest.skipIf(
+        not torch.cuda.is_available() or not has_triton(), "requires cuda and triton"
+    )
+    def test_triton_constexpr_matching(self) -> None:
+        """Test that constexpr values are properly matched during serialization.
+
+        This tests the normalization logic that handles various constexpr types
+        (bool, int, float, string) when matching kernel cache entries. The kernel
+        signature stores constexprs as strings which are parsed back to Python types.
+        """
+
+        @triton.jit
+        def kernel_with_constexprs(
+            in_ptr,
+            out_ptr,
+            n_elements,
+            BLOCK_SIZE: "tl.constexpr",
+            USE_FAST_PATH: "tl.constexpr",  # bool constexpr
+        ):
+            pid = tl.program_id(axis=0)
+            offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+            mask = offsets < n_elements
+            x = tl.load(in_ptr + offsets, mask=mask)
+            tl.store(out_ptr + offsets, x, mask=mask)
+
+        def custom_op(x: torch.Tensor) -> torch.Tensor:
+            output = torch.empty_like(x)
+            n_elements = output.numel()
+
+            def grid(meta):
+                return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
+            wrap_triton(kernel_with_constexprs)[grid](
+                x,
+                output,
+                n_elements,
+                BLOCK_SIZE=128,
+                USE_FAST_PATH=True,  # bool constexpr
+            )
+            return output
+
+        class Model(torch.nn.Module):
+            def forward(self, x):
+                return custom_op(x)
+
+        device = "cuda"
+        m = Model().to(device)
+        args = (torch.randn(1024, device=device),)
+
+        # Run the model in eager mode first to warm up the Triton cache
+        eager_result = m(*args)
+
+        ep = torch.export.export(m, args=args)
+        ep = ep.run_decompositions(decompose_custom_triton_ops=False)
+        if not torch.allclose(eager_result, ep.module()(*args)):
+            raise AssertionError("Exported model output does not match eager result")
+
+        # This should not raise - constexpr matching should work for bool values
+        serialized = ExportedProgramSerializer().serialize(ep)
+
+        # Verify the triton node was serialized
+        triton_node = None
+        for node in serialized.exported_program.graph_module.graph.nodes:
+            if node.target == "torch.ops.higher_order.triton_kernel_wrapper_functional":
+                triton_node = node
+                break
+        self.assertIsNotNone(triton_node)
 
     def test_kwargs_default(self) -> None:
         """
@@ -1418,7 +1492,7 @@ class TestDeserialize(TestCase):
     def test_sym_bool(self):
         class Module(torch.nn.Module):
             def forward(self, x, y):
-                assert x.size(0) in y
+                assert x.size(0) in y  # noqa: S101
                 return x + y
 
         f = Module()
@@ -2160,8 +2234,12 @@ class TestSerializeCustomClass(TestCase):
         serialized_vals = serialize(ep)
 
         ep_str = serialized_vals.exported_program.decode("utf-8")
-        assert "class_fqn" in ep_str
-        assert custom_obj._type().qualified_name() in ep_str
+        if "class_fqn" not in ep_str:
+            raise AssertionError("'class_fqn' not found in serialized output")
+        if custom_obj._type().qualified_name() not in ep_str:
+            raise AssertionError(
+                f"'{custom_obj._type().qualified_name()}' not found in serialized output"
+            )
 
         deserialized_ep = deserialize(serialized_vals)
 

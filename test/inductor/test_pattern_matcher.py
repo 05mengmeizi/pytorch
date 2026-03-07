@@ -1,10 +1,8 @@
 # Owner(s): ["module: inductor"]
 import copy
-import itertools
 import os
 import unittest
 from collections.abc import Callable
-from typing import Optional
 
 import torch
 import torch._dynamo.config as dynamo_config
@@ -142,7 +140,7 @@ class TestPatternMatcher(TestCase):
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -241,7 +239,7 @@ class TestPatternMatcher(TestCase):
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -288,7 +286,7 @@ class TestPatternMatcher(TestCase):
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -335,7 +333,8 @@ class TestPatternMatcher(TestCase):
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_fusion": False,
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -377,27 +376,25 @@ class TestPatternMatcher(TestCase):
         }
     )
     @unittest.skipIf(not IS_BIG_GPU, "templates require big gpu")
-    def test_mixed_mm_exhaustive_dtypes(self):
+    @parametrize("dtype_left", (torch.float16, torch.float32, torch.bfloat16))
+    @parametrize("dtype_right", (torch.int8, torch.uint8))
+    def test_mixed_mm_exhaustive(self, dtype_left, dtype_right):
         def fn(a, b):
             return torch.mm(a, b.to(a.dtype))
 
-        dtypes_left = [torch.float16, torch.float32, torch.bfloat16]
-        dtypes_right = [torch.int8, torch.uint8]
         dtype_ranges = {torch.uint8: (0, 255), torch.int8: (-128, 127)}
-        for dtype_left, dtype_right in itertools.product(dtypes_left, dtypes_right):
-            low, high = dtype_ranges[dtype_right]
-            args = (
-                torch.randn(256, 256, dtype=dtype_left, device=GPU_TYPE),
-                torch.randint(
-                    low, high, (256, 256), dtype=dtype_right, device=GPU_TYPE
-                ),
-            )
-            self._test_mixed_impl(fn, args, True, False, rtol=0.16, atol=1e-4)
+        low, high = dtype_ranges[dtype_right]
+        args = (
+            torch.randn(256, 256, dtype=dtype_left, device=GPU_TYPE),
+            torch.randint(low, high, (256, 256), dtype=dtype_right, device=GPU_TYPE),
+        )
+        self._test_mixed_impl(fn, args, True, False, rtol=0.16, atol=1e-4)
 
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_fusion": False,
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -428,7 +425,8 @@ class TestPatternMatcher(TestCase):
     @skipCUDAIf(not SM80OrLater, "need sm_80")
     @inductor_config.patch(
         {
-            "benchmark_epilogue_fusion": "False",
+            "benchmark_fusion": False,
+            "benchmark_epilogue_fusion": False,
             "max_autotune_gemm_backends": "TRITON",
             "max_autotune_gemm": True,
         }
@@ -477,7 +475,8 @@ class TestPatternMatcher(TestCase):
 
         with inductor_config.patch(
             {
-                "benchmark_epilogue_fusion": "False",
+                "benchmark_fusion": False,
+                "benchmark_epilogue_fusion": False,
                 "max_autotune_gemm_backends": "TRITON",
                 "max_autotune_gemm": True,
             }
@@ -1611,7 +1610,8 @@ class TestPatternMatcher(TestCase):
 
     def test_mutation_op_matching(self):
         def check(type, func_name, args, kwargs, expect=True):
-            assert type in ["call_function", "call_method"]
+            if type not in ["call_function", "call_method"]:
+                raise AssertionError
             graph = torch.fx.Graph()
             getattr(graph, type)(func_name, args, kwargs)
             res = is_mutation_op(next(iter(graph.nodes)))
@@ -1710,7 +1710,7 @@ class TestPatternMatcher(TestCase):
             result: torch.Tensor,
             input: torch.Tensor,
             scale: torch.Tensor,
-            azp: Optional[torch.Tensor] = None,
+            azp: torch.Tensor | None = None,
         ) -> None:
             # bogus implementation doesn't matter
             _result = torch.mul(input, scale).to(torch.int8)
