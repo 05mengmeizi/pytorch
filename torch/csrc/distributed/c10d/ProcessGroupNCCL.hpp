@@ -1051,6 +1051,13 @@ class TORCH_API ProcessGroupNCCL : public Backend {
 
   void setEnableNanCheck(bool enableNanCheck);
 
+  // APIs related to memory offload
+  void suspend() override;
+
+  void resume() override;
+
+  std::unordered_map<std::string, uint64_t> getMemoryStats() override;
+
  protected:
   uint64_t getWatchdogHeartbt() const;
 

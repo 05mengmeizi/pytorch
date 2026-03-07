@@ -376,6 +376,13 @@ class NCCLComm {
 
   std::string repr() const;
 
+  // APIs related to memory offload
+  void suspend();
+
+  void resume();
+
+  std::unordered_map<std::string, uint64_t> getMemoryStats();
+
   friend class ProcessGroupNCCL;
 
  protected:
