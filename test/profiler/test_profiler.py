@@ -1525,7 +1525,7 @@ class TestProfiler(TestCase):
             torch.cuda.synchronize()
             torch.add(t1, t2)
 
-        def trace_and_check(exp_config: Optional[_ExperimentalConfig]) -> None:
+        def trace_and_check(exp_config: _ExperimentalConfig | None) -> None:
             with _profile(
                 use_kineto=True,
                 use_device="cuda",
@@ -1538,10 +1538,12 @@ class TestProfiler(TestCase):
                 prof.export_chrome_trace(fname)
                 with open(fname) as f:
                     j = json.load(f)
-                    cats = {e.get("cat", None) for e in j["traceEvents"]}
+                    cat_or_name = "cat" if torch.version.cuda else "name"
+                    cats = {e.get(cat_or_name, None) for e in j["traceEvents"]}
+            event_name = "cuda_sync" if torch.version.cuda else "hipDeviceSynchronize"
             self.assertTrue(
-                "cuda_sync" in cats,
-                f"Expected to find cuda_sync event found = {cats}",
+                event_name in cats,
+                f"Expected to find {event_name} event found = {cats}",
             )
 
         print("Testing enable_cuda_sync_events in _ExperimentalConfig")
@@ -2632,6 +2634,70 @@ if KinetoStepTracker.current_step() != initial_step + 2 * niters:
 
         # With zero timeout, we should have fewer events than baseline
         self.assertLess(len(events_with_timeout), baseline_count)
+
+    @unittest.skipIf(not kineto_available(), "Kineto is required")
+    def test_parse_kineto_results_timeout_fails(self):
+        """Test that _parse_kineto_results fails with a negative timeout."""
+        with _profile(use_kineto=True) as p:
+            x = torch.randn(10, 10)
+            y = torch.randn(10, 10)
+            z = torch.mm(x, y)
+
+        with self.assertRaisesRegex(ValueError, "timeout_s must be non-negative"):
+            events = p._parse_kineto_results(p.kineto_results, timeout_s=-60.0)
+
+    @unittest.skipIf(not kineto_available(), "Kineto is required")
+    def test_public_api_post_processing_timeout_none(self):
+        """Test that torch.profiler.profile works normally without timeout."""
+        with profile() as p:
+            x = torch.randn(10, 10)
+            y = torch.randn(10, 10)
+            z = torch.mm(x, y)
+
+        events = p.events()
+        self.assertGreater(len(events), 0)
+        self.assertTrue(any("aten::mm" in e.name for e in events))
+
+    @unittest.skipIf(not kineto_available(), "Kineto is required")
+    def test_public_api_post_processing_timeout_large(self):
+        """Test that torch.profiler.profile with a large timeout processes all events."""
+        with profile(post_processing_timeout_s=60.0) as p:
+            x = torch.randn(10, 10)
+            y = torch.randn(10, 10)
+            z = torch.mm(x, y)
+
+        events = p.events()
+        self.assertGreater(len(events), 0)
+        self.assertTrue(any("aten::mm" in e.name for e in events))
+
+    @unittest.skipIf(not kineto_available(), "Kineto is required")
+    def test_public_api_post_processing_timeout_zero(self):
+        """Test that torch.profiler.profile with zero timeout returns partial results."""
+        import logging
+
+        with profile(post_processing_timeout_s=0.0) as p:
+            for _ in range(10):
+                x = torch.randn(10, 10)
+                y = torch.randn(10, 10)
+                z = torch.mm(x, y)
+
+        with self.assertLogs("torch.autograd.profiler", level=logging.WARNING) as cm:
+            events = p.events()
+
+        self.assertTrue(
+            any("timed out" in msg and "partial results" in msg for msg in cm.output)
+        )
+
+    @unittest.skipIf(not kineto_available(), "Kineto is required")
+    def test_public_api_post_processing_timeout_fails(self):
+        """Test that torch.profiler.profile with a negative timeout fails correctly."""
+        with self.assertRaisesRegex(
+            ValueError, "post_processing_timeout_s must be non-negative"
+        ):
+            with profile(post_processing_timeout_s=-1.0) as p:
+                x = torch.randn(10, 10)
+                y = torch.randn(10, 10)
+                z = torch.mm(x, y)
 
 
 class SimpleNet(nn.Module):
