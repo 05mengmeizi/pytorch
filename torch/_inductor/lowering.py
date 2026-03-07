@@ -7064,6 +7064,124 @@ square = register_pointwise(aten.square)
 sub = register_pointwise(aten.sub, allow_alpha=True)
 
 
+@register_lowering(aten.lerp.Scalar, broadcast=True)
+def lerp_scalar(start, end, weight):
+    """
+    Computes start + weight * (end - start) using FMA for CUDA floating-point.
+
+    Matches eager CUDA kernel's dual-formula approach (see aten/src/ATen/native/Lerp.h):
+      |w| <  0.5: start + w * (end - start)       → fma(w, end - start, start)
+      |w| >= 0.5: end + (-(1-w)) * (end - start)  → fma(-(1-w), end - start, end)
+    """
+    dtype = get_promoted_dtype(
+        start,
+        end,
+        type_promotion_kind=ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
+
+    start_loader = start.make_loader()
+    end_loader = end.make_loader()
+
+    device = start.get_device()
+    use_fma = (
+        dtype.is_floating_point
+        and not torch.version.hip
+        and device is not None
+        and device.type in ["cuda", "xpu"]
+    )
+
+    if isinstance(weight, (int, float)):
+        use_high = weight >= 0.5 or weight <= -0.5
+    else:
+        use_high = False
+
+    def inner_fn(idx):
+        start_val = start_loader(idx)
+        end_val = end_loader(idx)
+        diff = ops.sub(end_val, start_val)
+
+        if use_fma:
+            if use_high:
+                coeff = ops.constant(-(1.0 - weight), dtype)
+                return ops.fma(coeff, diff, end_val)
+            else:
+                w = ops.constant(weight, dtype)
+                return ops.fma(w, diff, start_val)
+        else:
+            if use_high:
+                coeff = ops.constant(-(1.0 - weight), dtype)
+                return ops.add(end_val, ops.mul(coeff, diff))
+            else:
+                w = ops.constant(weight, dtype)
+                return ops.add(start_val, ops.mul(w, diff))
+
+    return Pointwise.create(
+        device=start.get_device(),
+        dtype=dtype,
+        inner_fn=inner_fn,
+        ranges=start.get_size(),
+    )
+
+
+@register_lowering(aten.lerp.Tensor, broadcast=True)
+def lerp_tensor(start, end, weight):
+    """
+    Computes lerp with tensor weight using FMA.
+
+    Matches eager CUDA kernel's dual-formula approach (see aten/src/ATen/native/Lerp.h):
+      |w| <  0.5: start + w * (end - start)       → fma(w, end - start, start)
+      |w| >= 0.5: end + (-(1-w)) * (end - start)  → fma(-(1-w), end - start, end)
+    """
+    dtype = get_promoted_dtype(
+        start,
+        end,
+        weight,
+        type_promotion_kind=ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+    )
+
+    start_loader = start.make_loader()
+    end_loader = end.make_loader()
+    weight_loader = weight.make_loader()
+
+    device = start.get_device()
+    use_fma = (
+        dtype.is_floating_point
+        and not torch.version.hip
+        and device is not None
+        and device.type in ["cuda", "xpu"]
+    )
+
+    def inner_fn(idx):
+        start_val = start_loader(idx)
+        end_val = end_loader(idx)
+        w_val = weight_loader(idx)
+        diff = ops.sub(end_val, start_val)
+        abs_w = ops.abs(w_val)
+        threshold = ops.constant(0.5, dtype)
+        mask = ops.ge(abs_w, threshold)
+        one = ops.constant(1.0, dtype)
+
+        if use_fma:
+            # Low: fma(w, diff, start)
+            low = ops.fma(w_val, diff, start_val)
+            # High: fma(-(1-w), diff, end)
+            neg_omw = ops.neg(ops.sub(one, w_val))
+            high = ops.fma(neg_omw, diff, end_val)
+        else:
+            low = ops.add(start_val, ops.mul(w_val, diff))
+            neg_omw = ops.neg(ops.sub(one, w_val))
+            high = ops.add(end_val, ops.mul(neg_omw, diff))
+
+        return ops.where(mask, high, low)
+
+    return Pointwise.create(
+        device=start.get_device(),
+        dtype=dtype,
+        inner_fn=inner_fn,
+        ranges=start.get_size(),
+    )
+
+
 @register_lowering(aten.addcmul, broadcast=True)
 def addcmul(self, tensor1, tensor2, *, value=1):
     """
