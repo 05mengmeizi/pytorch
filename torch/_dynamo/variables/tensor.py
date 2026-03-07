@@ -1561,7 +1561,14 @@ class TensorVariable(VariableTracker):
         *,
         alpha: VariableTracker | None = None,
     ) -> VariableTracker | None:
-        if alpha is not None and config.enable_dynamo_decompositions:
+        # Only decompose when alpha is a tensor (to avoid item() graph breaks).
+        # For scalar alpha, let add_ pass through to ATen so that the inductor
+        # lowering can emit FMA for bitwise parity with eager.
+        if (
+            alpha is not None
+            and isinstance(alpha, TensorVariable)
+            and config.enable_dynamo_decompositions
+        ):
             result = variables.TorchInGraphFunctionVariable(torch.mul).call_function(
                 tx, [other, alpha], {}
             )
@@ -1576,7 +1583,14 @@ class TensorVariable(VariableTracker):
         *,
         value: VariableTracker | None = None,
     ) -> VariableTracker | None:
-        if value is not None and config.enable_dynamo_decompositions:
+        # Only decompose when value is a tensor (to avoid item() graph breaks).
+        # For scalar values, let addcdiv_ pass through to ATen so that the
+        # inductor lowering can emit FMA + div_rn for bitwise parity with eager.
+        if (
+            value is not None
+            and isinstance(value, TensorVariable)
+            and config.enable_dynamo_decompositions
+        ):
             result = variables.TorchInGraphFunctionVariable(torch.div).call_function(
                 tx, [tensor1, tensor2], {}
             )
