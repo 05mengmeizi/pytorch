@@ -1,7 +1,9 @@
+# Owner(s): ["module: pytree"]
+
 """
 Contains utility functions for working with nested python data structures.
 
-A *pytree* is Python nested data structure. It is a tree in the sense that
+A *pytree* is a Python nested data structure. It is a tree in the sense that
 nodes are Python collections (e.g., list, tuple, dict) and the leaves are
 Python values. Furthermore, a pytree should not contain reference cycles.
 
@@ -90,6 +92,9 @@ __all__ = [
     "is_structseq_class",
     "is_structseq_instance",
 ]
+
+
+__name__ = "torch.utils.pytree.python"  # sets the __module__ attribute of all functions in this module
 
 
 T = TypeVar("T")
@@ -1104,7 +1109,9 @@ def _is_leaf(tree: PyTree, is_leaf: Callable[[PyTree], bool] | None = None) -> b
 #   num_children: the number of children of the root Node (i.e., len(children()))
 #   is_leaf(): whether the root Node is a leaf
 @dataclasses.dataclass(init=False, frozen=True, eq=True, repr=False, slots=True)
-class TreeSpec:
+class PyTreeSpec:
+    """Representing the structure of the pytree."""
+
     type: Any
     _context: Context
     _children: list[Self]
@@ -1188,15 +1195,20 @@ class TreeSpec:
         return self._children
 
     def is_leaf(self) -> bool:
+        """Test whether the treespec represents a leaf."""
         return self.num_nodes == 1 and self.num_leaves == 1
 
     def children(self) -> list[Self]:
+        """Get all the child treespecs."""
         return self._children.copy()
 
     def child(self, index: int) -> Self:
+        """Get the child treespec at the given index."""
         return self._children[index]
 
     def flatten_up_to(self, tree: PyTree) -> list[PyTree]:
+        """Flatten the subtrees in ``tree`` up to the structure of this treespec and return a list of subtrees."""
+
         def helper(treespec: TreeSpec, node: PyTree, subtrees: list[PyTree]) -> None:
             if treespec.is_leaf():
                 subtrees.append(node)
@@ -1280,6 +1292,7 @@ class TreeSpec:
         return subtrees
 
     def unflatten(self, leaves: Iterable[Any]) -> PyTree:
+        """Reconstruct a pytree from the leaves."""
         if not isinstance(leaves, (list, tuple)):
             leaves = list(leaves)
         if len(leaves) != self.num_leaves:
@@ -1325,7 +1338,7 @@ class TreeSpec:
         return hash((node_type, hashable_context, tuple(self._children)))
 
 
-PyTreeSpec: TypeAlias = TreeSpec
+TreeSpec: TypeAlias = PyTreeSpec
 
 
 # NOTE: subclassing a dataclass is subtle. In order to enable reasoning about
@@ -2058,16 +2071,22 @@ def treespec_loads(serialized: str) -> TreeSpec:
     )
 
 
-class _DummyLeaf:
+class _Asterisk(str):
+    __slots__ = ()
+
+    def __new__(cls) -> Self:
+        return super().__new__(cls, "*")
+
     def __repr__(self) -> str:
-        return "*"
+        return "*"  # no quotes
+
+
+_asterisk = _Asterisk()
+del _Asterisk
 
 
 def treespec_pprint(treespec: TreeSpec) -> str:
-    dummy_tree = tree_unflatten(
-        [_DummyLeaf() for _ in range(treespec.num_leaves)],
-        treespec,
-    )
+    dummy_tree = tree_unflatten([_asterisk] * treespec.num_leaves, treespec)
     return repr(dummy_tree)
 
 
@@ -2221,3 +2240,11 @@ def key_get(obj: Any, kp: KeyPath) -> Any:
     for k in kp:
         obj = k.get(obj)
     return obj
+
+
+# Pre-load to make `torch.utils.pytree` available immediately after `torch.utils` is imported.
+# See the `if TYPE_CHECKING` block at the top of `torch/utils/__init__.py` for more details.
+import torch.utils.pytree as _
+
+
+del _
