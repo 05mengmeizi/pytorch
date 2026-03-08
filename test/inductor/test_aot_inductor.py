@@ -40,7 +40,6 @@ from torch.export import Dim, export
 from torch.export.pt2_archive._package import load_pt2
 from torch.nn.attention import (
     activate_flash_attention_impl,
-    list_flash_attention_impls,
     restore_flash_attention_impl,
 )
 from torch.testing import FileCheck
@@ -106,6 +105,11 @@ from torch.utils._triton import (
 def use_fa3():
     try:
         activate_flash_attention_impl("FA3")
+    except (ModuleNotFoundError, RuntimeError) as err:
+        raise unittest.SkipTest(
+            "FA3 backend not available (flash_attn_interface missing)"
+        ) from err
+    try:
         yield
     finally:
         restore_flash_attention_impl()
@@ -4797,7 +4801,6 @@ class AOTInductorTestsTemplate:
         self.check_model(Model(), example_inputs)
 
     @unittest.skipIf(not SM90OrLater, "FA3 requires SM90+")
-    @unittest.skipIf("FA3" not in list_flash_attention_impls(), "FA3 not available")
     def test_varlen_attn_paged_kv_cache(self):
         if self.device != GPU_TYPE:
             raise unittest.SkipTest("requires GPU")
