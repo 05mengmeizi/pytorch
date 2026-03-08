@@ -22,7 +22,7 @@ from torch.testing._internal.inductor_utils import (
 # Global config
 # ───────────────────────────────────────────────────────────────
 BASE_SEED = 1234
-DROPOUT_P = 0.5
+DROPOUT_P = 0.3
 FFN_DIM = 3072
 HIDDEN_DIM = 1024
 BATCH = 3
@@ -228,6 +228,9 @@ class TestDropoutAlignRandomEager(InductorTestCase):
             seed1_c, off1_c = _cuda_rng_u64_seed_off()
             delta_c = off1_c - off0_c
 
+            if not torch.equal(mask_e, mask_c):
+                idx = (mask_e != mask_c).nonzero(as_tuple=False)
+                print(f"dtype={dtype}, mismatch idx={idx.tolist()}")
             self.assertTrue(
                 torch.equal(mask_e, mask_c),
                 msg="Dropout masks differ between eager and compiled",
@@ -266,6 +269,9 @@ class TestDropoutAlignRandomEager(InductorTestCase):
             _set_seed(seed)
             y_comp = compiled(x)
 
+            if not torch.equal(y_eager, y_comp):
+                idx = (y_eager != y_comp).nonzero(as_tuple=False)
+                print(f"iter={i}, mismatch idx={idx.tolist()}")
             torch.testing.assert_close(y_eager, y_comp, rtol=0.0, atol=0.0)
 
     # ───────────────────────────────────────────────────────────
