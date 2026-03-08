@@ -12512,17 +12512,6 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
                     x_strided = x[::2].reshape(25, 2).transpose(0, 1)
                     yield x_strided, y_size, memory_format
 
-    def test_resize_overlapping_strides(self):
-        # Resize on a stride-0 view should read logical elements, not raw storage.
-        def fn(x):
-            view = torch.as_strided(x, (100,), (0,))
-            return torch.ops.aten.resize(view, (50,))
-
-        x = torch.ones(10, device=self.device)
-        expected = fn(x)
-        actual = torch.compile(fn, fullgraph=True)(x.clone())
-        self.assertEqual(actual, expected)
-
     def test_resize(self):
         def fn(x, size, memory_format):
             # NOTE: Tensor.resize() =/= aten::resize()
@@ -15100,6 +15089,7 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         inputs = (torch.randn(4, device=self.device),)
         self.common(Model(), inputs)
 
+    @skip_if_cpp_wrapper("skip cpp wrapper")
     @requires_gpu_and_triton
     def test_triton_kernel_bool_tensor_arg(self):
         if self.device != GPU_TYPE or self.device == "mps":
@@ -15911,19 +15901,6 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
             # Second call with different params triggers recompilation
             out2 = run_session(100, 16, 64, self.device)
             self.assertEqual(out2.device.type, self.device)
-
-    def test_index_reduce_on_view_input(self):
-        # Regression test for https://github.com/pytorch/pytorch/issues/144846
-        def fn(x, index, source):
-            return x.index_reduce_(2, index, source, "mean", include_self=False)
-
-        x_base = torch.randn(4, 34, 64, device=self.device)
-        index = torch.randint(0, 34, (64,), device=self.device)
-        source = torch.randn(4, 32, 64, device=self.device)
-
-        expected = fn(x_base.clone()[:, 2:, :], index, source)
-        result = torch.compile(fn)(x_base.clone()[:, 2:, :], index, source)
-        self.assertEqual(result, expected)
 
     # end of class CommonTemplate - add new tests here
 

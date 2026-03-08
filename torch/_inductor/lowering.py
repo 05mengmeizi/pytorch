@@ -2909,7 +2909,7 @@ def constrain_to_fx_strides(fx_node, *args, **kwargs):
 
 
 def sdpa_constraint(fx_node, *args, **kwargs):
-    # sdpa requires dense last dimension]
+    """Apply stride constraints to SDPA inputs, ensuring dense last dimension."""
 
     def apply_constraint(idx, arg, fx_arg):
         if not isinstance(arg, ir.IRNode):
@@ -2938,6 +2938,31 @@ def sdpa_constraint(fx_node, *args, **kwargs):
             # Check https://github.com/pytorch/pytorch/issues/138772
             stride_order = (3, 1, 2, 0)
 
+        # Cache keyed by (id(arg), arg_name, stride_order) to avoid
+        # duplicate copy_input when the same tensor feeds multiple SDPA
+        # positions (e.g., key=value).  Including arg_name handles
+        # mutation: mark_buffer_mutated() renames the buffer in place,
+        # so a mutated tensor has the same id but a different name,
+        # causing a cache miss.
+        cache_key = None
+        if config.cache_sdpa_constraint:
+            arg_name = arg.maybe_get_name()
+            cache_key = (
+                id(arg),
+                arg_name,
+                tuple(stride_order) if stride_order else None,
+            )
+            if cache_key in V.graph.sdpa_constraint_cache:
+                return V.graph.sdpa_constraint_cache[cache_key]
+
+        result = _apply_constraint_inner(
+            idx, arg, meta_val, meta_stride_expr, stride_order
+        )
+        if cache_key is not None:
+            V.graph.sdpa_constraint_cache[cache_key] = result
+        return result
+
+    def _apply_constraint_inner(idx, arg, meta_val, meta_stride_expr, stride_order):
         if not meta_val.is_cuda:
             return ir.ExternKernel.require_stride_order(arg, stride_order)
 
@@ -7568,6 +7593,9 @@ def resize(x, size, *, memory_format=None):
     dtype = x.get_dtype()
     device = x.get_device_or_error()
 
+    if isinstance(x.data, ir.BaseView):
+        x.data = x.data.unwrap_view()
+
     if (
         torch.are_deterministic_algorithms_enabled()
         and torch.utils.deterministic.fill_uninitialized_memory  # type: ignore[attr-defined]
@@ -7585,20 +7613,15 @@ def resize(x, size, *, memory_format=None):
     if V.graph.sizevars.statically_known_equals(old_numel, 0):  # type: ignore[arg-type]
         return full(size, uninitialized_val, dtype=dtype, device=device)
 
-    # aten::resize (non-inplace) = clone + resize_. Clone preserves strides
-    # for non-overlapping tensors (storage order is maintained), but for
-    # overlapping tensors (e.g. stride 0 from as_strided/expand), clone
-    # materializes logical elements into contiguous storage.
-    strides = x.maybe_get_stride()
-    has_overlapping = strides is not None and any(
-        V.graph.sizevars.statically_known_equals(s, 0) for s in strides
+    x_flat = as_strided(
+        x,
+        [
+            old_numel,
+        ],
+        [
+            1,
+        ],
     )
-    if has_overlapping:
-        x = clone(x)
-    elif isinstance(x.data, ir.BaseView):
-        x.data = x.data.unwrap_view()
-
-    x_flat = as_strided(x, [old_numel], [1])
     flat_loader = x_flat.make_loader()
     out_stride = ir.FlexibleLayout.stride_ordered_for_memory_format(size, memory_format)
     out_indexer = ir.FixedLayout(device, dtype, size, out_stride).make_indexer()
