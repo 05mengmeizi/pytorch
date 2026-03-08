@@ -224,8 +224,10 @@ class ParametrizationList(ModuleList):
                         originali.requires_grad_(original.requires_grad)
                         _register_parameter_or_buffer(self, f"original{i}", originali)
                     case _:
-                        raise AssertionError(
-                            f"expected Tensor or OpaqueBase, got {type(originali)}"
+                        raise ValueError(
+                            "'right_inverse' must return a Tensor or a Sequence of tensors "
+                            "(list, tuple...). "
+                            f"Got element {i} of the sequence with type {type(originali).__name__}."
                         )
 
         if not self.unsafe:
