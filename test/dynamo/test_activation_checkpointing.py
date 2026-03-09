@@ -2165,10 +2165,6 @@ class GraphModule(torch.nn.Module):
             self._validate(fn, backend, x, y)
 
     def _get_sac_annotations(self, checkpointed_fn, decompositions=None):
-        """Compile checkpointed_fn with SAC and return annotation strings
-        from the joint graph. Policy: sin=MUST_RECOMPUTE, cos=MUST_SAVE,
-        everything else=PREFER_RECOMPUTE."""
-
         def policy_fn(ctx, func, *args, **kwargs):
             if func == torch.ops.aten.sin.default:
                 return CheckpointPolicy.MUST_RECOMPUTE
@@ -2213,9 +2209,6 @@ class GraphModule(torch.nn.Module):
         return "\n".join(annotations)
 
     def test_pre_mode_decomp_has_sac_ignored_ops(self):
-        """detach (a SAC_IGNORED_OP) should get PREFER_RECOMPUTE,
-        not leak the annotation from the preceding op."""
-
         @torch._dynamo.allow_in_graph
         def op_with_detach(x):
             a = x.sin()
@@ -2233,8 +2226,6 @@ cos: aten.cos.default -> MUST_SAVE""",
         )
 
     def test_post_mode_decomp(self):
-        """SiLU decomposes under inductor decomps. All decomposed ops should
-        get the policy returned for the original op, not leak from neighbors."""
         from torch._inductor.compile_fx import select_decomp_table
 
         def fn(x):
@@ -2255,9 +2246,6 @@ cos: aten.cos.default -> MUST_SAVE""",
         )
 
     def test_multi_output_op(self):
-        """Multi-output ops produce getitem nodes. All should get the same
-        annotation as the op itself."""
-
         def fn(x):
             x = x.sin()
             vals, idxs = torch.topk(x, k=2)
