@@ -360,7 +360,7 @@ class Vectorized<float> {
     // inputs outside this range to 0 / inf. Implementation is similar to
     // exp_u20, but:
     // - uses a third degree polynomial approximation for exp(r) instead of a
-    // fifth degree one, with coefficients retuned.
+    // fifth degree one, with coefficients re-tuned.
     // - does not split natural log (ln) into high / low parts
     // - clamps exp(x) to 0 for x < -87.6831131f and inf for x > 88.3762589f
 
