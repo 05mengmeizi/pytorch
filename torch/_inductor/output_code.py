@@ -226,6 +226,9 @@ def cudagraph_post_compile(
 
         placeholders = cached_info.placeholders
         stack_traces = cached_info.stack_traces
+        assert stack_traces is not None, (
+            "stack_traces should not be None in cudagraph_post_compile"
+        )
 
         prepare_cudagraph_post_compile(
             compiled_graph, example_inputs, boxed_forward_device_index
@@ -318,6 +321,9 @@ def cudagraph_partition_post_compile(
         k: v for k, v in constants.items() if isinstance(v, torch.Tensor)
     }
 
+    assert compiled_graph.cudagraph_info.stack_traces is not None, (
+        "stack_traces should not be None in cudagraph_partition_post_compile"
+    )
     graph_metadata = CudagraphMetadata(
         compiled_graph.cudagraph_info.placeholders,
         static_input_idxs,
@@ -595,10 +601,10 @@ class CompiledFxGraph(OutputCode):
                 output = output_node(gm)
                 # output args are tuple of first argument
                 assert len(output.args) == 1
-                stack_traces = [
-                    (arg.stack_trace if isinstance(arg, torch.fx.node.Node) else None)
-                    for arg in output.args[0]  # type: ignore[union-attr]
-                ]
+                # Use stack traces captured on the output node before
+                # post-grad passes, which may strip stack_trace from
+                # individual arg nodes.
+                stack_traces = output.meta["output_stack_traces"]
                 cudagraph_fail_reasons = [s for b, s in cudagraph_tests if not b]
                 placeholders = tuple(get_placeholder_info(gm.graph))
                 cudagraph_info = CudagraphCachedInfo(

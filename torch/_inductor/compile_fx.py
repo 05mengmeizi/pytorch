@@ -1338,6 +1338,20 @@ class _InProcessFxCompile(FxCompile):
                 ),
             )
             with V.set_fake_mode(fake_mode):
+                # Store stack traces on the output node before post-grad
+                # passes run, so they survive any passes that strip
+                # stack_trace from individual nodes.
+                output = output_node(gm)
+                if "output_stack_traces" not in output.meta:
+                    output.meta["output_stack_traces"] = [
+                        (
+                            arg.meta.get("stack_trace")
+                            if isinstance(arg, torch.fx.node.Node)
+                            else None
+                        )
+                        for arg in output.args[0]  # type: ignore[union-attr]
+                    ]
+
                 # has some issues with memory in training
                 cuda_context = get_cuda_device_context(gm)
                 with cuda_context:

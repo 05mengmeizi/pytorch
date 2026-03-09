@@ -382,6 +382,13 @@ def _extract_graph_with_inputs_outputs(
             output_values.append(x)
     out = new_graph.output(tuple(output_values))
     out.meta["desc"] = outputs_descs
+    # Store stack traces on the output node itself so they survive graph
+    # transformations. Later passes may lose stack_trace on individual arg
+    # nodes, but the output node is never optimized/changed.
+    out.meta["output_stack_traces"] = [
+        v.meta.get("stack_trace") if isinstance(v, fx.Node) else None
+        for v in output_values
+    ]
 
     new_graph.eliminate_dead_code()
     new_graph.lint()
