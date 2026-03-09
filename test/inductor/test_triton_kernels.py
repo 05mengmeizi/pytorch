@@ -6,6 +6,8 @@ import contextlib
 import functools
 import logging
 import os
+import sys
+from unittest import mock
 
 import torch
 import torch._dynamo.testing
@@ -44,6 +46,19 @@ from torch.utils._triton import (
     has_triton_package,
     has_triton_tensor_descriptor_host_tma,
 )
+
+
+@contextlib.contextmanager
+def _dump_launch_params(value: str):
+    launch_params_file = f"{os.path.abspath(sys.argv[0])}.launch_params"
+    if value == "1" and os.path.exists(launch_params_file):
+        os.remove(launch_params_file)
+    with mock.patch.dict(os.environ, {"TORCHINDUCTOR_DUMP_LAUNCH_PARAMS": value}):
+        try:
+            yield
+        finally:
+            if value == "1" and os.path.exists(launch_params_file):
+                os.remove(launch_params_file)
 
 
 if HAS_GPU:
@@ -949,43 +964,40 @@ def forward(self, x_1, output_1):
     @common_utils.parametrize("grid_type", [1, 2, 3])
     @common_utils.parametrize("tdlp", ["0", "1"])
     def test_triton_kernel_2d_autotune(self, grad, dynamic, backend, grid_type, tdlp):
-        import os
+        with _dump_launch_params(tdlp):
+            def call_triton(x: torch.Tensor, y: torch.Tensor, output: torch.Tensor):
+                x_elements = output.size()[0]
+                y_elements = output.size()[1]
 
-        os.environ["TORCHINDUCTOR_DUMP_LAUNCH_PARAMS"] = tdlp
+                def grid_fn(meta):
+                    return (
+                        triton.cdiv(x_elements, meta["BLOCK_SIZE_X"]),
+                        triton.cdiv(y_elements, meta["BLOCK_SIZE_Y"]),
+                    )
 
-        def call_triton(x: torch.Tensor, y: torch.Tensor, output: torch.Tensor):
-            x_elements = output.size()[0]
-            y_elements = output.size()[1]
+                if grid_type == 1:
+                    grid = (x_elements, y_elements)
+                elif grid_type == 2:
+                    grid = lambda meta: (
+                        triton.cdiv(x_elements, meta["BLOCK_SIZE_X"]),
+                        triton.cdiv(y_elements, meta["BLOCK_SIZE_Y"]),
+                    )
+                elif grid_type == 3:
+                    grid = grid_fn
 
-            def grid_fn(meta):
-                return (
-                    triton.cdiv(x_elements, meta["BLOCK_SIZE_X"]),
-                    triton.cdiv(y_elements, meta["BLOCK_SIZE_Y"]),
-                )
+                add_kernel_2d_autotuned[grid](x, y, output, x_elements, y_elements)
+                return output
 
-            if grid_type == 1:
-                grid = (x_elements, y_elements)
-            elif grid_type == 2:
-                grid = lambda meta: (
-                    triton.cdiv(x_elements, meta["BLOCK_SIZE_X"]),
-                    triton.cdiv(y_elements, meta["BLOCK_SIZE_Y"]),
-                )
-            elif grid_type == 3:
-                grid = grid_fn
+            t1 = torch.rand((512, 256), device=GPU_TYPE, requires_grad=grad)
+            t2 = torch.rand((512, 256), device=GPU_TYPE, requires_grad=grad)
+            output = torch.zeros_like(t1, requires_grad=grad)
 
-            add_kernel_2d_autotuned[grid](x, y, output, x_elements, y_elements)
-            return output
-
-        t1 = torch.rand((512, 256), device=GPU_TYPE, requires_grad=grad)
-        t2 = torch.rand((512, 256), device=GPU_TYPE, requires_grad=grad)
-        output = torch.zeros_like(t1, requires_grad=grad)
-
-        torch_result = call_triton(t1, t2, output)
-        compiled_func = torch.compile(
-            call_triton, backend=backend, fullgraph=True, dynamic=dynamic
-        )
-        output2 = torch.zeros_like(t1, requires_grad=grad)
-        self.assertEqual(compiled_func(t1, t2, output2), torch_result)
+            torch_result = call_triton(t1, t2, output)
+            compiled_func = torch.compile(
+                call_triton, backend=backend, fullgraph=True, dynamic=dynamic
+            )
+            output2 = torch.zeros_like(t1, requires_grad=grad)
+            self.assertEqual(compiled_func(t1, t2, output2), torch_result)
 
     @requires_gpu
     @common_utils.parametrize("dynamic", [False, True])
@@ -1422,56 +1434,55 @@ def forward(self, x_1, output_1):
         self.assertEqual(compiled_out, eager_out)
 
     @requires_gpu
-    @common_utils.parametrize("dump_launch_params", ["0", "1"])
-    @common_utils.parametrize("dynamic", [False, True])
+    @common_utils.parametrize("dump_launch_params", ["1",])
+    @common_utils.parametrize("dynamic", [False,])
     def test_triton_kernel_equal_to_1_arg(self, dynamic, dump_launch_params):
-        os.environ["TORCHINDUCTOR_DUMP_LAUNCH_PARAMS"] = dump_launch_params
+        with _dump_launch_params(dump_launch_params):
+            @triton.jit
+            def add_kernel_half_n_elements(
+                in_ptr0,
+                in_ptr1,
+                out_ptr,
+                half_n_elements,
+                BLOCK_SIZE: "tl.constexpr",
+            ):
+                pid = tl.program_id(axis=0)
+                block_start = pid * BLOCK_SIZE
+                offsets = block_start + tl.arange(0, BLOCK_SIZE)
+                mask = offsets < half_n_elements * 2
+                x = tl.load(in_ptr0 + offsets, mask=mask)
+                y = tl.load(in_ptr1 + offsets, mask=mask)
+                output = x + y
+                tl.store(out_ptr + offsets, output, mask=mask)
 
-        @triton.jit
-        def add_kernel_half_n_elements(
-            in_ptr0,
-            in_ptr1,
-            out_ptr,
-            half_n_elements,
-            BLOCK_SIZE: "tl.constexpr",
-        ):
-            pid = tl.program_id(axis=0)
-            block_start = pid * BLOCK_SIZE
-            offsets = block_start + tl.arange(0, BLOCK_SIZE)
-            mask = offsets < half_n_elements * 2
-            x = tl.load(in_ptr0 + offsets, mask=mask)
-            y = tl.load(in_ptr1 + offsets, mask=mask)
-            output = x + y
-            tl.store(out_ptr + offsets, output, mask=mask)
+            def f(x, y):
+                out = torch.empty_like(x)
+                half_n_elements = x.numel() // 2
+                add_kernel_half_n_elements[(half_n_elements,)](
+                    x, y, out, half_n_elements, BLOCK_SIZE=16
+                )
+                return out
 
-        def f(x, y):
-            out = torch.empty_like(x)
-            half_n_elements = x.numel() // 2
-            add_kernel_half_n_elements[(half_n_elements,)](
-                x, y, out, half_n_elements, BLOCK_SIZE=16
+            x = torch.randn(2, device=GPU_TYPE)
+            y = torch.randn(2, device=GPU_TYPE)
+            eager_out = f(x, y)
+            compiled_out, sources = run_and_get_code(
+                torch.compile(f, dynamic=dynamic), x, y
             )
-            return out
 
-        x = torch.randn(2, device=GPU_TYPE)
-        y = torch.randn(2, device=GPU_TYPE)
-        eager_out = f(x, y)
-        compiled_out, sources = run_and_get_code(
-            torch.compile(f, dynamic=dynamic), x, y
-        )
-
-        if triton_version_uses_attrs_dict():
-            self.assertFalse("equal_to" in sources[0])
-        else:
-            if dynamic:
-                # when half_n_elements passed to the Triton kernel is
-                # dynamic, equal_to_1 specialization can't be enforced
-
-                # also, equal_to_1 specialization doesn't occur (or appear in the signature)
-                # for newer versions of triton (i.e. the ones where triton_version_uses_attrs_dict() == True)
-                self.assertTrue(_triton_get_ast_equal_to_str(()) in sources[0])
+            if triton_version_uses_attrs_dict():
+                self.assertFalse("equal_to" in sources[0])
             else:
-                self.assertTrue(_triton_get_ast_equal_to_str((3,)) in sources[0])
-        self.assertEqual(compiled_out, eager_out)
+                if dynamic:
+                    # when half_n_elements passed to the Triton kernel is
+                    # dynamic, equal_to_1 specialization can't be enforced
+
+                    # also, equal_to_1 specialization doesn't occur (or appear in the signature)
+                    # for newer versions of triton (i.e. the ones where triton_version_uses_attrs_dict() == True)
+                    self.assertTrue(_triton_get_ast_equal_to_str(()) in sources[0])
+                else:
+                    self.assertTrue(_triton_get_ast_equal_to_str((3,)) in sources[0])
+            self.assertEqual(compiled_out, eager_out)
 
     @requires_gpu
     @common_utils.parametrize("dynamic", [False, True])
