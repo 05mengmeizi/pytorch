@@ -571,7 +571,11 @@ class GraphModule(torch.nn.Module):
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
     def test_addcmul_tensor_value_numerics(self):
-        """Compiled addcmul_ with tensor value matches eager."""
+        """Compiled addcmul_ with tensor value matches eager.
+
+        Not bitwise on CPU: inductor may decompose fma to mul+add rather
+        than emitting a hardware fma instruction.
+        """
 
         def fn(x, tensor1, tensor2, value):
             return x.addcmul_(tensor1, tensor2, value=value)
@@ -600,7 +604,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), tensor1, tensor2, value)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), tensor1, tensor2, value)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
@@ -616,7 +620,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), other, alpha)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), other, alpha)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
@@ -634,7 +638,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), other, alpha)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), other, alpha)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
@@ -656,7 +660,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), t1)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), t1)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
@@ -673,7 +677,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), t1, t2)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), t1, t2)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
@@ -691,13 +695,17 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), t1, t2, value)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), t1, t2, value)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
     @skipIfCrossRef
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
     @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     def test_addcdiv_scalar_value_cuda(self):
-        """Compiled addcdiv_ with scalar value matches eager on CUDA."""
+        """Compiled addcdiv_ with scalar value matches eager on CUDA.
+
+        Not bitwise: ATen inlines the division into fma(alpha, t1/t2, input)
+        which nvcc can optimize differently than separate div + fma kernels.
+        """
         torch.manual_seed(42)
         x = torch.randn(64, 64, device="cuda")
         t1 = torch.randn(64, 64, device="cuda")
@@ -714,7 +722,11 @@ class GraphModule(torch.nn.Module):
     @torch._dynamo.config.patch(enable_dynamo_decompositions=True)
     @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     def test_addcdiv_tensor_value_cuda(self):
-        """Compiled addcdiv_ with tensor value matches eager on CUDA."""
+        """Compiled addcdiv_ with tensor value matches eager on CUDA.
+
+        Not bitwise: ATen inlines the division into fma(alpha, t1/t2, input)
+        which nvcc can optimize differently than separate div + fma kernels.
+        """
         torch.manual_seed(42)
         x = torch.randn(64, 64, device="cuda")
         t1 = torch.randn(64, 64, device="cuda")
@@ -742,7 +754,7 @@ class GraphModule(torch.nn.Module):
 
         expected = fn(x.clone(), other)
         actual = torch.compile(fn, fullgraph=True)(x.clone(), other)
-        self.assertEqual(expected, actual)
+        self.assertEqual(expected, actual, atol=0, rtol=0)
 
 
 if __name__ == "__main__":
