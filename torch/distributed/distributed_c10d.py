@@ -143,8 +143,11 @@ _UCC_AVAILABLE = True
 _XCCL_AVAILABLE = True
 
 try:
-    # pyrefly: ignore [import-error, missing-import]
+    # pyrefly: ignore [missing-import]
     from torchcomms._comms import _BackendWrapper, new_comm
+
+    # pyrefly: ignore [missing-import]
+    from torchcomms.hooks import FlightRecorderHook
 
     _TORCHCOMM_AVAILABLE = True
 except ImportError:
@@ -2057,10 +2060,15 @@ def _new_process_group_helper(
             comm = new_comm(
                 backend_str, torch_device, name=group_name, store=backend_prefix_store
             )
+            buffer_size = os.environ.get(
+                "TORCH_FR_BUFFER_SIZE",
+                os.environ.get("TORCH_NCCL_TRACE_BUFFER_SIZE", "0"),
+            )
+            recorder = FlightRecorderHook(max_entries=int(buffer_size))
+            recorder.register_with_comm(comm)
             # Keep a reference so the comm outlives this function scope.
             _world.comms.append(comm)
             group_name = GroupName(group_name)
-            # pyrefly: ignore [bad-assignment]
             backend_class = _BackendWrapper(comm)
             backend_type = ProcessGroup.BackendType.CUSTOM
         elif backend_str == Backend.MPI:
@@ -2753,6 +2761,12 @@ def _coalescing_manager(
         # - coalesced `all_gather_into_tensor`
         # - coalesced `reduce_scatter_tensor`
         op0 = op_list[0].op
+        if any(op.op is not op0 for op in op_list):
+            raise RuntimeError(
+                "Coalescing manager requires all collectives to be the same type, "
+                f"but got mixed types: {set(op.op.__name__ for op in op_list)}"  # noqa: C401
+            )
+
         if op0 is all_reduce:
             tensors = [op.tensor for op in op_list]
             all_reduce_opts = AllreduceCoalescedOptions()
@@ -2767,7 +2781,9 @@ def _coalescing_manager(
                 outputs.append(not_none(op.dst_tensor))
             all_gather_opts = AllgatherOptions()
             all_gather_opts.asyncOp = async_ops
-            work = group.allgather_into_tensor_coalesced(outputs, inputs)
+            work = group.allgather_into_tensor_coalesced(
+                outputs, inputs, all_gather_opts
+            )
         elif op0 is reduce_scatter_tensor:
             inputs = []
             outputs = []
@@ -2927,6 +2943,15 @@ def batch_isend_irecv(p2p_op_list: list[P2POp]) -> list[Work]:
         return reqs
 
 
+def _is_fp8(tensor):
+    return tensor.dtype in (
+        torch.float8_e4m3fn,
+        torch.float8_e4m3fnuz,
+        torch.float8_e5m2,
+        torch.float8_e5m2fnuz,
+    )
+
+
 @_exception_logger
 def broadcast(
     tensor: torch.Tensor,
@@ -2967,8 +2992,14 @@ def broadcast(
     opts.rootRank = group_src
     opts.rootTensor = 0
     opts.asyncOp = async_op
+    sm90_or_more = not (
+        tensor.is_cuda and torch.cuda.get_device_capability(tensor.device)[0] >= 9
+    )
     if tensor.is_complex():
         tensor = torch.view_as_real(tensor)
+    elif _is_fp8(tensor) and not sm90_or_more:
+        # FP8 is supported by NCCL on sm90+, use workaround for older GPUs
+        tensor = tensor.view(torch.uint8)
     work = group.broadcast([tensor], opts)
     if async_op:
         return work
@@ -5010,19 +5041,16 @@ def barrier(
     if isinstance(device_ids, list):
         opts.device_ids = device_ids
         # use only the first device id
-        # pyrefly: ignore [read-only]
         opts.device = torch.device(device.type, device_ids[0])
     elif getattr(group, "bound_device_id", None) is not None:
         # Use device id from `init_process_group(device_id=...)`
         opts.device = group.bound_device_id  # type: ignore[assignment]
     elif device.type == "cpu" or _get_object_coll_device(group) == "cpu":
-        # pyrefly: ignore [read-only]
         opts.device = torch.device("cpu")
     else:
         # Use the current device set by the user. If user did not set any, this
         # may use default device 0, causing issues like hang or all processes
         # creating context on device 0.
-        # pyrefly: ignore [read-only]
         opts.device = device
         if group.rank() == 0:
             warnings.warn(  # warn only once
