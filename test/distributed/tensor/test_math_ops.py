@@ -106,6 +106,31 @@ class DistMathOpsTest(DTensorTestBase):
             self.linear_op_reductions(op_str)
 
     @with_comms
+    def test_nansum_with_nan(self):
+        device_mesh = self.build_device_mesh()
+        # Tensor with NaN values sharded across the reduction dim
+        tensor = torch.tensor(
+            [[1.0, float("nan"), 3.0], [float("nan"), 5.0, 6.0]],
+            device=self.device_type,
+        )
+        dtensor = distribute_tensor(tensor, device_mesh, [Shard(0)])
+
+        # Full reduction: Shard(0) reduces to Partial(sum), then to Replicate
+        dt_full = dtensor.nansum()
+        self.assertEqual(dt_full.full_tensor(), tensor.nansum())
+        self.assertEqual(dt_full.placements, (Partial("sum"),))
+
+        # Reduction along sharded dim 0: produces Partial(sum)
+        dt_dim0 = dtensor.nansum(dim=0)
+        self.assertEqual(dt_dim0.full_tensor(), tensor.nansum(dim=0))
+        self.assertEqual(dt_dim0.placements, (Partial("sum"),))
+
+        # Reduction along non-sharded dim 1: preserves Shard(0)
+        dt_dim1 = dtensor.nansum(dim=1)
+        self.assertEqual(dt_dim1.full_tensor(), tensor.nansum(dim=1))
+        self.assertEqual(dt_dim1.placements, (Shard(0),))
+
+    @with_comms
     @skip_unless_torch_gpu
     def test_mean(self):
         self.linear_op_reductions("mean")
@@ -1082,23 +1107,41 @@ class DistMathOpsTest(DTensorTestBase):
     def test_dim_reductions_with_indices(self):
         device_mesh = self.build_device_mesh()
         tensor = torch.randn(12, 8, device=self.device_type)
-        dtensor = distribute_tensor(tensor, device_mesh, [Shard(0)])
+        shard_dim = 0
+        dtensor = distribute_tensor(tensor, device_mesh, [Shard(shard_dim)])
 
         # nanmedian.dim
         for dim in range(tensor.ndim):
             vals, idxs = torch.nanmedian(tensor, dim=dim)
             dt_vals, dt_idxs = torch.nanmedian(dtensor, dim=dim)
             self.assertEqual(dt_vals.full_tensor(), vals)
+            self.assertEqual(dt_idxs.full_tensor(), idxs)
+            if dim == shard_dim:
+                self.assertTrue(dt_vals.placements[0].is_replicate())
+            else:
+                self.assertTrue(dt_vals.placements[0].is_shard(shard_dim))
 
-        # kthvalue
-        vals, idxs = torch.kthvalue(tensor, 3, dim=0)
-        dt_vals, dt_idxs = torch.kthvalue(dtensor, 3, dim=0)
-        self.assertEqual(dt_vals.full_tensor(), vals)
+        # kthvalue: reduce along each dim
+        for dim in range(tensor.ndim):
+            vals, idxs = torch.kthvalue(tensor, 3, dim=dim)
+            dt_vals, dt_idxs = torch.kthvalue(dtensor, 3, dim=dim)
+            self.assertEqual(dt_vals.full_tensor(), vals)
+            self.assertEqual(dt_idxs.full_tensor(), idxs)
+            if dim == shard_dim:
+                self.assertTrue(dt_vals.placements[0].is_replicate())
+            else:
+                self.assertTrue(dt_vals.placements[0].is_shard(shard_dim))
 
-        # mode
-        vals, idxs = torch.mode(tensor, dim=1)
-        dt_vals, dt_idxs = torch.mode(dtensor, dim=1)
-        self.assertEqual(dt_vals.full_tensor(), vals)
+        # mode: reduce along each dim
+        for dim in range(tensor.ndim):
+            vals, idxs = torch.mode(tensor, dim=dim)
+            dt_vals, dt_idxs = torch.mode(dtensor, dim=dim)
+            self.assertEqual(dt_vals.full_tensor(), vals)
+            self.assertEqual(dt_idxs.full_tensor(), idxs)
+            if dim == shard_dim:
+                self.assertTrue(dt_vals.placements[0].is_replicate())
+            else:
+                self.assertTrue(dt_vals.placements[0].is_shard(shard_dim))
 
     @with_comms
     def test_conj_complex_dtensor(self):
