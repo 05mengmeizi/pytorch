@@ -2224,7 +2224,7 @@ class GraphModule(torch.nn.Module):
             self._get_sac_annotations(op_with_detach, policy_fn),
             """\
 sin: aten.sin.default -> MUST_SAVE
-detach_1: aten.detach.default -> MUST_SAVE
+detach_1: aten.detach.default -> PREFER_RECOMPUTE
 add: aten.add.Tensor -> MUST_SAVE
 cos: aten.cos.default -> MUST_SAVE""",
         )
