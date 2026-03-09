@@ -5508,25 +5508,17 @@ def linspace(
     )
     cast_rg = partial(_maybe_convert_to_dtype, dtype=dtype_red)
 
-    # Native CUDA/CPU linspace kernels compute step in scalar_t (the target
-    # dtype).  For reduced-precision types (fp16/bf16) this matters: computing
-    # step in fp64 gives visibly different rounding.  Cast start/end to the
-    # target dtype so step arithmetic matches the native kernels.
-    if dtype in (torch.float16, torch.bfloat16):
-        start_val = torch.tensor(start, dtype=dtype, device=device)
-        end_val = torch.tensor(end, dtype=dtype, device=device)
-        steps_div = torch.tensor(steps - 1, dtype=dtype, device=device)
-        step = (end_val - start_val) / steps_div
-    else:
-        start_val = start
-        end_val = end
-        step = (end - start) / (steps - 1)
+    # Native CUDA/CPU kernels compute step in scalar_t; match that by
+    # converting start/end to the target dtype before computing step.
+    start = torch.tensor(start, dtype=dtype_red, device=device)
+    end = torch.tensor(end, dtype=dtype_red, device=device)
+    step = (end - start) / (steps - 1)
 
     # pyrefly: ignore [no-matching-overload]
     out = torch.where(
         rg < steps / 2,
-        start_val + step * cast_rg(rg),  # type: ignore[arg-type,operator]
-        end_val - step * cast_rg((steps - 1) - rg),  # type: ignore[arg-type,operator]
+        start + step * cast_rg(rg),  # type: ignore[arg-type,operator]
+        end - step * cast_rg((steps - 1) - rg),  # type: ignore[arg-type,operator]
     )
     return _maybe_convert_to_dtype(out, dtype)  # type: ignore[return-value]
 
