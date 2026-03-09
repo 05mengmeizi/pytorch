@@ -1554,9 +1554,9 @@ class ROCmConfigHeuristic(BaseConfigHeuristic):
             (torch.float32, 64): ROCmFlexConfig(128, 32, 1, 4),
             (torch.float32, 128): ROCmFlexConfig(128, 32, 1, 4),
             (torch.float32, 256): ROCmFlexConfig(64, 16, 1, 4),
-            (torch.bfloat16, 64): ROCmFlexConfig(128, 64, 2, 8),
-            (torch.bfloat16, 128): ROCmFlexConfig(128, 64, 2, 8),
-            (torch.bfloat16, 256): ROCmFlexConfig(32, 64, 2, 8),
+            (torch.bfloat16, 64): ROCmFlexConfig(128, 64, 2, 4),
+            (torch.bfloat16, 128): ROCmFlexConfig(128, 64, 2, 4),
+            (torch.bfloat16, 256): ROCmFlexConfig(32, 64, 2, 4),
             (torch.float16, 64): ROCmFlexConfig(128, 64, 2, 8),
             (torch.float16, 128): ROCmFlexConfig(128, 64, 2, 8),
             (torch.float16, 256): ROCmFlexConfig(32, 64, 2, 4),
@@ -1564,7 +1564,7 @@ class ROCmConfigHeuristic(BaseConfigHeuristic):
 
         self.flex_attn_fwd_autotune_configs: list[FlexConfig] = [
             ROCmFlexConfig(BLOCK1, BLOCK2, 1, w)
-            for BLOCK1 in [16, 64, 128, 256]
+            for BLOCK1 in [16, 64, 128]
             for BLOCK2 in [16, 32, 64, 128]
             for w in [4, 8]
         ]
@@ -1590,7 +1590,7 @@ class ROCmConfigHeuristic(BaseConfigHeuristic):
 
         self.exhaustive_flex_attn_fwd_configs: list[FlexConfig] = [
             ROCmFlexConfig(BLOCK_M, BLOCK_N, num_stages, num_warps, mfma, wpeu)
-            for BLOCK_M in [16, 32, 64, 128, 256]
+            for BLOCK_M in [16, 32, 64, 128]
             for BLOCK_N in [32, 64, 128]
             for num_stages in [1, 2]
             for num_warps in [2, 4, 8]
@@ -1735,7 +1735,7 @@ class ROCmConfigHeuristic(BaseConfigHeuristic):
             if dtype == torch.float32:
                 default_config = ROCmFlexConfig(64, 64, 1, 4)
             else:
-                default_config = ROCmFlexConfig(128, 64, 2, 8)
+                default_config = ROCmFlexConfig(128, 64, 2, 4)
             default_config = self.default_flex_config.get(
                 (dtype, head_dim), default_config
             )
