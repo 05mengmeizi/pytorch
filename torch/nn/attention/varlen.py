@@ -228,9 +228,15 @@ def varlen_attn(
 
             ``seqused_k[i]`` tells the kernel how many tokens in sequence *i* are
             actually valid, since the last page is typically only partially filled.
-        batch_invariant (bool): If True, forces ``num_splits=1`` so that the
-            output for each sequence is independent of what other sequences are in
-            the batch. Requires FA3 (register with :func:`register_flash_attention_fa3`).
+        batch_invariant (bool): If True, disables split-KV by forcing
+            ``num_splits=1``. Split-KV parallelizes the key/value sequence
+            dimension across multiple thread blocks, but the split decision
+            depends on the longest sequence in the batch. Because of this,
+            different batches can influence reduction order, resulting in
+            different floating-point results for the same sequence.
+            Disabling it guarantees bitwise identical output for a
+            given sequence independent of what else is in the batch,
+            but at the cost of lower GPU utilization for small query sizes.
 
     Returns:
         output (Tensor): Output tensor from attention computation; shape :math:`(T_q, H, D)`.
