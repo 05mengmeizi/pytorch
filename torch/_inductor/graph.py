@@ -451,6 +451,7 @@ class GraphLowering(torch.fx.Interpreter):
         self.removed_buffers: OrderedSet[str] = OrderedSet()
         self.removed_inplace_buffers: OrderedSet[str] = OrderedSet()
         self.mutated_buffers: OrderedSet[str] = OrderedSet()
+        self.sdpa_constraint_cache: dict[tuple, ir.IRNode] = {}
         self.never_reuse_buffers: OrderedSet[str] = OrderedSet()
         self.inplaced_to_remove: OrderedSet[str] = OrderedSet()
         self.device_ops: DeviceOpOverrides = None  # type: ignore[assignment]
@@ -2417,6 +2418,11 @@ class GraphLowering(torch.fx.Interpreter):
                         self.extract_autotune_inputs(real_inputs)
                 return self.codegen()
             else:
+                if not self.aot_mode:
+                    # Lazy kernel compilation does not require two passes
+                    # TODO: need to consolidate the logic between AOT and JIT
+                    return self.codegen()
+
                 # first pass
                 self.cpp_wrapper = False
                 compiled = self.compile_to_module().call
