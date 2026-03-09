@@ -15398,6 +15398,53 @@ class TestSelectiveActivationCheckpoint(TestCase):
             out.sum().backward(retain_graph=True)
 
     @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_auto_naming_mode_with_sac(self):
+        # AutoNamingMode + SAC: policy checks ctx.op_output in naming.names
+        expensive_op, expensive_count = _make_counter_op("expensive")
+        cheap_op, cheap_count = _make_counter_op("cheap")
+
+        class Block(torch.nn.Module):
+            def forward(self, x):
+                y = expensive_op(x)
+                return cheap_op(y)
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList([Block(), Block()])
+
+            def forward(self, x):
+                for layer in self.layers:
+                    x = layer(x)
+                return x
+
+        mod = Model()
+        naming = _AutoNamingMode()
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            if ctx.is_recompute:
+                return CheckpointPolicy.PREFER_RECOMPUTE
+            out = ctx.op_output
+            if isinstance(out, torch.Tensor):
+                name = naming.names.get(out)
+                if name == ("Model.layers.1", "expensive", 0, 0):
+                    return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        x = torch.randn(4, requires_grad=True)
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+
+        with naming:
+            out = checkpoint(lambda x: mod(x), x, use_reentrant=False, context_fn=context_fn)
+            out.sum().backward()
+
+        # expensive_op runs twice in forward (layers.0 + layers.1),
+        # layers.1 is saved so only layers.0 is recomputed: 2 + 1 = 3
+        self.assertEqual(expensive_count[0], 3)
+        # cheap_op: neither layer matched, both recomputed: 2 + 2 = 4
+        self.assertEqual(cheap_count[0], 4)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
     def test_auto_naming_mode_names(self):
         class SubMod(torch.nn.Module):
             def forward(self, x):
