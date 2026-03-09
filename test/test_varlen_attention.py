@@ -631,10 +631,10 @@ class TestVarlenAttention(NNTestCase):
         extra_q = torch.randn(
             extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        extra_q = torch.randn(
+        extra_k = torch.randn(
             extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        extra_q = torch.randn(
+        extra_v = torch.randn(
             extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
 
@@ -648,8 +648,8 @@ class TestVarlenAttention(NNTestCase):
         )
 
         all_q = torch.cat([target_q, extra_q], dim=0)
-        all_k = torch.cat([target_k, extra_q], dim=0)
-        all_v = torch.cat([target_v, extra_q], dim=0)
+        all_k = torch.cat([target_k, extra_k], dim=0)
+        all_v = torch.cat([target_v, extra_v], dim=0)
 
         with use_fa3(), torch.no_grad():
             solo_output = varlen_attn(
