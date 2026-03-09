@@ -321,7 +321,9 @@ def _fa3_run_forward(
         0.0,  # softcap,
         True,  # rotary_interleaved,
         None,  # scheduler_metadata,
-        num_splits if num_splits is not None else (1 if torch.are_deterministic_algorithms_enabled() else 0),  # num_splits,
+        num_splits
+        if num_splits is not None
+        else (1 if torch.are_deterministic_algorithms_enabled() else 0),  # num_splits,
         None,  # pack_gqa,
         torch._C._get_sm_carveout_experimental() or 0,  # sm_margin,
     )

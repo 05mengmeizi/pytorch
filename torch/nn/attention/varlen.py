@@ -71,9 +71,7 @@ def _varlen_attn(
         log.info("Using cuDNN backend for varlen_attn")
 
         if num_splits is not None:
-            raise RuntimeError(
-                "num_splits is not supported with the cuDNN backend."
-            )
+            raise RuntimeError("num_splits is not supported with the cuDNN backend.")
         if window_size[0] != -1 or window_size[1] != -1:
             raise RuntimeError(
                 "cuDNN backend does not support window attention. Please use Flash Attention backend."
