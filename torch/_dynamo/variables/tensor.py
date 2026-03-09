@@ -1555,7 +1555,15 @@ class TensorVariable(VariableTracker):
         *,
         alpha: VariableTracker | None = None,
     ) -> VariableTracker | None:
-        if alpha is not None and config.enable_dynamo_decompositions:
+        # Decompose only for tensor alpha to avoid item() graph breaks.
+        # Scalar alpha passes through to ATen where the inductor lowering emits
+        # FMA. addcmul_ and addcdiv_ route through here via alpha=value so this
+        # is the single place that handles the scalar/tensor distinction.
+        if (
+            alpha is not None
+            and isinstance(alpha, TensorVariable)
+            and config.enable_dynamo_decompositions
+        ):
             result = variables.TorchInGraphFunctionVariable(torch.mul).call_function(
                 tx, [other, alpha], {}
             )
@@ -1574,10 +1582,7 @@ class TensorVariable(VariableTracker):
             result = variables.TorchInGraphFunctionVariable(torch.div).call_function(
                 tx, [tensor1, tensor2], {}
             )
-            result = variables.TorchInGraphFunctionVariable(torch.mul).call_function(
-                tx, [result, value], {}
-            )
-            return self.call_method(tx, "add_", [result], {})
+            return self.call_method(tx, "add_", [result], {"alpha": value})
         return None
 
     def method___contains__(
