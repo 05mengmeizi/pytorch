@@ -1171,9 +1171,8 @@ class TestInductorDynamic(TestCase):
         def fn(x):
             return x.sum()
 
-        x = torch.rand([31], device=GPU_TYPE)
-
         with V.set_choices_handler(ForcePersistent()):
+            x = torch.rand([31], device=GPU_TYPE)
             torch._dynamo.mark_dynamic(x, 0, min=1, max=62)
             fn_c = torch.compile(fn)
             actual, source_codes = run_and_get_code(fn_c, x)
@@ -1181,7 +1180,8 @@ class TestInductorDynamic(TestCase):
             FileCheck().check("R0_BLOCK: tl.constexpr = 64").run(source_codes[0])
             torch._dynamo.reset()
 
-            torch._dynamo.mark_dynamic(x, 2, min=1, max=64)
+            x = torch.rand([32], device=GPU_TYPE)
+            torch._dynamo.mark_dynamic(x, 0, min=1, max=64)
             fn_c = torch.compile(fn)
             actual, source_codes = run_and_get_code(fn_c, x)
             self.assertEqual(fn(x), actual)
