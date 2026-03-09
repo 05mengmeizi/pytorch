@@ -3576,7 +3576,6 @@ class TestPrivateUse1ProfilerState(TestCase):
         ):
             prof = _profile(
                 use_cpu=True,
-                use_cuda=False,
                 use_device="custom_backend",
                 use_kineto=True,
             )
@@ -3594,7 +3593,6 @@ class TestPrivateUse1ProfilerState(TestCase):
         ):
             prof = _profile(
                 use_cpu=True,
-                use_cuda=False,
                 use_device="custom_backend",
                 use_kineto=False,
             )
@@ -3614,7 +3612,6 @@ class TestPrivateUse1ProfilerState(TestCase):
             with self.assertRaises(AssertionError):
                 _profile(
                     use_cpu=False,
-                    use_cuda=False,
                     use_device="custom_backend",
                     use_kineto=False,
                 )

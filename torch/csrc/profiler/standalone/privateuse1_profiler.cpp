@@ -8,6 +8,7 @@
 
 #ifdef USE_KINETO
 
+#include <c10/util/Exception.h>
 #include <torch/csrc/profiler/standalone/privateuse1_profiler.h>
 
 #include <libkineto.h>
@@ -22,6 +23,11 @@ PrivateUse1ProfilerRegistry& PrivateUse1ProfilerRegistry::instance() {
 void PrivateUse1ProfilerRegistry::registerFactory(
     PrivateUse1ProfilerFactory factory) {
   std::lock_guard<std::mutex> lock(mutex_);
+
+  if (factory_) {
+    TORCH_WARN("PrivateUse1 profiler factory already registered, overwriting");
+  }
+
   factory_ = std::move(factory);
 
   // If Kineto was already initialized, forward immediately

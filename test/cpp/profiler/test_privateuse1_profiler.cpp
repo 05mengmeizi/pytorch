@@ -43,7 +43,8 @@ class MockProfilerSession : public libkineto::IActivityProfilerSession {
     return {};
   }
 
-  void processTrace(libkineto::ActivityLogger& /*logger*/) override {}
+  void processTrace(
+      [[maybe_unused]] libkineto::ActivityLogger& logger) override {}
 
   std::unique_ptr<libkineto::DeviceInfo> getDeviceInfo() override {
     return std::make_unique<libkineto::DeviceInfo>(
@@ -77,15 +78,15 @@ class MockPrivateUse1Profiler : public libkineto::IActivityProfiler {
   }
 
   std::unique_ptr<libkineto::IActivityProfilerSession> configure(
-      const std::set<libkineto::ActivityType>& /*activity_types*/,
-      const libkineto::Config& /*config*/) override {
+      [[maybe_unused]] const std::set<libkineto::ActivityType>& activity_types,
+      [[maybe_unused]] const libkineto::Config& config) override {
     g_configure_called = true;
     return std::make_unique<MockProfilerSession>();
   }
 
   std::unique_ptr<libkineto::IActivityProfilerSession> configure(
-      int64_t /*ts_ms*/,
-      int64_t /*duration_ms*/,
+      [[maybe_unused]] int64_t ts_ms,
+      [[maybe_unused]] int64_t duration_ms,
       const std::set<libkineto::ActivityType>& activity_types,
       const libkineto::Config& config) override {
     return configure(activity_types, config);

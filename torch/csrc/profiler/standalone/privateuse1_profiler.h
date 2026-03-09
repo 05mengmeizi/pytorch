@@ -84,14 +84,14 @@ class TORCH_API PrivateUse1ProfilerRegistry {
 // Helper struct for static registration via macro.
 // Enforces at compile-time that ProfilerClass inherits from
 // libkineto::IActivityProfiler.
+template <typename ProfilerClass>
 struct RegisterPrivateUse1Profiler {
-  template <typename ProfilerClass>
-  explicit RegisterPrivateUse1Profiler(ProfilerClass*) {
-    static_assert(
-        std::is_base_of_v<libkineto::IActivityProfiler, ProfilerClass>,
-        "ProfilerClass must inherit from libkineto::IActivityProfiler. "
-        "Please ensure your profiler class implements the IActivityProfiler interface.");
+  static_assert(
+      std::is_base_of_v<libkineto::IActivityProfiler, ProfilerClass>,
+      "ProfilerClass must inherit from libkineto::IActivityProfiler. "
+      "Please ensure your profiler class implements the IActivityProfiler interface.");
 
+  RegisterPrivateUse1Profiler() {
     PrivateUse1ProfilerRegistry::instance().registerFactory(
         []() -> std::unique_ptr<libkineto::IActivityProfiler> {
           return std::make_unique<ProfilerClass>();
@@ -104,10 +104,9 @@ struct RegisterPrivateUse1Profiler {
 //
 // Usage:
 //   REGISTER_PRIVATEUSE1_PROFILER(MyAcceleratorProfiler)
-#define REGISTER_PRIVATEUSE1_PROFILER(ProfilerClass)          \
-  static ::torch::profiler::impl::RegisterPrivateUse1Profiler \
-      privateuse1_profiler_register_##ProfilerClass(          \
-          static_cast<ProfilerClass*>(nullptr))
+#define REGISTER_PRIVATEUSE1_PROFILER(ProfilerClass)                         \
+  static ::torch::profiler::impl::RegisterPrivateUse1Profiler<ProfilerClass> \
+      privateuse1_profiler_register_##ProfilerClass
 
 } // namespace torch::profiler::impl
 
