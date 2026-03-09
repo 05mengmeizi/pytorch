@@ -376,40 +376,65 @@ class TorchProfilerBenchmarker(TritonBenchmarker):  # noqa: docstring_linter
 
         torch.cuda.synchronize()
 
-        # Extract time from the single "_CALLABLE" CUDA event.
-        callable_time_us = next(
+        # record_function("_CALLABLE") produces a GPU_USER_ANNOTATION event
+        # (DeviceType.CUDA) whose device_time_total is the GPU wall-clock span
+        # of the annotated region (time_range.elapsed_us()), summed across all
+        # rep iterations. This closely matches what CUDA event timing measures
+        # and naturally captures inter-kernel gaps for multi-kernel callables.
+        callable_event = next(
             (
-                event.device_time_total
+                event
                 for event in prof.key_averages()
                 if event.key == "_CALLABLE"
                 and event.device_type == torch.profiler.DeviceType.CUDA
             ),
-            0,
+            None,
         )
 
-        # When cudagraphs is active, kernel launch overhead is set to zero.
-        # Otherwise, the overhead will be the HIP or CUDA launcher call
-        # on the CPU. TO DO: Overhead calculation may not always be accurate.
-        if inductor_config.triton.cudagraphs:
+        assert callable_event is not None, (
+            "TorchProfilerBenchmarker: '_CALLABLE' CUDA event not found in "
+            "profiler output. This indicates record_function('_CALLABLE') did "
+            "not produce a GPU_USER_ANNOTATION profiler event."
+        )
+        callable_gpu_time_us = callable_event.device_time_total
+
+        # On HIP/ROCm, Triton kernels launch via hipModuleLaunchKernel (module
+        # API) while built-in ops like buffer.zero_() use hipLaunchKernel
+        # (runtime API), so filtering by _launch_kernel_keys naturally scopes
+        # to just the Triton kernel launches inside _CALLABLE.
+        # On CUDA this does NOT work reliably:
+        #   - If CUPTI driver API tracing is off (likely the default),
+        #     cuLaunchKernel events are absent and launch overhead is 0.
+        #   - If driver API tracing is on, cuLaunchKernel captures ALL launches
+        #     (including buffer.zero_()) because the runtime API calls through
+        #     to the driver API, breaking the scoping.
+        if triton_config.cudagraphs:
             callable_time_launch_overhead_us = 0
         else:
-            _launch_kernel_keys = {
+            _launch_overhead_keys = {
                 "hipModuleLaunchKernel",
                 "hipExtModuleLaunchKernel",
                 "cuLaunchKernel",
                 "cuLaunchKernelEx",
+                "hipMemcpyAsync",
+                "cudaMemcpyAsync",
+                "cuMemcpyAsync",
+                "cuMemcpyDtoD",
+                "cuMemcpyDtoDAsync",
             }
             callable_time_launch_overhead_us = sum(
                 event.cpu_time_total
                 for event in prof.key_averages()
                 if event.device_type == torch.profiler.DeviceType.CPU
-                and event.key in _launch_kernel_keys
+                and event.key in _launch_overhead_keys
             )
 
-        # Convert to milliseconds and compute the average time per iteration
-        avg_time_ms = (
-            (callable_time_us + callable_time_launch_overhead_us) / rep
-        ) / 1000.0
+        # GPU execution and CPU launch happen on overlapping timelines (the
+        # CPU launches asynchronously while the GPU executes), so adding them
+        # would double-count. Taking the max gives the true bottleneck: GPU
+        # time when GPU-bound, or launch overhead when launch-bound.
+        total_time_us = max(callable_gpu_time_us, callable_time_launch_overhead_us)
+        avg_time_ms = (total_time_us / rep) / 1000.0
 
         # explicitly delete the buffer, sometimes helps memory
         # footprint metrics in OSS Inductor performance benchmarks
