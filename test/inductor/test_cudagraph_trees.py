@@ -29,7 +29,7 @@ from torch._ops import OpOverload
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.immutable_collections import immutable_dict
 from torch.testing import FileCheck
-from torch.testing._internal.common_cuda import TEST_MULTIGPU
+from torch.testing._internal.common_cuda import blas_library_context, TEST_MULTIGPU
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
     IS_ARM64,
@@ -1931,6 +1931,7 @@ if HAS_CUDA_AND_TRITON:
 
         @unittest.skipUnless(IS_X86 and IS_LINUX, "cpp contexts are linux only")
         @torch._inductor.config.patch("triton.cudagraph_trees_history_recording", True)
+        @blas_library_context("cublas")
         def test_workspace_allocation_error(self):
             torch._C._cuda_clearCublasWorkspaces()
 
@@ -3613,7 +3614,7 @@ if HAS_CUDA_AND_TRITON:
                 foo(torch.ones([10], device="cuda"), torch.ones([20]))
 
             FileCheck().check_count(
-                "Recording function=partition_0, cuda_graph_id=0",
+                "Recording function=partition_0, mode=INFERENCE, cuda_graph_id=0,",
                 1,
                 exactly=True,
             ).run(log_stream.getvalue())

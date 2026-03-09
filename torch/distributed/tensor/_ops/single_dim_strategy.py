@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import count
-from typing import Any, cast, Optional, TypeAlias, TypeVar, Union
+from typing import Any, cast, TypeAlias, TypeVar
 from typing_extensions import TypeIs
 
 import torch
@@ -75,6 +75,7 @@ _ExpandedSingleDimStrategyFunc: TypeAlias = Callable[
 class _SingleDimStrategyInfo:
     func: _SingleDimStrategyFunc
     allow_unbacked_sharding: bool | None = field(default=None)
+    allow_uneven_sharding: bool = field(default=False)
 
     # Delegate to func so this can be used interchangeably with a raw
     # _SingleDimStrategyFunc (e.g. in tests that call strategy functions directly).
@@ -246,9 +247,16 @@ class _PreparedSingleDimStrategy:
     num_outputs: int
     num_inputs: int
     output_metas: tuple[TensorMeta | None, ...]
-    allowed_sharding_per_input: dict[int, set[Placement]]
+    allowed_sharding_per_input: dict[int, set[Shard | _StridedShard]]
     allowed_partial_per_input: dict[int, set[Placement]]
     allow_unbacked_sharding: bool | None
+
+    # many, but not all ops are able to support unevenly sharded tensors
+    # there are existing BC expectations even if we wanted to ban for
+    # simplicity, see why justification for why pointwise_ops always work
+    # with uneven sharding at
+    # https://github.com/pytorch/pytorch/pull/174874#issuecomment-3995152777
+    allow_uneven_sharding: bool
 
     def __init__(
         self,
@@ -266,9 +274,11 @@ class _PreparedSingleDimStrategy:
 
         if isinstance(strategy_fn, _SingleDimStrategyInfo):
             self.allow_unbacked_sharding = strategy_fn.allow_unbacked_sharding
+            self.allow_uneven_sharding = strategy_fn.allow_uneven_sharding
             func = strategy_fn.func
         else:
             self.allow_unbacked_sharding = None
+            self.allow_uneven_sharding = False
             func = strategy_fn
 
         if num_inputs is None:
@@ -278,6 +288,25 @@ class _PreparedSingleDimStrategy:
         strategies_with_placeholders = func(
             op_schema.op, op_schema.args_meta, op_schema.kwargs_meta
         )
+
+        # Validate strategy length against the op schema. The schema is the
+        # ground truth for num_outputs; combined with num_inputs (which counts
+        # all tensor args + kwargs), it gives the expected strategy length.
+        # A mismatch means the strategy is missing kwargs placements or has
+        # extra entries.
+        if len(strategies_with_placeholders) > 0:
+            schema_num_outputs = sum(
+                1 for r in op_schema.op._schema.returns if "Tensor" in str(r.type)
+            )
+            expected_len = schema_num_outputs + num_inputs
+            actual_len = len(strategies_with_placeholders[0])
+            if actual_len != expected_len:
+                raise AssertionError(
+                    f"Strategy length {actual_len} != expected {expected_len} "
+                    f"(schema_outputs={schema_num_outputs} + inputs={num_inputs}) "
+                    f"for {op_schema.op}. Strategies must include placements "
+                    f"for all outputs, args, and tensor kwargs."
+                )
 
         # Compute num_outputs from strategy structure or output_tensor_meta
         if len(strategies_with_placeholders) > 0:
@@ -307,7 +336,9 @@ class _PreparedSingleDimStrategy:
                 self.strategy_lookup[input_key] = tuple(strategy[:num_outputs])
 
         # Precompute allowed placements per input from the expanded rules
-        self.allowed_sharding_per_input: dict[int, set[Placement]] = defaultdict(set)
+        self.allowed_sharding_per_input: dict[int, set[Shard | _StridedShard]] = (
+            defaultdict(set)
+        )
         self.allowed_partial_per_input: dict[int, set[Placement]] = defaultdict(set)
         for strategy in self.expanded_strategies:
             for input_idx in range(num_inputs):
@@ -429,6 +460,7 @@ def _expand_single_dim_strategy_to_mesh(
                 inplace_op=is_inplace,
                 input_index=prepared_strategy.num_outputs,
                 allow_unbacked_sharding=prepared_strategy.allow_unbacked_sharding,
+                allow_uneven_sharding=prepared_strategy.allow_uneven_sharding,
             )
 
         return expanded_strategy
@@ -538,9 +570,10 @@ def _expand_single_dim_strategy_to_mesh(
 
 
 def register_single_dim_strategy(
-    op: Union[torch._ops.OpOverload, list[torch._ops.OpOverload]],
-    schema_info: Optional[RuntimeSchemaInfo] = None,
+    op: torch._ops.OpOverload | list[torch._ops.OpOverload],
+    schema_info: RuntimeSchemaInfo | None = None,
     allow_unbacked_sharding: bool | None = None,
+    allow_uneven_sharding: bool = False,
 ) -> Callable[[_SingleDimStrategyFunc], _SingleDimStrategyFunc]:
     """
     Registers a single_dim_strategy function for the given op.
@@ -588,6 +621,7 @@ def register_single_dim_strategy(
         info = _SingleDimStrategyInfo(
             func=impl,
             allow_unbacked_sharding=allow_unbacked_sharding,
+            allow_uneven_sharding=allow_uneven_sharding,
         )
         registration_wrapper(info)
         return impl
@@ -618,33 +652,56 @@ class _PQEntry:
 
 
 def _get_neighbor_placements(
-    allowed_sharding: set[Placement],
+    allowed_sharding: set[Shard | _StridedShard],
     allowed_partial: set[Placement],
     current: Placement,
+    input_placements: tuple[Placement, ...],
+    mesh_dim: int,
 ) -> list[Placement]:
-    """Return valid placement transitions for one input on one mesh dim.
+    """Return valid one-shot placement transitions for one input on one mesh dim.
 
-    Transition rules follow DTensor redistribute semantics:
-    - Replicate -> any allowed Shard or Partial (local view, free)
-    - Shard -> Replicate (allgather), or different Shard (all-to-all)
-    - Partial -> Replicate (allreduce), or any allowed Shard (reduce-scatter)
+    DTensor placements are applied left-to-right, so a tensor dim sharded on
+    multiple mesh dims has a specific nesting order. A one-shot collective on
+    mesh_dim M can only produce the correct data layout if no mesh dim to the
+    RIGHT of M already shards the same tensor dim. For example, going from
+    (R, S(0)) to (S(0), S(0)) via local chunk on mesh dim 0 produces a
+    strided-shard layout, not the correct left-to-right (S(0), S(0)) layout.
+
+    Transition rules:
+    - Replicate -> Shard(d): free local chunk, valid if d not sharded to the right
+    - Replicate -> Partial: local view, always valid
+    - Shard(d) -> Replicate: allgather, valid if d not sharded to the right
+    - Shard(d1) -> Shard(d2): all-to-all, valid if neither d1 nor d2 sharded right
+    - Partial -> Replicate: allreduce, always valid
+    - Partial -> Shard(d): reduce-scatter, valid if d not sharded to the right
     """
     # Note: circular import
     from torch.distributed.tensor.placement_types import Partial
 
+    # Tensor dims sharded by mesh dims to the right of this one.
+    right_shard_dims: set[int] = set()
+    for i in range(mesh_dim + 1, len(input_placements)):
+        p = input_placements[i]
+        if _is_sharding(p):
+            right_shard_dims.add(p.dim)
+
     neighbors: list[Placement] = []
 
     if isinstance(current, Replicate):
-        neighbors.extend(allowed_sharding)
+        neighbors.extend(s for s in allowed_sharding if s.dim not in right_shard_dims)
         neighbors.extend(allowed_partial)
 
     elif _is_sharding(current):
-        neighbors.append(Replicate())
-        neighbors.extend(s for s in allowed_sharding if s != current)
+        cur_dim_ok = current.dim not in right_shard_dims
+        if cur_dim_ok:
+            neighbors.append(Replicate())
+        for s in allowed_sharding:
+            if s != current and cur_dim_ok and s.dim not in right_shard_dims:
+                neighbors.append(s)
 
     elif isinstance(current, Partial):
         neighbors.append(Replicate())
-        neighbors.extend(allowed_sharding)
+        neighbors.extend(s for s in allowed_sharding if s.dim not in right_shard_dims)
 
     return neighbors
 
@@ -868,6 +925,8 @@ def _dijkstra_expand_single_dim_strategy_to_mesh(
                     prepared_strategy.allowed_sharding_per_input[input_idx],
                     prepared_strategy.allowed_partial_per_input[input_idx],
                     current_p,
+                    candidate.placements[input_idx],
+                    mesh_dim,
                 ):
                     _push_neighbor(input_idx, mesh_dim, neighbor_p, candidate)
 

@@ -5,7 +5,6 @@ import gc
 import random
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 import torch.utils._pytree as pytree
@@ -621,7 +620,7 @@ class TestOpaqueObject(TestCase):
             lib=self.lib,
         )
         def process_multiple_sizes_impl(
-            x: torch.Tensor, config: Optional[list[SizeStore]]
+            x: torch.Tensor, config: list[SizeStore] | None
         ) -> torch.Tensor:
             if config is None:
                 return x.clone()
@@ -635,7 +634,7 @@ class TestOpaqueObject(TestCase):
             "_TestOpaqueObject::process_multiple_sizes", lib=self.lib
         )
         def process_multiple_sizes_fake(
-            x: torch.Tensor, config: Optional[list[SizeStore]]
+            x: torch.Tensor, config: list[SizeStore] | None
         ) -> torch.Tensor:
             return torch.empty_like(x)
 
@@ -2412,6 +2411,23 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
     linear = torch.ops.aten.linear.default(x, p_linear_weight, p_linear_bias);  x = p_linear_weight = p_linear_bias = None
     return (linear,)""",  # noqa: B950
         )
+
+    def test_hoist_no_recompile_on_different_string(self):
+        cnt = CompileCounter()
+
+        def f(x, label):
+            return op_with_string(x, HoistedString(label))
+
+        opt_f = torch.compile(f, backend=cnt, fullgraph=True)
+        x = torch.tensor(3.0)
+
+        res1 = opt_f(x, "double")
+        self.assertEqual(res1, f(x, "double"))
+        self.assertEqual(cnt.frame_count, 1)
+
+        res2 = opt_f(x, "square")
+        self.assertEqual(res2, f(x, "square"))
+        self.assertEqual(cnt.frame_count, 1)
 
 
 instantiate_parametrized_tests(TestOpaqueObject)
