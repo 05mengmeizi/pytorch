@@ -15445,6 +15445,42 @@ class TestSelectiveActivationCheckpoint(TestCase):
         self.assertEqual(cheap_count[0], 4)
 
     @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_skips_recomputation(self):
+        from torch.utils.checkpoint import checkpoint_name
+
+        op_a, counts_a = _make_counter_op("name_a")
+        op_b, counts_b = _make_counter_op("name_b")
+
+        def policy_fn(ctx, op, *args, **kwargs):
+            if ctx.tensor_name == "keep_this":
+                return CheckpointPolicy.MUST_SAVE
+            return CheckpointPolicy.PREFER_RECOMPUTE
+
+        def fn(x):
+            y = op_a(x)
+            checkpoint_name(y, "keep_this")
+            return op_b(y)
+
+        x = torch.randn(4, requires_grad=True)
+        context_fn = functools.partial(create_selective_checkpoint_contexts, policy_fn)
+        out = checkpoint(fn, x, use_reentrant=False, context_fn=context_fn)
+        self.assertEqual(counts_a[0], 1)
+        self.assertEqual(counts_b[0], 1)
+
+        out.sum().backward()
+        # op_a was named "keep_this" and policy returned MUST_SAVE: not recomputed
+        self.assertEqual(counts_a[0], 1)
+        # op_b was not named: recomputed
+        self.assertEqual(counts_b[0], 2)
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
+    def test_checkpoint_name_no_sac_is_noop(self):
+        from torch.utils.checkpoint import checkpoint_name
+
+        x = torch.randn(4)
+        checkpoint_name(x, "foo")  # should not raise
+
+    @skipIfTorchDynamo("compile tested in test/dynamo/test_activation_checkpointing.py")
     def test_auto_naming_mode_names(self):
         class SubMod(torch.nn.Module):
             def forward(self, x):
