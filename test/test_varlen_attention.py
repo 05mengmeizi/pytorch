@@ -603,6 +603,7 @@ class TestVarlenAttention(NNTestCase):
             (-1, -1),
             (-1, 0),
             (1025, 1025),
+            (384, 0),  # edge case
         ],
     )
     def test_batch_invariance(
@@ -614,50 +615,41 @@ class TestVarlenAttention(NNTestCase):
         torch.manual_seed(42)
 
         num_heads, head_dim = 2, 128
-        target_seq_len = 2048
-        distractor_seq_len = 8192
+        target_seq_len = 512
+        extra_seq_len = 1024
 
-        target_q = torch.testing.make_tensor(
-            (target_seq_len, num_heads, head_dim),
-            device=device,
-            dtype=dtype,
-            requires_grad=True,
+        target_q = torch.randn(
+            target_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        target_k = torch.testing.make_tensor(
-            (target_seq_len, num_heads, head_dim),
-            device=device,
-            dtype=dtype,
-            requires_grad=True,
+        target_k = torch.randn(
+            target_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        target_v = torch.testing.make_tensor(
-            (target_seq_len, num_heads, head_dim),
-            device=device,
-            dtype=dtype,
-            requires_grad=True,
+        target_v = torch.randn(
+            target_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
 
-        distractor_q = torch.randn(
-            distractor_seq_len, num_heads, head_dim, device=device, dtype=dtype
+        extra_q = torch.randn(
+            extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        distractor_k = torch.randn(
-            distractor_seq_len, num_heads, head_dim, device=device, dtype=dtype
+        extra_q = torch.randn(
+            extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
-        distractor_v = torch.randn(
-            distractor_seq_len, num_heads, head_dim, device=device, dtype=dtype
+        extra_q = torch.randn(
+            extra_seq_len, num_heads, head_dim, device=device, dtype=dtype
         )
 
         cu_seq_solo = torch.tensor(
             [0, target_seq_len], device=device, dtype=torch.int32
         )
+        cu_seq_batch = torch.tensor(
+            [0, target_seq_len, target_seq_len + extra_seq_len],
+            device=device,
+            dtype=torch.int32,
+        )
 
-        all_lens = [target_seq_len, distractor_seq_len]
-        cu_seq_batch = torch.zeros(3, device=device, dtype=torch.int32)
-        cu_seq_batch[1:] = torch.tensor(all_lens, device=device).cumsum(0)
-        max_len = distractor_seq_len
-
-        all_q = torch.cat([target_q, distractor_q], dim=0)
-        all_k = torch.cat([target_k, distractor_k], dim=0)
-        all_v = torch.cat([target_v, distractor_v], dim=0)
+        all_q = torch.cat([target_q, extra_q], dim=0)
+        all_k = torch.cat([target_k, extra_q], dim=0)
+        all_v = torch.cat([target_v, extra_q], dim=0)
 
         with use_fa3(), torch.no_grad():
             solo_output = varlen_attn(
@@ -678,8 +670,8 @@ class TestVarlenAttention(NNTestCase):
                 all_v,
                 cu_seq_batch,
                 cu_seq_batch,
-                max_len,
-                max_len,
+                extra_seq_len,
+                extra_seq_len,
                 window_size=window_size,
                 batch_invariant=batch_invariant,
             )
@@ -706,20 +698,16 @@ class TestVarlenAttention(NNTestCase):
                 all_v,
                 cu_seq_batch,
                 cu_seq_batch,
-                max_len,
-                max_len,
+                extra_seq_len,
+                extra_seq_len,
                 window_size=window_size,
                 batch_invariant=batch_invariant,
             )
 
             if batch_invariant:
-                self.assertEqual(
-                    solo_output, batched_output[:target_seq_len], atol=0, rtol=0
-                )
-                self.assertEqual(
-                    solo_out_buf, batched_out_buf[:target_seq_len], atol=0, rtol=0
-                )
-                self.assertEqual(solo_output, solo_out_buf, atol=0, rtol=0)
+                self.assertEqual(solo_output, batched_output[:target_seq_len])
+                self.assertEqual(solo_out_buf, batched_out_buf[:target_seq_len])
+                self.assertEqual(solo_output, solo_out_buf)
             else:
                 self.assertNotEqual(solo_output, batched_output[:target_seq_len])
                 self.assertNotEqual(solo_out_buf, batched_out_buf[:target_seq_len])

@@ -71,6 +71,7 @@ def _varlen_attn(
         log.info("Using cuDNN backend for varlen_attn")
 
         if num_splits is not None:
+            # TODO: check this
             raise RuntimeError("num_splits is not supported with the cuDNN backend.")
         if window_size[0] != -1 or window_size[1] != -1:
             raise RuntimeError(
