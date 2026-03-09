@@ -299,7 +299,12 @@ def _sub_unbacked_exprs(shape_env: ShapeEnv, expr: sympy.Expr) -> sympy.Expr:
         new_expr = expr.subs(replacements)
         if new_expr == expr:
             break
-        expr = sympy.factor(new_expr)
+        # Limit sympy.factor() to expressions with <= 200 free symbols,
+        # as factoring polynomials with many variables is expensive.
+        if len(new_expr.free_symbols) <= 200:
+            expr = sympy.factor(new_expr)
+        else:
+            expr = new_expr
         sub_cnt += 1
     else:
         log.warning("Substitution limit (%d) reached w/ %s", sub_cnt_limit, expr)
@@ -388,8 +393,11 @@ def _optimization_hint_base(
     if has_free_unbacked_symbols(expr):
         # Make sure to substitute with the factored version
         # e.g. 10*(s0 + u0) instead of 10*s0 + 10*u0
-        # TODO optimize _sub_unbacked_exprs
-        expr = _sub_unbacked_exprs(shape_env, sympy.factor(original))
+        # Limit sympy.factor() to expressions with <= 200 free symbols,
+        # as factoring polynomials with many variables is expensive.
+        if isinstance(original, sympy.Expr) and len(original.free_symbols) <= 200:
+            original = sympy.factor(original)
+        expr = _sub_unbacked_exprs(shape_env, original)
 
     # For multiple expressions that depend on an unbacked symint,
     # we want to compute them consistently for a size hint we have chosen.
