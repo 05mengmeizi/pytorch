@@ -4327,9 +4327,7 @@ def _index_fill(
             out = out.squeeze(0).clone()
         # index_fill preserves the strides. index_copy always returns contiguous tensors
         if out.stride() != x.stride():
-            new_out = torch.empty_like(x)
-            new_out.copy_(out)
-            out = new_out
+            out = prims.copy_strided(out, x.stride())
         return out
 
 

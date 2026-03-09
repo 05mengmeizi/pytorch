@@ -606,7 +606,8 @@ class SizeVarAllocator:
 
         expr = self.remove_precomputed_replacements(expr)
         expr = sympy_subs(expr, self.backed_var_to_val)
-        expr = expr.expand(identity=True)
+        if isinstance(expr, Expr):
+            expr = expr.expand(identity=True)
 
         free_symbols = expr.free_symbols
         if not free_symbols:
