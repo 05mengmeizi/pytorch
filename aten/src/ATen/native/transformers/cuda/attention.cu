@@ -490,7 +490,7 @@ _flash_attention_forward_impl(
 #if defined(USE_FLASH_ATTENTION)
   TORCH_CHECK(
       !num_splits.has_value(),
-      "num_splits requires FA3. Register FA3 with `register_flash_attention_fa3()` to use batch_invariant=True.");
+      "num_splits requires FA3. Register FA3 with `register_flash_attention_fa3()` to set num_splits.");
   const auto softmax_scale =
       sdp::calculate_scale(query, scale).expect_float();
 
