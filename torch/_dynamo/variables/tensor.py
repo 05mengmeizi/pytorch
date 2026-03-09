@@ -1432,6 +1432,21 @@ class TensorVariable(VariableTracker):
         value: Any | None = None,
     ) -> Any | None:
         if value is not None and config.enable_dynamo_decompositions:
+            if isinstance(value, TensorVariable):
+                # Tensor value: use fma to match ATen's nvcc fusion.
+                # ATen rounds t1*t2 first via nvcc fmad, but for tensor
+                # values the old mul+add path had no fma at all. Using
+                # fma(mul(t1, value), t2, self) is strictly better.
+                from torch._inductor import inductor_prims
+
+                mul_var = variables.TorchInGraphFunctionVariable(torch.mul)
+                fma_var = variables.TorchInGraphFunctionVariable(inductor_prims.fma)
+                scaled = mul_var.call_function(tx, [tensor1, value], {})
+                result = fma_var.call_function(tx, [scaled, tensor2, self], {})
+                return self.call_method(tx, "copy_", [result], {})
+            # Scalar value: polyfill routes through add_(t1*t2, alpha=value).
+            # Inductor's add lowering emits fma(t1*t2, value, self) which
+            # matches ATen's nvcc fusion empirically.
             from .. import polyfills
 
             return tx.inline_user_function_return(
@@ -1582,6 +1597,17 @@ class TensorVariable(VariableTracker):
             result = variables.TorchInGraphFunctionVariable(torch.div).call_function(
                 tx, [tensor1, tensor2], {}
             )
+            if isinstance(value, TensorVariable):
+                # Tensor value: use fma to match ATen's nvcc fusion
+                # fma(value, quotient, self). The old mul+add path had
+                # no fma for tensor values.
+                from torch._inductor import inductor_prims
+
+                fma_var = variables.TorchInGraphFunctionVariable(inductor_prims.fma)
+                fma_result = fma_var.call_function(tx, [result, value, self], {})
+                return self.call_method(tx, "copy_", [fma_result], {})
+            # Scalar value: add_(quotient, alpha=value) lets inductor's
+            # add lowering emit fma(quotient, value, self), matching ATen.
             return self.call_method(tx, "add_", [result], {"alpha": value})
         return None
 
