@@ -74,7 +74,8 @@ def get_view_test_cases():
         # view is not a leaf and has the same requires grad as its basic case
         x, _ = get_jagged_tensor(((2, 3, 4), 3), None, requires_grad=True)
         x = x.clone() if base_is_nt else x
-        assert not x.is_leaf
+        if x.is_leaf:
+            raise AssertionError("Expected x to not be a leaf")
         return x.unsqueeze(-1)
 
     def mk_leaf(base_is_nt, requires_grad_1, requires_grad_2):
@@ -234,7 +235,8 @@ class ScaledTensor(torch.Tensor):
 
     @staticmethod
     def __tensor_unflatten__(inner_tensors, metadata, outer_size, outer_stride):
-        assert len(inner_tensors) == 2
+        if len(inner_tensors) != 2:
+            raise AssertionError(f"Expected 2 inner tensors, got {len(inner_tensors)}")
         return ScaledTensor(
             inner_tensors["_data"],
             inner_tensors["_scale"],
@@ -763,7 +765,7 @@ class SubclassTests(torch._dynamo.test_case.TestCase):
             a.add_(w)
             return a
 
-        fn_opt = torch.compile(fn)
+        fn_opt = torch.compile(fn, backend="eager")
 
         res_exp = fn(x, wrapped)
         res_act = fn_opt(y, wrapped2)
@@ -1850,7 +1852,7 @@ s50 > 3""",
         self.assertRaisesRegex(
             torch._dynamo.exc.InternalTorchDynamoError,
             "Tensor subclass method __metadata_guard__ must take exactly two subclass metadata arguments",
-            lambda: torch.compile(lambda x: x * x)(x),
+            lambda: torch.compile(lambda x: x * x, backend="eager")(x),
         )
 
     def test_tensor_subclass_ctx_custom_guards_error_not_classmethod(self):
@@ -1864,7 +1866,7 @@ s50 > 3""",
         self.assertRaisesRegex(
             torch._dynamo.exc.InternalTorchDynamoError,
             "Tensor subclass method __metadata_guard__ must be a classmethod",
-            lambda: torch.compile(lambda x: x * x)(x),
+            lambda: torch.compile(lambda x: x * x, backend="eager")(x),
         )
 
     def test_tensor_subclass_metadata_with_symint(self):
@@ -1969,7 +1971,7 @@ s50 > 3""",
                 )
                 return return_and_correct_aliasing(func, args, kwargs, out)
 
-        @torch.compile(fullgraph=True)
+        @torch.compile(fullgraph=True, backend="eager")
         def f1(x):
             meta = SubclassTensorArgs(
                 x.shape, x.device, SubclassTensorArgs(x.shape, x.device, None)
@@ -1980,7 +1982,7 @@ s50 > 3""",
         x = torch.randn(3, 3)
         f1(x)
 
-        @torch.compile(fullgraph=True)
+        @torch.compile(fullgraph=True, backend="eager")
         def f1(x):
             meta = SubclassTensorArgs2(
                 x.shape, x.device, SubclassTensorArgs2(x.shape, x.device, None)
@@ -2052,7 +2054,7 @@ s50 > 3""",
                 )
                 return output
 
-        @torch.compile(dynamic=True)
+        @torch.compile(dynamic=True, backend="eager")
         def f(x):
             return x.unflatten(-1, [2, 5])
 
@@ -3119,7 +3121,7 @@ class GraphModule(torch.nn.Module):
                 if outer_stride is None:
                     outer_stride = a.stride()
 
-                assert (
+                assert (  # noqa: S101
                     a.device == b.device
                     and a.layout == b.layout
                     and a.requires_grad == b.requires_grad
@@ -3138,14 +3140,14 @@ class GraphModule(torch.nn.Module):
 
             @staticmethod
             def __tensor_unflatten__(inner_tensors, meta, outer_size, outer_stride):
-                assert meta is None
+                assert meta is None  # noqa: S101
                 a, b = inner_tensors["a"], inner_tensors["b"]
                 if type(a) is torch.Tensor:
-                    assert outer_size is not None
-                    assert outer_stride is not None
+                    assert outer_size is not None  # noqa: S101
+                    assert outer_stride is not None  # noqa: S101
                 return TT(a, b, outer_size, outer_stride)
 
-        @torch.compile(dynamic=True)
+        @torch.compile(dynamic=True, backend="eager")
         def f(x, y):
             tmp1 = x.sin()
             tmp2 = y.sin()
@@ -3394,49 +3396,32 @@ class <lambda>(torch.nn.Module):
 """,  # noqa: B950
         )
 
-    def test_wrap_tensor_returns_user_defined_object_for_self_in_init(self):
+    def test_deferred_init_subclass_init_not_traced(self):
         """
-        Test that wrap_tensor returns UserDefinedObjectVariable when wrapping
-        the `self` parameter in an __init__ method of a traceable wrapper subclass.
+        Tracing a function that constructs a DeferredInitSubclass must not crash.
+
+        The bug: when Dynamo's frame hook intercepts __init__ as a root frame,
+        self is partially initialised (attributes not yet set by __init__).
+        Previously, wrap_tensor would call __tensor_flatten__ on this
+        partially-initialised self and raise AttributeError.
+
+        The fix skips tracing __init__ of traceable wrapper subclasses at the
+        frame level (convert_frame.py), so __init__ runs eagerly like
+        @torch._disable_dynamo would.
         """
-        from unittest.mock import MagicMock
-
-        from torch._dynamo.source import LocalSource
-        from torch._dynamo.variables.builder import VariableBuilder
-        from torch._dynamo.variables.user_defined import UserDefinedObjectVariable
-        from torch._guards import tracing, TracingContext
-        from torch.utils._python_dispatch import is_traceable_wrapper_subclass
-
-        # Create a traceable wrapper subclass tensor
+        # Compile __init__ directly, simulating the root-frame interception
+        # scenario that occurs in practice (e.g. Diffusers + TorchAO + Dynamo).
+        compiled_init = torch.compile(
+            DeferredInitSubclass.__init__, backend="eager", fullgraph=False
+        )
         data = torch.randn(4, 4)
-        tensor = DeferredInitSubclass(data, 2.0)
-        self.assertTrue(is_traceable_wrapper_subclass(tensor))
+        shell = DeferredInitSubclass.__new__(DeferredInitSubclass, data, 2.0)
 
-        # Mock the InstructionTranslator (tx) with required attributes
-        mock_tx = MagicMock()
-        mock_tx.f_code.co_name = "__init__"
-        mock_tx.f_code.co_argcount = 3
-        mock_tx.f_code.co_varnames = ("self", "data", "scale")
-        mock_tx.output.side_effects = {}
-        mock_tx.output.input_source_to_var = {}
-        mock_tx.output.variable_tracker_cache = MagicMock()
-        mock_tx.output.variable_tracker_cache.get.return_value = None
+        # Should not raise AttributeError from __tensor_flatten__ on partial self
+        compiled_init(shell, data, 2.0)
 
-        # Create LocalSource for 'self' parameter
-        source = LocalSource(local_name="self", is_input=True)
-
-        # Create a TracingContext and use tracing() context manager
-        ctx = TracingContext(fake_mode=None)
-        with tracing(ctx):
-            builder = VariableBuilder(mock_tx, source)
-
-            # Call wrap_tensor - with the fix enabled, this should return
-            # UserDefinedObjectVariable instead of trying to fake the tensor
-            result = builder.wrap_tensor(tensor)
-
-        # With the fix: expect UserDefinedObjectVariable
-        # Without the fix: would try to fake and potentially fail
-        self.assertIsInstance(result, UserDefinedObjectVariable)
+        self.assertEqual(shell._data, data)
+        self.assertEqual(shell._scale, 2.0)
 
 
 instantiate_parametrized_tests(SubclassTests)
@@ -3800,7 +3785,7 @@ class GraphModule(torch.nn.Module):
                 values, t.offsets(), max_seqlen=t._maybe_max_seqlen
             )
 
-        opt_fn = torch.compile(fn, fullgraph=True, dynamic=True)
+        opt_fn = torch.compile(fn, fullgraph=True, dynamic=True, backend="eager")
         values = torch.randn(10, 5)
         offsets = torch.tensor([0, 2, 4, 7, 10])
         max_seqlen = 5
