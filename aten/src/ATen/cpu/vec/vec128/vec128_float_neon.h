@@ -321,10 +321,10 @@ class Vectorized<float> {
     }
 
     const float32x4_t inv_ln2 = vdupq_n_f32(0x1.715476p+0f);
-    const float ln2_hi = 0x1.62e4p-1f;
-    const float ln2_lo = 0x1.7f7d1cp-20f;
-    const float c0 = 0x1.0e4020p-7f;
-    const float c2 = 0x1.555e66p-3f;
+    constexpr float ln2_hi = 0x1.62e4p-1f;
+    constexpr float ln2_lo = 0x1.7f7d1cp-20f;
+    constexpr float c0 = 0x1.0e4020p-7f;
+    constexpr float c2 = 0x1.555e66p-3f;
     const float32x4_t ln2_c02 = {ln2_hi, ln2_lo, c0, c2};
 
     const uint32x4_t exponent_bias = vdupq_n_u32(0x3f800000);
@@ -367,8 +367,8 @@ class Vectorized<float> {
     const float32x4_t lower_bound = vdupq_n_f32(-0x1.5ebb82p+6f);
     const float32x4_t upper_bound = vdupq_n_f32(0x1.61814ap+6f);
     const float32x4_t inv_ln2 = vdupq_n_f32(0x1.715476p+0f);
-    const float ln2 = 0x1.62e43p-1f;
-    const float c2 = 0x1.5592ecp-3f;
+    constexpr float ln2 = 0x1.62e43p-1f;
+    constexpr float c2 = 0x1.5592ecp-3f;
 
     // exp(x) = 2^n (1 + exp(r))
     // r = x - n*ln2, with n = round(x/ln2)
