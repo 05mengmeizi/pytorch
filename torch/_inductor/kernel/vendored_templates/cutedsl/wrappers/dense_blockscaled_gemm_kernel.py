@@ -110,8 +110,14 @@ class VendoredDenseBlockScaledGemmKernel(CuteDslKernel):
         stream,
         workspace=None,
     ) -> None:
+        import torch
+
         stream = to_cuda_stream(stream)
         compiled_gemm = compiled_artifact.compiled_obj
+
+        # TVM FFI needs a torch.cuda.Stream, not a raw int handle
+        if isinstance(stream, int):
+            stream = torch.cuda.ExternalStream(stream)
 
         self.cute_run(  # pyrefly: ignore[missing-attribute]
             compiled_gemm,
