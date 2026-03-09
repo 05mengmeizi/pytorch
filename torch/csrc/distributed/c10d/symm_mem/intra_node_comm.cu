@@ -36,7 +36,7 @@ at::Tensor IntraNodeComm::oneShotAllReduce(
   checkInput(input, deviceIdx_);
 
   auto op = c10::Dispatcher::singleton()
-                .findSchemaOrThrow("symm_mem::one_shot_all_reduce", "out")
+                .findSchemaOrThrow("symm_mem::one_shot_all_reduce_out", "")
                 .typed<at::Tensor(
                     const at::Tensor&, std::string, std::string, at::Tensor)>();
 

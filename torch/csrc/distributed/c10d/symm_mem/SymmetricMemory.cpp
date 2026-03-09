@@ -486,8 +486,7 @@ TORCH_LIBRARY_FRAGMENT(symm_mem, m) {
   m.def(
       "multimem_one_shot_all_reduce(Tensor input, str reduce_op, str group_name) -> Tensor");
   m.def(
-      "multimem_one_shot_all_reduce.out(Tensor input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)",
-      {at::Tag::out_variant});
+      "multimem_one_shot_all_reduce_out(Tensor input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)");
   m.def(
       "multimem_one_shot_reduce_out(Tensor input, str reduce_op, int root, str group_name, Tensor(a!) out) -> Tensor(a!)");
   m.def(
@@ -495,13 +494,11 @@ TORCH_LIBRARY_FRAGMENT(symm_mem, m) {
   m.def(
       "one_shot_all_reduce(Tensor input, str reduce_op, str group_name) -> Tensor");
   m.def(
-      "one_shot_all_reduce.out(Tensor input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)",
-      {at::Tag::out_variant});
+      "one_shot_all_reduce_out(Tensor input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)");
   m.def(
       "one_shot_all_reduce_copy(Tensor symm_buffer, Tensor local_input, str reduce_op, str group_name) -> Tensor");
   m.def(
-      "one_shot_all_reduce_copy.out(Tensor symm_buffer, Tensor local_input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)",
-      {at::Tag::out_variant});
+      "one_shot_all_reduce_copy_out(Tensor symm_buffer, Tensor local_input, str reduce_op, str group_name, Tensor(a!) out) -> Tensor(a!)");
 
   m.def(
       "two_shot_all_reduce_(Tensor(a!) input, str reduce_op, str group_name) -> Tensor(a!)");

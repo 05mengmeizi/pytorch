@@ -1225,9 +1225,9 @@ at::Tensor stream_write_value32_(
 TORCH_LIBRARY_IMPL(symm_mem, CUDA, m) {
 #if defined(USE_ROCM) || defined(CUDART_VERSION)
   m.impl("one_shot_all_reduce", ::one_shot_all_reduce);
-  m.impl("one_shot_all_reduce.out", ::one_shot_all_reduce_out);
+  m.impl("one_shot_all_reduce_out", ::one_shot_all_reduce_out);
   m.impl("one_shot_all_reduce_copy", ::one_shot_all_reduce_copy);
-  m.impl("one_shot_all_reduce_copy.out", ::one_shot_all_reduce_copy_out);
+  m.impl("one_shot_all_reduce_copy_out", ::one_shot_all_reduce_copy_out);
   m.impl("two_shot_all_reduce_", ::two_shot_all_reduce_);
   m.impl("two_shot_all_reduce_out", ::two_shot_all_reduce_out);
   m.impl("reduce_scatter_out", ::reduce_scatter_out);
@@ -1246,7 +1246,7 @@ TORCH_LIBRARY_IMPL(symm_mem, CUDA, m) {
   // understanding the caveats.
   m.impl("multimem_one_shot_all_reduce", ::multimem_one_shot_all_reduce);
   m.impl(
-      "multimem_one_shot_all_reduce.out", ::multimem_one_shot_all_reduce_out);
+      "multimem_one_shot_all_reduce_out", ::multimem_one_shot_all_reduce_out);
   m.impl(
       "multimem_one_shot_reduce_out", ::multimem_one_shot_reduce_out);
   m.impl("multimem_all_gather_out", ::multimem_all_gather_out);

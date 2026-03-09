@@ -418,6 +418,18 @@ def register_symm_mem_lowerings():
         log.info("symm_mem ops not available, skipping symm_mem lowerings")
         return
 
+    from torch._library._out_variant import register_out_variant
+
+    # Register manual out variant mappings for symm_mem ops.
+    register_out_variant(
+        symm_mem.one_shot_all_reduce.default,
+        symm_mem.one_shot_all_reduce_out.default,
+    )
+    register_out_variant(
+        symm_mem.one_shot_all_reduce_copy.default,
+        symm_mem.one_shot_all_reduce_copy_out.default,
+    )
+
     from .lowering import register_lowering
 
     def _maybe_realize_symm_mem(
@@ -452,7 +464,7 @@ def register_symm_mem_lowerings():
             ),
         )
 
-    @register_lowering(symm_mem.one_shot_all_reduce.out)
+    @register_lowering(symm_mem.one_shot_all_reduce_out)
     def _symm_mem_one_shot_all_reduce_out(
         inp: ir.TensorBox,
         reduce_op: str,
@@ -463,7 +475,7 @@ def register_symm_mem_lowerings():
         return pytree.tree_map(
             ir.TensorBox.create,
             ir.FallbackKernel.create(
-                symm_mem.one_shot_all_reduce.out,
+                symm_mem.one_shot_all_reduce_out.default,
                 inp,
                 reduce_op,
                 group_name,
@@ -490,7 +502,7 @@ def register_symm_mem_lowerings():
             ),
         )
 
-    @register_lowering(symm_mem.one_shot_all_reduce_copy.out)
+    @register_lowering(symm_mem.one_shot_all_reduce_copy_out)
     def _symm_mem_one_shot_all_reduce_copy_out(
         symm_buffer: ir.TensorBox,
         local_input: ir.TensorBox,
@@ -502,7 +514,7 @@ def register_symm_mem_lowerings():
         return pytree.tree_map(
             ir.TensorBox.create,
             ir.FallbackKernel.create(
-                symm_mem.one_shot_all_reduce_copy.out,
+                symm_mem.one_shot_all_reduce_copy_out.default,
                 symm_buffer,
                 local_input,
                 reduce_op,
@@ -577,7 +589,7 @@ def register_symm_mem_lowerings():
             ),
         )
 
-    @register_lowering(symm_mem.multimem_one_shot_all_reduce.out)
+    @register_lowering(symm_mem.multimem_one_shot_all_reduce_out)
     def _symm_mem_multimem_one_shot_all_reduce_out(
         inp: ir.TensorBox,
         reduce_op: str,
@@ -588,7 +600,7 @@ def register_symm_mem_lowerings():
         return pytree.tree_map(
             ir.TensorBox.create,
             ir.FallbackKernel.create(
-                symm_mem.multimem_one_shot_all_reduce.out,
+                symm_mem.multimem_one_shot_all_reduce_out.default,
                 inp,
                 reduce_op,
                 group_name,

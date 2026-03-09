@@ -8,6 +8,44 @@ import torch
 log = logging.getLogger(__name__)
 
 
+# Manual registry for ops that have out variants but may not be discoverable
+# via the standard to_out_variant() path (e.g., ops where the functional
+# version is not truly functional due to inplace side effects on non-out args,
+# or ops whose out variant uses flat _out naming instead of .out overload).
+_manual_out_variant_registry: dict[
+    torch._ops.OpOverload, torch._ops.OpOverload
+] = {}
+
+
+def register_out_variant(
+    functional_op: torch._ops.OpOverload,
+    out_op: torch._ops.OpOverload,
+) -> None:
+    """Register a manual mapping from a functional op to its out variant.
+
+    This is used for ops where automatic discovery via to_out_variant()
+    does not work, e.g. because the out variant uses flat _out naming
+    instead of .out overload convention, or because the functional op
+    has inplace side effects that make _is_functional() return False.
+
+    Args:
+        functional_op: The functional operator overload.
+        out_op: The corresponding out variant operator overload.
+    """
+    _manual_out_variant_registry[functional_op] = out_op
+
+
+def lookup_manual_out_variant(
+    op: torch._ops.OpOverload,
+) -> torch._ops.OpOverload | None:
+    """Look up a manually registered out variant for the given op.
+
+    Returns:
+        The out variant OpOverload, or None if not registered.
+    """
+    return _manual_out_variant_registry.get(op)
+
+
 def _is_functional(schema: torch._C.FunctionSchema) -> bool:
     """
     A schema is functional if no argument is written to and the name doesn't

@@ -448,7 +448,7 @@ them directly via `torch.ops.symm_mem.<op_name>`.
     :param str group_name: Name of the group to perform all-reduce on.
 
 
-.. py:function:: one_shot_all_reduce.out(input: Tensor, reduce_op: str, group_name: str, out: Tensor) -> Tensor
+.. py:function:: one_shot_all_reduce_out(input: Tensor, reduce_op: str, group_name: str, out: Tensor) -> Tensor
 
     Performs a one-shot all-reduce operation based on the input tensor and writes the result to the output tensor.
 

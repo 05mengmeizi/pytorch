@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torch.distributed._symmetric_memory as symm_mem
 from torch._C._autograd import DeviceType
 from torch._C._distributed_c10d import _SymmetricMemory
+from torch._C import FileCheck
 from torch._inductor.utils import (
     fresh_cache,
     fresh_inductor_cache,
@@ -1446,13 +1447,19 @@ class LoweringTest(MultiProcContinuousTest):
         compiled = torch.compile(func, fullgraph=True)
         code = run_and_get_triton_code(compiled, x, w1, w2, w3)
 
-        # allreduce should use out= (ExternKernelOut, not FallbackKernel)
+        # Verify one_shot_all_reduce is converted to one_shot_all_reduce_out
+        # with out= parameter (ExternKernelOut, not FallbackKernel).
+        # Each mm + allreduce pair should produce an out= call for the allreduce.
+        FileCheck().check_count(
+            "one_shot_all_reduce_out", 3, exactly=True
+        ).run(code)
+
+        # Verify the out= parameter is present on allreduce calls.
         out_calls = code.count(", out=")
         self.assertGreaterEqual(
             out_calls,
             6,
-            f"Expected at least 6 out= calls, got {out_calls}. "
-            "one_shot_all_reduce may not be lowered via ExternKernelOut.",
+            f"Expected at least 6 out= calls (3 mm + 3 allreduce), got {out_calls}.",
         )
 
         # Output buffers should be reused across layers (ping-pong).
@@ -1461,6 +1468,48 @@ class LoweringTest(MultiProcContinuousTest):
             reuse_count,
             2,
             f"Expected at least 2 buffer reuses, got {reuse_count}.",
+        )
+
+    @skip_if_rocm_multiprocess  # requires registered-buffer support
+    @skip_if_lt_x_gpu(2)
+    @fresh_inductor_cache()
+    def test_output_buffer_reuse_copy_variant(self):
+        """
+        Verify that one_shot_all_reduce_copy is also lowered via
+        ExternKernelOut through the manual out variant registry.
+        """
+        self._init_process()
+
+        N = 8
+        group_name = dist.group.WORLD.group_name
+        symm_buffer = symm_mem.empty(
+            N * N, device=self.device, dtype=torch.float32
+        ).view(N, N)
+        symm_mem.rendezvous(symm_buffer, group=group_name)
+
+        local_input = torch.rand(N, N, device=self.device)
+        w = torch.rand(N, N, device=self.device)
+
+        def func(symm_buffer, local_input, w):
+            x = torch.mm(local_input, w)
+            return torch.ops.symm_mem.one_shot_all_reduce_copy(
+                symm_buffer, x, "sum", "0"
+            )
+
+        compiled = torch.compile(func, fullgraph=True)
+        code = run_and_get_triton_code(compiled, symm_buffer, local_input, w)
+
+        # Verify one_shot_all_reduce_copy is converted to
+        # one_shot_all_reduce_copy_out with out= parameter.
+        FileCheck().check(
+            "one_shot_all_reduce_copy_out"
+        ).run(code)
+
+        # Verify the out= parameter is present.
+        self.assertIn(
+            ", out=",
+            code,
+            "one_shot_all_reduce_copy_out should have out= parameter.",
         )
 
     @skip_if_rocm_multiprocess  # test requires support for registered buffers
