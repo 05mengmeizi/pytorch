@@ -29,7 +29,7 @@ from torch._ops import OpOverload
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.immutable_collections import immutable_dict
 from torch.testing import FileCheck
-from torch.testing._internal.common_cuda import TEST_MULTIGPU
+from torch.testing._internal.common_cuda import blas_library_context, TEST_MULTIGPU
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
     IS_ARM64,
@@ -1931,6 +1931,7 @@ if HAS_CUDA_AND_TRITON:
 
         @unittest.skipUnless(IS_X86 and IS_LINUX, "cpp contexts are linux only")
         @torch._inductor.config.patch("triton.cudagraph_trees_history_recording", True)
+        @blas_library_context("cublas")
         def test_workspace_allocation_error(self):
             torch._C._cuda_clearCublasWorkspaces()
 
@@ -3846,7 +3847,7 @@ if HAS_CUDA_AND_TRITON:
             log_stream, ctx = logs_to_string("torch._inductor.scheduler", "cudagraphs")
             with ctx():
                 compiled_model(x)
-            FileCheck().check("1 cudagraphable, 2 non-cudagraphable").run(
+            FileCheck().check("2 cudagraphable, 1 non-cudagraphable").run(
                 log_stream.getvalue()
             )
 
