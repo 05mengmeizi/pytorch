@@ -354,7 +354,43 @@ class Vectorized<float> {
     return vexpq_f32_u20();
   }
   Vectorized<float> fexp_u20() const {
-    return exp_u20();
+    // fast exponential intended for cases where outputs will be downcasted to
+    // FP16 / BF16 (e.g. attention softmax). Accurate within 1 ULP for FP16
+    // Accurate within 1 ULP for BF16 for inputs in [-87.683, 88.376] & clamps
+    // inputs outside this range to 0 / inf. Implementation is similar to
+    // exp_u20, but:
+    // - uses a third degree polynomial approximation for exp(r) instead of a
+    // fifth degree one, with coefficients retuned.
+    // - does not split natural log (ln) into high / low parts
+    // - clamps exp(x) to 0 for x < -87.6831131f and inf for x > 88.3762589f
+
+    const float32x4_t lower_bound = vdupq_n_f32(-0x1.5ebb82p+6f);
+    const float32x4_t upper_bound = vdupq_n_f32(0x1.61814ap+6f);
+    const float32x4_t inv_ln2 = vdupq_n_f32(0x1.715476p+0f);
+    const float ln2 = 0x1.62e43p-1f;
+    const float c2 = 0x1.5592ecp-3f;
+
+    // exp(x) = 2^n (1 + exp(r))
+    // r = x - n*ln2, with n = round(x/ln2)
+    // exp(r) ~ poly(r) = r + r^2 * (c3 + c2 * r)
+    const uint32x4_t exponent_bias = vdupq_n_u32(0x3f800000);
+    const float32x4_t c3 = vdupq_n_f32(0x1.017d34p-1f);
+
+    float32x4_t n = vrndaq_f32(vmulq_f32(values, inv_ln2));
+    float32x4_t r = vfmsq_n_f32(values, n, ln2);
+    uint32x4_t e = vshlq_n_u32(vreinterpretq_u32_s32(vcvtq_s32_f32(n)), 23);
+    float32x4_t scale = vreinterpretq_f32_u32(vaddq_u32(e, exponent_bias));
+
+    float32x4_t r2 = vmulq_f32(r, r);
+    float32x4_t q = vfmaq_n_f32(c3, r, c2);
+    float32x4_t poly = vfmaq_f32(r, q, r2);
+    float32x4_t y = vfmaq_f32(scale, poly, scale);
+
+    const uint32x4_t lt_lower = vcltq_f32(values, lower_bound);
+    const uint32x4_t gt_upper = vcgtq_f32(values, upper_bound);
+    y = vbslq_f32(lt_lower, vdupq_n_f32(0.0f), y);
+    y = vbslq_f32(gt_upper, vdupq_n_f32(INFINITY), y);
+    return y;
   }
   DEFINE_SLEEF_COMPATIBLE_BINARY_ELEMENTWISE_FUNC_WITH_SLEEF_NAME(
       fmod,
