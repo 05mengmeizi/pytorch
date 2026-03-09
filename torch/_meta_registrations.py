@@ -6302,6 +6302,7 @@ def meta__flash_attention_forward(
     seqused_k: Tensor | None = None,
     alibi_slopes: Tensor | None = None,
     block_table: Tensor | None = None,
+    num_splits: int | None = None,
 ):
     # NB: there are two underlying paths:
     # 1. normal dense path; expect 4D inputs of shape (batch_size, seqlen, num_heads, head_dim)
@@ -6380,6 +6381,7 @@ def meta__flash_attention_forward_no_dropout_inplace(
     seqused_k: Tensor | None = None,
     alibi_slopes: Tensor | None = None,
     block_table: Tensor | None = None,
+    num_splits: int | None = None,
 ):
     _, logsumexp, _, _, _ = meta__flash_attention_forward(
         query,
