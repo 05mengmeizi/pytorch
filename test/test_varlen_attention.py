@@ -655,6 +655,10 @@ class TestVarlenAttention(NNTestCase):
         cu_seq_batch[1:] = torch.tensor(all_lens, device=device).cumsum(0)
         max_len = distractor_seq_len
 
+        all_q = torch.cat([target_q, distractor_q], dim=0)
+        all_k = torch.cat([target_k, distractor_k], dim=0)
+        all_v = torch.cat([target_v, distractor_v], dim=0)
+
         with use_fa3(), torch.no_grad():
             solo_output = varlen_attn(
                 target_q,
@@ -668,11 +672,35 @@ class TestVarlenAttention(NNTestCase):
                 batch_invariant=batch_invariant,
             )
 
-            all_q = torch.cat([target_q, distractor_q], dim=0)
-            all_k = torch.cat([target_k, distractor_k], dim=0)
-            all_v = torch.cat([target_v, distractor_v], dim=0)
-
             batched_output = varlen_attn(
+                all_q,
+                all_k,
+                all_v,
+                cu_seq_batch,
+                cu_seq_batch,
+                max_len,
+                max_len,
+                window_size=window_size,
+                batch_invariant=batch_invariant,
+            )
+
+            solo_out_buf = torch.empty_like(target_q)
+            varlen_attn_out(
+                solo_out_buf,
+                target_q,
+                target_k,
+                target_v,
+                cu_seq_solo,
+                cu_seq_solo,
+                target_seq_len,
+                target_seq_len,
+                window_size=window_size,
+                batch_invariant=batch_invariant,
+            )
+
+            batched_out_buf = torch.empty_like(all_q)
+            varlen_attn_out(
+                batched_out_buf,
                 all_q,
                 all_k,
                 all_v,
@@ -688,8 +716,13 @@ class TestVarlenAttention(NNTestCase):
                 self.assertEqual(
                     solo_output, batched_output[:target_seq_len], atol=0, rtol=0
                 )
+                self.assertEqual(
+                    solo_out_buf, batched_out_buf[:target_seq_len], atol=0, rtol=0
+                )
+                self.assertEqual(solo_output, solo_out_buf, atol=0, rtol=0)
             else:
                 self.assertNotEqual(solo_output, batched_output[:target_seq_len])
+                self.assertNotEqual(solo_out_buf, batched_out_buf[:target_seq_len])
 
     @unittest.skipIf(
         not PLATFORM_SUPPORTS_FLASH_ATTENTION, "Flash Attention not supported"
