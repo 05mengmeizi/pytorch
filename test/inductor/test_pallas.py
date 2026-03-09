@@ -100,7 +100,7 @@ def make_pallas(cls):
     return test_class
 
 
-def _skip_if(condition_fn, reason):
+def _skip_if(condition_fn, *, reason):
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(self, *args, **kwargs):
@@ -113,9 +113,9 @@ def _skip_if(condition_fn, reason):
     return decorator
 
 
-skip_if_tpu = _skip_if(lambda self: self.DEVICE == "tpu", "Not yet working on TPU")
-skip_if_cpu = _skip_if(lambda self: self.DEVICE == "cpu", "Not yet working on CPU")
-skip_if_cuda = _skip_if(lambda self: self.DEVICE == "cuda", "Not yet working on GPU")
+skip_if_tpu = functools.partial(_skip_if, lambda self: self.DEVICE == "tpu", reason="Not yet working on TPU")
+skip_if_cpu = functools.partial(_skip_if, lambda self: self.DEVICE == "cpu", reason="Not yet working on CPU")
+skip_if_cuda = functools.partial(_skip_if, lambda self: self.DEVICE == "cuda", reason="Not yet working on GPU")
 
 
 class PallasTestsMixin:
@@ -462,7 +462,6 @@ class PallasTestsMixin:
         expected = operate_on_tensor(x_t_contiguous)
         self.assertEqual(result, expected)
 
-    @skip_if_tpu
     def test_strided_int_pallas(self):
         """Test strided access patterns with the Pallas backend."""
         if self.DEVICE == "cuda":
@@ -471,6 +470,20 @@ class PallasTestsMixin:
         def fn(x):
             # Access every other element (strided access)
             return x[::2] * 2.0
+
+        compiled = self._compile(fn)
+
+        x = torch.arange(16, dtype=torch.float32, device=self.DEVICE)
+        result = compiled(x)
+        expected = fn(x)
+        self.assertEqual(result, expected)
+
+    @skip_if_cuda
+    def test_two_strided_access_on_same_tensor(self):
+        """Test two strided access patterns on the same input with the Pallas backend."""
+
+        def fn(x):
+            return torch.cat((x[::2], x[::4]))
 
         compiled = self._compile(fn)
 
@@ -1006,7 +1019,6 @@ class PallasTestsMixin:
         expected = fn(x)
         self.assertEqual(result, expected)
 
-    @skip_if_tpu
     def test_atan2(self):
         """Test atan2 operation."""
 
@@ -1172,7 +1184,6 @@ class PallasTestsMixin:
                 self.assertEqual(result, expected)
 
     @skip_if_cuda
-    @skip_if_tpu
     def test_rope(self):
         """Test Rotary Position Embedding with slice + cat.
 
@@ -1196,7 +1207,6 @@ class PallasTestsMixin:
         self.assertEqual(result, expected)
 
     @skip_if_cuda
-    @skip_if_tpu
     def test_rope_interleaved(self):
         """Test Rotary Position Embedding with interleaved halves.
 
