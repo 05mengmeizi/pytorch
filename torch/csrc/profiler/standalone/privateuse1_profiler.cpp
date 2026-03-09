@@ -6,15 +6,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#ifdef USE_KINETO
+
 #include <torch/csrc/profiler/standalone/privateuse1_profiler.h>
 
-#ifdef USE_KINETO
 #include <libkineto.h>
-#endif
 
 namespace torch::profiler::impl {
-
-#ifdef USE_KINETO
 
 PrivateUse1ProfilerRegistry& PrivateUse1ProfilerRegistry::instance() {
   static PrivateUse1ProfilerRegistry registry;
@@ -64,6 +62,6 @@ void PrivateUse1ProfilerRegistry::onKinetoInit() {
   }
 }
 
-#endif // USE_KINETO
-
 } // namespace torch::profiler::impl
+
+#endif // USE_KINETO

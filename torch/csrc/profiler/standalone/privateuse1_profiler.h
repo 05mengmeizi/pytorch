@@ -8,6 +8,8 @@
 
 #pragma once
 
+#ifdef USE_KINETO
+
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -15,13 +17,9 @@
 
 #include <torch/csrc/Export.h>
 
-#ifdef USE_KINETO
 #include <IActivityProfiler.h>
-#endif
 
 namespace torch::profiler::impl {
-
-#ifdef USE_KINETO
 
 // Factory function type that creates an IActivityProfiler instance
 using PrivateUse1ProfilerFactory =
@@ -111,6 +109,6 @@ struct RegisterPrivateUse1Profiler {
       privateuse1_profiler_register_##ProfilerClass(          \
           static_cast<ProfilerClass*>(nullptr))
 
-#endif // USE_KINETO
-
 } // namespace torch::profiler::impl
+
+#endif // USE_KINETO
