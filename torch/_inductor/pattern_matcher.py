@@ -331,6 +331,14 @@ class Match:
                     if "val" in arg.meta
                     else arg.meta["example_value"],
                 )
+                fake_mode = torch._dynamo.utils.detect_fake_mode(example_vals)
+
+                def _convert_to_fake_mode(it):
+                    if isinstance(it, FakeTensor) and fake_mode is not None:
+                        return fake_mode.from_tensor(it)
+                    return it
+
+                example_vals = [_convert_to_fake_mode(it) for it in example_vals]
                 replacement = trace_fn(replacement_fn, example_vals)
             if len(self.nodes) == 1:
                 for n in replacement.graph.nodes:
