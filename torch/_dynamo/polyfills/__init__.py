@@ -533,7 +533,6 @@ def foreach_pow_scalar(
     return torch._foreach_pow([scalar for _ in exps], exps)
 
 
-
 def predicate(obj: object) -> bool:
     # This will cause the rest of dynamo to handle the if statement correctly, so we don't have to rewrite it here.
     # We can't just use bool() here since we can't trace into that in general.
