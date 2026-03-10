@@ -4325,8 +4325,11 @@ def _index_fill(
         if zero_dim:
             # The clone is necessary so that it returns a fresh tensor rather than a view
             out = out.squeeze(0).clone()
-        # index_fill preserves the strides. index_copy always returns contiguous tensors
-        if out.stride() != x.stride():
+        # index_fill preserves the strides for non-overlapping-and-dense inputs
+        # (matching clone(Preserve) behavior). index_copy always returns contiguous tensors.
+        if out.stride() != x.stride() and utils.is_non_overlapping_and_dense_or_false(
+            x
+        ):
             out = prims.copy_strided(out, x.stride())
         return out
 
