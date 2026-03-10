@@ -3698,17 +3698,7 @@ def tensor_constructor(fill_value):
         if pin_memory:
             # Realize the buffer
             full_pointwise.realize()
-            buffer = full_pointwise.data.data
-            buffer.data = dataclasses.replace(buffer.data, ranges=[0] * len(size))
-            assert isinstance(buffer, ir.ComputedBuffer)
-            size = [sympy.expand(s) for s in size]
-            buffer.layout = ir.FixedLayout(
-                device=device,
-                dtype=dtype,
-                size=size,
-                stride=ir.FlexibleLayout.contiguous_strides(size),
-                is_pinned=pin_memory,
-            )
+            full_pointwise.data.data.get_layout().is_pinned = True
 
         return full_pointwise
 
