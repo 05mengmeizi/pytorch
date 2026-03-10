@@ -30,9 +30,9 @@ void PrivateUse1ProfilerRegistry::registerFactory(
 
   factory_ = std::move(factory);
 
-  // If Kineto was already initialized, forward immediately
-  if (kineto_initialized_ && !forwarded_to_kineto_) {
-    forwardToKineto();
+  // If Kineto was already initialized, register immediately
+  if (kineto_initialized_ && !registered_with_kineto_) {
+    registerWithKineto();
   }
 }
 
@@ -41,30 +41,30 @@ bool PrivateUse1ProfilerRegistry::hasFactory() const {
   return factory_ != nullptr;
 }
 
-bool PrivateUse1ProfilerRegistry::isForwardedToKineto() const {
+bool PrivateUse1ProfilerRegistry::isRegisteredWithKineto() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return forwarded_to_kineto_;
+  return registered_with_kineto_;
 }
 
-void PrivateUse1ProfilerRegistry::forwardToKineto() {
+void PrivateUse1ProfilerRegistry::registerWithKineto() {
   // Note: Caller must hold mutex_
-  if (!factory_ || forwarded_to_kineto_) {
+  if (!factory_ || registered_with_kineto_) {
     return;
   }
 
-  // Forward the factory to Kineto's activity profiler
+  // Register the factory with Kineto's activity profiler
   // Kineto will call the factory to create the profiler instance
   libkineto::api().registerProfilerFactory(factory_);
-  forwarded_to_kineto_ = true;
+  registered_with_kineto_ = true;
 }
 
 void PrivateUse1ProfilerRegistry::onKinetoInit() {
   std::lock_guard<std::mutex> lock(mutex_);
   kineto_initialized_ = true;
 
-  // If a factory was registered before Kineto init, forward it now
-  if (factory_ && !forwarded_to_kineto_) {
-    forwardToKineto();
+  // If a factory was registered before Kineto init, register it now
+  if (factory_ && !registered_with_kineto_) {
+    registerWithKineto();
   }
 }
 

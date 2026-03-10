@@ -59,14 +59,14 @@ class TORCH_API PrivateUse1ProfilerRegistry {
   // Check if a factory has been registered.
   bool hasFactory() const;
 
-  // Check if the factory has been forwarded to Kineto.
-  // Useful for testing to verify the forwarding logic.
-  bool isForwardedToKineto() const;
+  // Check if the factory has been registered with Kineto.
+  // Useful for testing to verify the registration logic.
+  bool isRegisteredWithKineto() const;
 
-  // Forward the registered factory to Kineto's activity profiler.
-  // This should be called after Kineto has been initialized.
-  // Safe to call multiple times - will only forward once.
-  void forwardToKineto();
+  // Register the factory with Kineto's activity profiler.
+  // This is called internally when Kineto is ready.
+  // Safe to call multiple times - will only register once.
+  void registerWithKineto();
 
   // Mark that Kineto has been initialized.
   // If a factory was registered before Kineto init, it will be forwarded.
@@ -77,7 +77,7 @@ class TORCH_API PrivateUse1ProfilerRegistry {
 
   mutable std::mutex mutex_;
   PrivateUse1ProfilerFactory factory_;
-  bool forwarded_to_kineto_ = false;
+  bool registered_with_kineto_ = false;
   bool kineto_initialized_ = false;
 };
 

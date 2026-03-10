@@ -120,7 +120,7 @@ TEST(PrivateUse1ProfilerTest, RegisterFactory) {
   EXPECT_TRUE(registry.hasFactory());
 }
 
-// Test that onKinetoInit triggers forwarding when factory is registered
+// Test that onKinetoInit triggers registration when factory is registered
 TEST(PrivateUse1ProfilerTest, OnKinetoInitForwarding) {
   auto& registry =
       torch::profiler::impl::PrivateUse1ProfilerRegistry::instance();
@@ -135,7 +135,7 @@ TEST(PrivateUse1ProfilerTest, OnKinetoInitForwarding) {
 
   // Verify the factory was forwarded to Kineto
   EXPECT_TRUE(registry.hasFactory());
-  EXPECT_TRUE(registry.isForwardedToKineto());
+  EXPECT_TRUE(registry.isRegisteredWithKineto());
 }
 
 // End-to-end test: Start a profiling session and verify mock profiler is used
@@ -167,12 +167,12 @@ TEST(PrivateUse1ProfilerTest, EndToEndProfiling) {
   prepareProfiler(config, activities);
   enableProfiler(config, activities, {at::RecordScope::FUNCTION});
 
-  EXPECT_TRUE(registry.isForwardedToKineto());
+  EXPECT_TRUE(registry.isRegisteredWithKineto());
 
   // Stop profiler
   auto result = disableProfiler();
 
-  EXPECT_TRUE(registry.isForwardedToKineto());
+  EXPECT_TRUE(registry.isRegisteredWithKineto());
 
   // Verify Kineto-side: Kineto actually called our mock's configure()
   EXPECT_TRUE(g_configure_called);

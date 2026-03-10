@@ -1155,20 +1155,17 @@ test_libtorch_jit() {
 }
 
 test_libtorch_profiler() {
-  export CPP_TESTS_DIR="${TORCH_BIN_DIR}"
-  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler
-}
-
-test_libtorch_profiler() {
-  export CPP_TESTS_DIR="${TORCH_BIN_DIR}"
+  echo "Testing profiler C++ tests"
+  ln -sf "$TORCH_LIB_DIR"/libc10* "$TORCH_BIN_DIR"
+  ln -sf "$TORCH_LIB_DIR"/libtorch* "$TORCH_BIN_DIR"
 
   # Run E2E test in its own process (needs clean Kineto state)
-  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler \
-    -- --gtest_filter=PrivateUse1ProfilerTest.EndToEndProfiling
+  "${TORCH_BIN_DIR}/test_privateuse1_profiler" \
+    --gtest_filter=PrivateUse1ProfilerTest.EndToEndProfiling
 
-  # Run all other tests in a separate process (negative filter with '-')
-  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler \
-    -- --gtest_filter=-PrivateUse1ProfilerTest.EndToEndProfiling
+  # Run all other tests in a separate process
+  "${TORCH_BIN_DIR}/test_privateuse1_profiler" \
+    --gtest_filter=-PrivateUse1ProfilerTest.EndToEndProfiling
 }
 
 test_libtorch_api() {
