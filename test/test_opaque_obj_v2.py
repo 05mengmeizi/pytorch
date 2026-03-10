@@ -363,6 +363,24 @@ register_opaque_type(
     StatefulObject,
     typ="reference",
     guard_fn=lambda obj: [obj.scale] if not isinstance(obj.scale, torch.Tensor) else [],
+    members={"scale": MemberType.INLINED},
+)
+
+
+class StatefulObjectWithHiddenTensor(OpaqueBase):
+    """Opaque object where 'hidden' is deliberately not registered as a member."""
+
+    def __init__(self, scale, hidden):
+        self.scale = scale
+        self.hidden = hidden
+
+
+register_opaque_type(
+    StatefulObjectWithHiddenTensor,
+    typ="reference",
+    guard_fn=lambda obj: [],
+    # Only register 'scale'; 'hidden' is intentionally omitted
+    members={"scale": MemberType.INLINED},
 )
 
 
@@ -3115,6 +3133,39 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
         compiled_out = compiled_fn(x, state)
         expected = fn(x, state)
         self.assertEqual(compiled_out, expected)
+
+    @unittest.skipIf(not TEST_CUDA, "requires CUDA")
+    def test_cudagraph_opaque_unregistered_tensor_member_errors(self):
+        opaque_type_name = get_opaque_type_name(StatefulObjectWithHiddenTensor)
+
+        @torch.library.custom_op(
+            "_TestOpaqueObject::use_hidden_tensor", mutates_args=[]
+        )
+        def use_hidden_tensor(
+            x: torch.Tensor, obj: StatefulObjectWithHiddenTensor
+        ) -> torch.Tensor:
+            return x * obj.scale + obj.hidden
+
+        @use_hidden_tensor.register_fake
+        def _(x, obj):
+            return torch.empty_like(x)
+
+        def fn(x, obj):
+            return torch.ops._TestOpaqueObject.use_hidden_tensor(x, obj)
+
+        x = torch.ones(4, device="cuda")
+        obj = StatefulObjectWithHiddenTensor(
+            scale=torch.tensor([2.0], device="cuda"),
+            hidden=torch.tensor([1.0], device="cuda"),
+        )
+
+        compiled_fn = torch.compile(fn, mode="reduce-overhead", fullgraph=True)
+        with self.assertRaisesRegex(
+            AssertionError,
+            r"attribute hidden of .* is a CUDA tensor but not a registered member",
+        ):
+            for _ in range(3):
+                compiled_fn(x, obj)
 
     def test_subclass_parametrization_with_opaque_attrs(self):
         """unwrap_tensor_subclass_parameters should handle non-tensor attrs."""

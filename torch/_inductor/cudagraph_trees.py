@@ -84,7 +84,7 @@ from torch._inductor.cudagraph_utils import (
     PlaceholderInfo,
     WrappedFunction,
 )
-from torch._library.opaque_object import is_opaque_value
+from torch._library.opaque_object import get_opaque_obj_info, is_opaque_value
 from torch.multiprocessing.reductions import StorageWeakRef
 from torch.storage import UntypedStorage
 from torch.utils import _pytree as pytree
@@ -1766,17 +1766,33 @@ class CUDAGraphNode:
         and swap them in so the graph captures the static addresses.
         """
         for i, inp in enumerate(recording_inputs):
-            if not is_opaque_value(inp):
+            opaque_info = get_opaque_obj_info(type(inp))
+            if opaque_info is None:
+                # Not an opaque object
                 continue
-            for attr_name in list(vars(inp)):
+
+            tensor_members = OrderedSet()
+            for attr_name in opaque_info.members.keys():
                 val = getattr(inp, attr_name)
                 if isinstance(val, torch.Tensor) and val.is_cuda:
+                    tensor_members.add(attr_name)
                     static_buf = torch.empty_strided(
                         val.size(), val.stride(), dtype=val.dtype, device=val.device
                     )
                     static_buf.copy_(val)
                     setattr(inp, attr_name, static_buf)
                     self._opaque_tensor_members.append((i, attr_name, static_buf))
+
+            # Sanity check there are no unregistered CUDA tensor members
+            for k, v in vars(inp).items():
+                if (
+                    k not in tensor_members
+                    and isinstance(v, torch.Tensor)
+                    and v.is_cuda
+                ):
+                    assert False, (
+                        f"attribute {k} of {type(inp)} is a CUDA tensor but not a registered member"
+                    )
 
     def _copy_opaque_tensor_members(
         self,
