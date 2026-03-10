@@ -7,7 +7,7 @@ def my_from_blob_with_lambda_deleter(data_ptr, sizes, strides, device, dtype) ->
     Creates a Tensor from existing memory with a capturing-lambda deleter.
 
     The lambda deleter captures a pointer to a global counter and increments it,
-    exercising the torch_from_blob_v2 code path (deleter + context).
+    exercising the capturing-lambda code path in torch_from_blob.
 
     Args:
         data_ptr: int - pointer to the data buffer
