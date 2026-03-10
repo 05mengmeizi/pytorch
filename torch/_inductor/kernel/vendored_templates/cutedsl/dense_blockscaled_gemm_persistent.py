@@ -153,6 +153,7 @@ class Sm100BlockScaledPersistentDenseGemmKernel:
         - Also, Cluster shape M/N must be <= 4 for scale factor multicasts due to limited size of scale factors
 
     Example:
+        >>> # xdoctest: +SKIP(requires cutlass)
         >>> gemm = Sm100BlockScaledPersistentDenseGemmKernel(
         ...     sf_vec_size=16, mma_tiler_mn=(256, 128), cluster_shape_mn=(2, 1)
         ... )
