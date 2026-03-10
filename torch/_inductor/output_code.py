@@ -58,13 +58,14 @@ from . import config
 from .runtime.autotune_cache import AutotuneCacheBundler
 
 
+from torch._library.fake_class_registry import FakeScriptObject
+
 if TYPE_CHECKING:
     from collections import Counter
     from collections.abc import Callable, Sequence
 
     from torch._inductor import metrics
     from torch._inductor.graph import GraphLowering
-    from torch._library.fake_class_registry import FakeScriptObject
     from torch.export.pt2_archive._package_weights import Weights
 
     from .compile_fx import _CompileFxKwargs
@@ -590,7 +591,15 @@ class CompiledFxGraph(OutputCode):
                     (not complex_memory_overlap_inputs, "complex memory overlap"),
                     (
                         all(
-                            isinstance(t, (torch.Tensor, torch.SymInt, torch.Generator))
+                            isinstance(
+                                t,
+                                (
+                                    torch.Tensor,
+                                    torch.SymInt,
+                                    torch.Generator,
+                                    FakeScriptObject,
+                                ),
+                            )
                             for t in example_inputs
                         ),
                         "non-Tensor inputs",

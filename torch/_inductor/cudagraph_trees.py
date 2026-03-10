@@ -84,6 +84,7 @@ from torch._inductor.cudagraph_utils import (
     PlaceholderInfo,
     WrappedFunction,
 )
+from torch._library.opaque_object import is_opaque_value
 from torch.multiprocessing.reductions import StorageWeakRef
 from torch.storage import UntypedStorage
 from torch.utils import _pytree as pytree
@@ -888,6 +889,9 @@ class CUDAGraphNode:
         # reference to the shared memory pool for the entire cuda graphs tree
         self.cuda_graphs_pool = cuda_graphs_pool
 
+        # (input_idx, attr_name, static_buf) for CUDA tensor members of opaque objects
+        self._opaque_tensor_members: list[tuple[int, str, Tensor]] = []
+
         # A single wrapped function may be recorded multiple times if memory patterns or
         # invariants change from one execution to the next
         self.children: dict[FunctionID, list[CUDAGraphNode]] = defaultdict(list)
@@ -1017,6 +1021,8 @@ class CUDAGraphNode:
 
         inputs.clear()
         del inputs
+
+        self._setup_opaque_object_tensor_members(recording_inputs)
 
         # graph used for recording model invocation
         self.graph: torch.cuda.CUDAGraph | None = torch.cuda.CUDAGraph()
@@ -1151,6 +1157,9 @@ class CUDAGraphNode:
         self.check_static_inputs_are_stable(new_inputs)
 
         self._copy_inputs_and_remove_from_src(self.reconstructed_inputs, new_inputs)
+
+        # Copy CUDA tensor members of opaque objects into their respective static buffers
+        self._copy_opaque_tensor_members(self.reconstructed_inputs)
 
         self.run_graph()
 
@@ -1732,7 +1741,9 @@ class CUDAGraphNode:
         ):
             for i, inp in enumerate(inputs):
                 if not isinstance(inp, torch.Tensor):
-                    assert isinstance(inp, (int, torch.Generator))
+                    assert isinstance(inp, (int, torch.Generator)) or is_opaque_value(
+                        inp
+                    )
 
                     recording_inputs.append(inp)
                 elif i not in self.static_input_idxs:
@@ -1744,6 +1755,46 @@ class CUDAGraphNode:
             self._copy_inputs_and_remove_from_src(recording_inputs, inputs)
 
         return recording_inputs
+
+    def _setup_opaque_object_tensor_members(
+        self, recording_inputs: list[InputType]
+    ) -> None:
+        """Replace CUDA tensor attributes on opaque objects with static buffers.
+
+        During CUDA graph recording, tensor addresses get baked into the graph.
+        We allocate static buffers for any CUDA tensor members of opaque objects
+        and swap them in so the graph captures the static addresses.
+        """
+        for i, inp in enumerate(recording_inputs):
+            if not is_opaque_value(inp):
+                continue
+            for attr_name in list(vars(inp)):
+                val = getattr(inp, attr_name)
+                if isinstance(val, torch.Tensor) and val.is_cuda:
+                    static_buf = torch.empty_strided(
+                        val.size(), val.stride(), dtype=val.dtype, device=val.device
+                    )
+                    static_buf.copy_(val)
+                    setattr(inp, attr_name, static_buf)
+                    self._opaque_tensor_members.append((i, attr_name, static_buf))
+
+    def _copy_opaque_tensor_members(
+        self,
+        reconstructed_inputs: list[InputType],
+    ) -> None:
+        """Copy fresh tensor data into static buffers before graph replay.
+
+        The opaque object in reconstructed_inputs is the same Python object
+        (reference-type, identity-guarded), but its tensor member values may
+        have changed. We copy the current data into the static buffers whose
+        addresses were baked into the graph at recording time.
+        """
+        for input_idx, attr_name, static_buf in self._opaque_tensor_members:
+            inp = reconstructed_inputs[input_idx]
+            current_tensor = getattr(inp, attr_name)
+            if current_tensor is not static_buf:
+                static_buf.copy_(current_tensor)
+                setattr(inp, attr_name, static_buf)
 
     def check_invariants(
         self, inputs: list[InputType]

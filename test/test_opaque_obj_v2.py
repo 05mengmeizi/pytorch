@@ -3,6 +3,7 @@
 import contextlib
 import gc
 import random
+import unittest
 from contextlib import ExitStack
 from dataclasses import dataclass
 
@@ -46,6 +47,7 @@ from torch.fx.graph import _illegal_char_regex
 from torch.testing._internal.common_utils import (
     instantiate_parametrized_tests,
     parametrize,
+    TEST_CUDA,
 )
 
 
@@ -349,6 +351,28 @@ register_opaque_type(NestedValueSize, typ="value")
 register_opaque_type(OpaqueMultiplier, typ="reference")
 register_opaque_type(Color, typ="reference")
 register_opaque_type(ColorWithDescriptor, typ="reference")
+
+
+class StatefulObject(OpaqueBase):
+    def __init__(self, scale: float | torch.Tensor):
+        self.scale = scale
+
+register_opaque_type(
+    StatefulObject,
+    typ="reference",
+    guard_fn=lambda obj: [obj.scale] if not isinstance(obj.scale, torch.Tensor) else [],
+)
+
+@torch.library.custom_op(
+    "_TestOpaqueObject::scale_with_weight", mutates_args=[]
+)
+def scale_with_weight(x: torch.Tensor, state: StatefulObject) -> torch.Tensor:
+    return x * state.scale
+
+
+@scale_with_weight.register_fake
+def scale_with_weight(x, state):
+    return torch.empty_like(x)
 
 
 # A tensor subclass (similar to TwoTensor) that also holds an opaque Counter
@@ -2428,6 +2452,60 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
         res2 = opt_f(x, "square")
         self.assertEqual(res2, f(x, "square"))
         self.assertEqual(cnt.frame_count, 1)
+
+    @unittest.skipIf(not TEST_CUDA, "requires CUDA")
+    def test_cudagraph_opaque_object_basic(self):
+        """Reference-type opaque object + custom_op works with CUDA graphs."""
+
+        def fn(x, state):
+            return torch.ops._TestOpaqueObject.scale_with_weight(x, state)
+
+        x = torch.ones(8, device="cuda")
+        state = StatefulObject(scale=0.5)
+
+        eager_out = fn(x, state)
+
+        counters.clear()
+        compiled_fn = torch.compile(fn, mode="reduce-overhead", fullgraph=True)
+        # Warmup runs (recording + first replays)
+        for _ in range(3):
+            compiled_out = compiled_fn(x, state)
+
+        self.assertEqual(compiled_out, eager_out)
+        self.assertEqual(counters["inductor"]["cudagraph_skips"], 0)
+
+        # Update the state and verify correctness on replay
+        state.scale = 1.0
+        compiled_out = compiled_fn(x, state)
+        expected = fn(x, state)
+        self.assertEqual(compiled_out, expected)
+
+    @unittest.skipIf(not TEST_CUDA, "requires CUDA")
+    def test_cudagraph_opaque_object_with_tensor_member(self):
+        """Opaque object with CUDA tensor member works across cudagraph replays."""
+
+        def fn(x, state):
+            return torch.ops._TestOpaqueObject.scale_with_weight(x, state)
+
+        weight = torch.tensor([2.0], device="cuda")
+        x = torch.randn(1, device="cuda")
+        state = StatefulObject(scale=torch.tensor([2.0], device="cuda"))
+
+        eager_out = fn(x, state)
+
+        counters.clear()
+        compiled_fn = torch.compile(fn, mode="reduce-overhead", fullgraph=True)
+        for _ in range(3):
+            compiled_out = compiled_fn(x, state)
+
+        self.assertEqual(compiled_out, eager_out)
+        self.assertEqual(counters["inductor"]["cudagraph_skips"], 0)
+
+        # Update the tensor member and verify correctness on replay
+        state.scale = torch.tensor([3.0], device="cuda")
+        compiled_out = compiled_fn(x, state)
+        expected = fn(x, state)
+        self.assertEqual(compiled_out, expected)
 
 
 instantiate_parametrized_tests(TestOpaqueObject)
