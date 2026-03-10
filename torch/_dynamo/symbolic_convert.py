@@ -4893,54 +4893,6 @@ class InstructionTranslator(InstructionTranslatorBase):
                 mutation_type=ValueMutationNew(),
             )
 
-    def _check_return_requires_grad_intermediates(
-        self, ret_val: VariableTracker
-    ) -> None:
-        """Graph break if a source-less tensor with requires_grad_() is returned.
-
-        AOTAutograd's functionalization drops requires_grad_() on intermediate
-        graph outputs, so returning them would silently produce wrong results.
-        """
-        from .variables.tensor import TensorVariable
-
-        sourceless_leaves = {
-            id(v)
-            for v in self.output.leaf_var_creation_order
-            if isinstance(v, TensorVariable) and not v.source
-        }
-        if not sourceless_leaves:
-            return
-
-        def _has_leaked(var: VariableTracker) -> bool:
-            if isinstance(var, TensorVariable) and id(var) in sourceless_leaves:
-                return True
-            elif isinstance(var, BaseListVariable):
-                return any(_has_leaked(item) for item in var.items)
-            return False
-
-        if not _has_leaked(ret_val):
-            return
-
-        if self.one_graph:
-            from .exc import unimplemented
-
-            unimplemented(
-                gb_type="returning intermediate with requires_grad_()",
-                context=f"return value: {ret_val}",
-                explanation="An intermediate tensor that had requires_grad_() called on it "
-                "is being returned from the compiled region. AOTAutograd's functionalization "
-                "drops the requires_grad_() effect on graph outputs, producing wrong results.",
-                hints=[
-                    "Consume the gradient inside the compiled function (call backward() and use .grad), "
-                    "or move requires_grad_() outside torch.compile.",
-                ],
-            )
-        else:
-            raise exc.SkipFrame(
-                "An intermediate tensor with requires_grad_() is being returned. "
-                "Skipping frame to avoid silent incorrectness from AOTAutograd functionalization."
-            )
-
     def _return(self, inst: Instruction) -> None:
         self.replace_tos_if_return_is_generator()
         assert self.instruction_pointer is not None
@@ -4964,12 +4916,6 @@ class InstructionTranslator(InstructionTranslatorBase):
                 "No ops traced for the FX graph. `torch.compile` will skip the frame and fall back to eager.\n"
                 f"Frame info: {format_frame_info(self.f_code)}"
             )
-
-        # Check if any source-less tensor with requires_grad_() is being
-        # returned. AOTAutograd's functionalization drops requires_grad_() on
-        # intermediates, so returning them would silently produce wrong results.
-        if inst.opname == "RETURN_VALUE" and self.stack:
-            self._check_return_requires_grad_intermediates(self.stack[-1])
 
         self.instruction_pointer = None
         _step_logger()(

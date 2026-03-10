@@ -14380,6 +14380,24 @@ fn
         self.assertTrue(result.requires_grad)
         self.assertEqual(fn(x), result)
 
+    def test_requires_grad_on_intermediate_derived_returned(self):
+        def fn(x):
+            y = x * 2
+            y.requires_grad_()
+            return y * 3
+
+        x = torch.randn(3, 3)
+
+        # Derived tensor also loses requires_grad — should error
+        with self.assertRaises(torch._dynamo.exc.Unsupported):
+            torch.compile(fn, fullgraph=True)(x)
+
+        # Without fullgraph, falls back to eager and is correct
+        result = torch.compile(fn)(x)
+        ref = fn(x)
+        self.assertTrue(result.requires_grad)
+        self.assertEqual(ref, result)
+
     @torch._dynamo.config.patch(trace_autograd_ops=True)
     def test_requires_grad_on_intermediate_not_returned(self):
         def fn(x):

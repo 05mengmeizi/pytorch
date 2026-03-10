@@ -1878,9 +1878,13 @@ class TensorVariable(VariableTracker):
             self.requires_grad = requires_grad
             if requires_grad:
                 tx.output.leaf_var_creation_order.append(self)
-                # Initialize .grad = None in side effects so the
-                # accumulate_grad polyfill can read/write .grad naturally.
-                if tx.output.side_effects.is_attribute_mutation(self):
+                # For source-less intermediates, initialize .grad = None in
+                # side effects so the accumulate_grad polyfill can read/write
+                # .grad naturally. Graph inputs don't need this — they handle
+                # .grad through their source.
+                if not self.source and tx.output.side_effects.is_attribute_mutation(
+                    self
+                ):
                     tx.output.side_effects.store_attr(
                         self, "grad", variables.CONSTANT_VARIABLE_NONE
                     )

@@ -328,8 +328,9 @@ def _collect_tensors_with_sources(
             # For tensor subclasses (e.g. DTensor), unwrap to plain tensors
             plain: list[object] = []
             torch._subclasses.fake_tensor.get_plain_tensors(
-                fake_tensor, out=plain
-            )  # pyrefly: ignore[bad-argument-type]
+                fake_tensor,  # pyrefly: ignore[bad-argument-type]
+                out=plain,  # pyrefly: ignore[bad-argument-type]
+            )
             fake_tensor = next(t for t in plain if isinstance(t, torch.Tensor))
         else:
             raise AssertionError(
