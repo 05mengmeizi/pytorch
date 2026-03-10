@@ -49,26 +49,26 @@ def _validate_module(module: nn.Module, func_name: str) -> None:
 
 def _validate_mesh(
     mesh: "DeviceMesh",
-    dp_mesh_dim_names: "DataParallelMeshDims | None" = None,
+    dp_mesh_dims: "DataParallelMeshDims | None" = None,
 ) -> None:
     """
     Validate that the mesh can be used with fully_shard.
 
-    When ``dp_mesh_dim_names`` is provided, validates that the named dims
+    When ``dp_mesh_dims`` is provided, validates that the named dims
     exist in the mesh and at least one of shard/replicate is set.
     Otherwise raises ValueError if the mesh is not 1D or 2D.
     """
-    if dp_mesh_dim_names is not None:
-        if dp_mesh_dim_names.shard is None and dp_mesh_dim_names.replicate is None:
+    if dp_mesh_dims is not None:
+        if dp_mesh_dims.shard is None and dp_mesh_dims.replicate is None:
             raise ValueError(
-                "At least one of shard or replicate must be set in dp_mesh_dim_names"
+                "At least one of shard or replicate must be set in dp_mesh_dims"
             )
         if mesh.mesh_dim_names is None:
             raise ValueError(
-                "mesh must have mesh_dim_names when dp_mesh_dim_names is provided"
+                "mesh must have mesh_dim_names when dp_mesh_dims is provided"
             )
-        names_to_check: list[str] = list(dp_mesh_dim_names.shard_names)
-        names_to_check.extend(dp_mesh_dim_names.replicate_names)
+        names_to_check: list[str] = list(dp_mesh_dims.shard_names)
+        names_to_check.extend(dp_mesh_dims.replicate_names)
         for name in names_to_check:
             if name not in mesh.mesh_dim_names:
                 raise ValueError(
@@ -86,19 +86,19 @@ def _validate_mesh(
 
 def _get_mesh_info(
     mesh: "DeviceMesh",
-    dp_mesh_dim_names: "DataParallelMeshDims | None" = None,
+    dp_mesh_dims: "DataParallelMeshDims | None" = None,
 ) -> "DataParallelMeshInfo":
     """
     Get the appropriate mesh info for the given mesh.
 
-    When ``dp_mesh_dim_names`` is provided, extracts the DP submesh from the
+    When ``dp_mesh_dims`` is provided, extracts the DP submesh from the
     full SPMD mesh and returns FSDPMeshInfo, HSDPMeshInfo, or DDPMeshInfo
-    with ``dp_mesh_dim_names`` set and ``is_spmd_mesh`` as True.
+    with ``dp_mesh_dims`` set and ``is_spmd_mesh`` as True.
 
     Returns FSDPMeshInfo for 1D mesh, HSDPMeshInfo for 2D mesh.
     """
-    if dp_mesh_dim_names is not None:
-        return _get_mesh_info_from_named_dims(mesh, dp_mesh_dim_names)
+    if dp_mesh_dims is not None:
+        return _get_mesh_info_from_named_dims(mesh, dp_mesh_dims)
     if mesh.ndim == 1:
         return FSDPMeshInfo(mesh, shard_mesh_dim=0)
     else:
@@ -107,10 +107,10 @@ def _get_mesh_info(
 
 def _get_mesh_info_from_named_dims(
     mesh: "DeviceMesh",
-    dp_mesh_dim_names: "DataParallelMeshDims",
+    dp_mesh_dims: "DataParallelMeshDims",
 ) -> "DataParallelMeshInfo":
-    shard_names = dp_mesh_dim_names.shard_names
-    replicate_names = dp_mesh_dim_names.replicate_names
+    shard_names = dp_mesh_dims.shard_names
+    replicate_names = dp_mesh_dims.replicate_names
 
     def _get_submesh(names: tuple[str, ...]) -> "DeviceMesh":
         if len(names) == 1:
@@ -124,7 +124,7 @@ def _get_mesh_info_from_named_dims(
         return DDPMeshInfo(
             dp_mesh,
             replicate_mesh_dim=0,
-            dp_mesh_dim_names=dp_mesh_dim_names,
+            dp_mesh_dims=dp_mesh_dims,
             spmd_mesh=mesh,
         )
     if len(replicate_names) == 0:  # FSDP
@@ -132,7 +132,7 @@ def _get_mesh_info_from_named_dims(
         return FSDPMeshInfo(
             dp_mesh,
             shard_mesh_dim=0,
-            dp_mesh_dim_names=dp_mesh_dim_names,
+            dp_mesh_dims=dp_mesh_dims,
             spmd_mesh=mesh,
         )
     # HSDP
@@ -143,7 +143,7 @@ def _get_mesh_info_from_named_dims(
         dp_mesh,
         shard_mesh_dim=1,
         replicate_mesh_dim=0,
-        dp_mesh_dim_names=dp_mesh_dim_names,
+        dp_mesh_dims=dp_mesh_dims,
         spmd_mesh=mesh,
     )
 

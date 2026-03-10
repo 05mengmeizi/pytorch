@@ -88,7 +88,7 @@ def replicate(
     mp_policy: MixedPrecisionPolicy = ...,
     offload_policy: OffloadPolicy = ...,
     ignored_params: set[nn.Parameter] | None = ...,
-    dp_mesh_dim_names: DataParallelMeshDims | None = ...,
+    dp_mesh_dims: DataParallelMeshDims | None = ...,
 ) -> ReplicateModule: ...
 
 
@@ -101,7 +101,7 @@ def replicate(
     mp_policy: MixedPrecisionPolicy = ...,
     offload_policy: OffloadPolicy = ...,
     ignored_params: set[nn.Parameter] | None = ...,
-    dp_mesh_dim_names: DataParallelMeshDims | None = ...,
+    dp_mesh_dims: DataParallelMeshDims | None = ...,
 ) -> list[ReplicateModule]: ...
 
 
@@ -113,7 +113,7 @@ def replicate(
     mp_policy: MixedPrecisionPolicy = MixedPrecisionPolicy(),
     offload_policy: OffloadPolicy = OffloadPolicy(),
     ignored_params: set[nn.Parameter] | None = None,
-    dp_mesh_dim_names: DataParallelMeshDims | None = None,
+    dp_mesh_dims: DataParallelMeshDims | None = None,
 ):
     r"""Replicates a module
 
@@ -128,12 +128,12 @@ def replicate(
     torch._C._log_api_usage_once("torch.distributed._composable.replicate_with_fsdp")
     _validate_module(module)
     mesh = mesh or _init_default_mesh(mesh_dim_names=("replicate",))
-    if dp_mesh_dim_names is not None:
-        _validate_mesh_common(mesh, dp_mesh_dim_names)
-        mesh_info = _get_mesh_info(mesh, dp_mesh_dim_names)
+    if dp_mesh_dims is not None:
+        _validate_mesh_common(mesh, dp_mesh_dims)
+        mesh_info = _get_mesh_info(mesh, dp_mesh_dims)
         if not isinstance(mesh_info, DDPMeshInfo):
             raise ValueError(
-                "replicate() with dp_mesh_dim_names requires replicate-only "
+                "replicate() with dp_mesh_dims requires replicate-only "
                 "dims (no shard dims). Use fully_shard() for sharding."
             )
     else:

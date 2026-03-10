@@ -77,7 +77,63 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
+        )
+
+        replicate(
+            ref_model,
+            device_ids=[self.rank] if device_type.type != "cpu" else None,
+            process_group=dp_pg,
+        )
+
+        self._run_train_parity(model, ref_model, dp_pg, mesh=mesh)
+
+    @skip_if_lt_x_gpu(2)
+    def test_fsdp_dtensor_1d_reshard_after_forward(self):
+        """FSDP with 1D mesh and explicit reshard_after_forward=True."""
+        mesh = init_device_mesh(
+            device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
+        )
+        dp_pg = mesh.get_group()
+
+        torch.manual_seed(42)
+        model = MLP(16, device=device_type)
+        ref_model = copy.deepcopy(model)
+
+        distribute_module(model, mesh)
+        fully_shard(
+            model,
+            mesh=mesh,
+            reshard_after_forward=True,
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
+        )
+
+        replicate(
+            ref_model,
+            device_ids=[self.rank] if device_type.type != "cpu" else None,
+            process_group=dp_pg,
+        )
+
+        self._run_train_parity(model, ref_model, dp_pg, mesh=mesh)
+
+    @skip_if_lt_x_gpu(2)
+    def test_fsdp_dtensor_1d_no_reshard_after_forward(self):
+        """FSDP with 1D mesh and explicit reshard_after_forward=False."""
+        mesh = init_device_mesh(
+            device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
+        )
+        dp_pg = mesh.get_group()
+
+        torch.manual_seed(42)
+        model = MLP(16, device=device_type)
+        ref_model = copy.deepcopy(model)
+
+        distribute_module(model, mesh)
+        fully_shard(
+            model,
+            mesh=mesh,
+            reshard_after_forward=False,
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
         )
 
         replicate(
@@ -107,7 +163,7 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp", replicate="ddp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp", replicate="ddp"),
         )
 
         replicate(
@@ -137,7 +193,7 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(shard=("dp0", "dp1")),
+            dp_mesh_dims=DataParallelMeshDims(shard=("dp0", "dp1")),
         )
 
         replicate(
@@ -190,7 +246,7 @@ class TestFullyShardDTensor(FSDPTest):
             model,
             mesh=mesh,
             shard_placement_fn=shard_fn,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
         )
 
         for name, param in model.named_parameters():
@@ -259,7 +315,7 @@ class TestFullyShardDTensor(FSDPTest):
             model,
             mesh=mesh,
             shard_placement_fn=shard_fn,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
         )
 
         dp_pg = mesh["fsdp"].get_group()
@@ -287,7 +343,7 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(replicate="ddp"),
+            dp_mesh_dims=DataParallelMeshDims(replicate="ddp"),
         )
 
         replicate(
@@ -310,7 +366,7 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
         )
 
         for param in model.parameters():
@@ -339,12 +395,12 @@ class TestFullyShardDTensor(FSDPTest):
             fully_shard(
                 model,
                 mesh=mesh,
-                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+                dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
             )
 
     @skip_if_lt_x_gpu(2)
     def test_validation_invalid_dim_names(self):
-        """Error when dp_mesh_dim_names references nonexistent mesh dim names."""
+        """Error when dp_mesh_dims references nonexistent mesh dim names."""
         mesh = init_device_mesh(
             device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
         )
@@ -354,7 +410,7 @@ class TestFullyShardDTensor(FSDPTest):
             fully_shard(
                 model,
                 mesh=mesh,
-                dp_mesh_dim_names=DataParallelMeshDims(shard="nonexistent"),
+                dp_mesh_dims=DataParallelMeshDims(shard="nonexistent"),
             )
 
     @skip_if_lt_x_gpu(2)
@@ -380,7 +436,7 @@ class TestFullyShardDTensor(FSDPTest):
             fully_shard(
                 model,
                 mesh=mesh2,
-                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+                dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
             )
 
     @skip_if_lt_x_gpu(2)
@@ -395,12 +451,12 @@ class TestFullyShardDTensor(FSDPTest):
             fully_shard(
                 model,
                 mesh=mesh,
-                dp_mesh_dim_names=DataParallelMeshDims(),
+                dp_mesh_dims=DataParallelMeshDims(),
             )
 
     @skip_if_lt_x_gpu(2)
     def test_validation_spmd_mesh_non_dtensor_params(self):
-        """Error when dp_mesh_dim_names is provided but params are not DTensors."""
+        """Error when dp_mesh_dims is provided but params are not DTensors."""
         mesh = init_device_mesh(
             device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
         )
@@ -410,7 +466,7 @@ class TestFullyShardDTensor(FSDPTest):
             fully_shard(
                 model,
                 mesh=mesh,
-                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+                dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
             )
 
     @skip_if_lt_x_gpu(2)
@@ -428,7 +484,7 @@ class TestFullyShardDTensor(FSDPTest):
                 model,
                 mesh=mesh,
                 reshard_after_forward=2,
-                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+                dp_mesh_dims=DataParallelMeshDims(shard="fsdp"),
             )
 
     @skip_if_lt_x_gpu(4)
@@ -478,7 +534,7 @@ class TestFullyShardDTensor(FSDPTest):
             model,
             mesh=mesh,
             shard_placement_fn=shard_fn,
-            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp", replicate="ddp"),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp", replicate="ddp"),
         )
 
         # The effective DP group is ddp x fsdp (all non-TP ranks)
@@ -513,9 +569,7 @@ class TestFullyShardDTensor(FSDPTest):
         fully_shard(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(
-                shard="fsdp", replicate=("ddp0", "ddp1")
-            ),
+            dp_mesh_dims=DataParallelMeshDims(shard="fsdp", replicate=("ddp0", "ddp1")),
         )
 
         replicate(
@@ -528,7 +582,7 @@ class TestFullyShardDTensor(FSDPTest):
 
     @skip_if_lt_x_gpu(2)
     def test_replicate_with_fsdp_spmd_mesh(self):
-        """replicate() from replicate_with_fsdp with dp_mesh_dim_names."""
+        """replicate() from replicate_with_fsdp with dp_mesh_dims."""
         mesh = init_device_mesh(
             device_type.type, (self.world_size,), mesh_dim_names=("ddp",)
         )
@@ -542,7 +596,7 @@ class TestFullyShardDTensor(FSDPTest):
         replicate_with_fsdp(
             model,
             mesh=mesh,
-            dp_mesh_dim_names=DataParallelMeshDims(replicate="ddp"),
+            dp_mesh_dims=DataParallelMeshDims(replicate="ddp"),
         )
 
         replicate(

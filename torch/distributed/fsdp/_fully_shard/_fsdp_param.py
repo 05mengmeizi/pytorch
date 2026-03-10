@@ -166,9 +166,9 @@ class FSDPParam:
     _unsharded_param: nn.Parameter  # ND
     unsharded_accumulated_grad: torch.Tensor | None  # ND
     _sharding_spec: DTensorSpec
-    # DTensor attributes (only defined for DTensor `param`):
-    _unsharded_param_spec: DTensorSpec  # SPMD path
-    _tp_spec: DTensorSpec  # TP/EP path
+    # DTensor attributes -- mutually exclusive, set based on path:
+    _unsharded_param_spec: DTensorSpec | None  # SPMD path
+    _tp_spec: DTensorSpec | None  # TP/EP path
     all_gather_outputs: list[torch.Tensor]  # 1D
     # All-gather extension attributes
     _extensions_data: ExtensionsData
@@ -322,9 +322,11 @@ class FSDPParam:
         Build ``_sharding_spec``, ``_spmd_mesh``, and ``_spmd_placements`` and
         return the local tensor data to be sharded.
         """
+        self._unsharded_param_spec = None
+        self._tp_spec = None
         if self.mesh_info.is_spmd_mesh and not self.is_dtensor:
             raise ValueError(
-                "When dp_mesh_dim_names is provided, all parameters must be "
+                "When dp_mesh_dims is provided, all parameters must be "
                 "DTensors on the full SPMD mesh (e.g. via distribute_module). "
                 f"Got plain tensor for parameter '{self._module_info.param_name}'."
             )
@@ -343,7 +345,7 @@ class FSDPParam:
         """SPMD path: param is a DTensor on the full SPMD mesh."""
         self._unsharded_param_spec = cast(DTensor, param)._spec
         spmd_mesh = self._unsharded_param_spec.mesh
-        dp_dim_names = self.mesh_info.dp_mesh_dim_names
+        dp_dim_names = self.mesh_info.dp_mesh_dims
         if dp_dim_names is None:
             raise AssertionError("dp_dim_names must not be None for SPMD mesh")
         if spmd_mesh.mesh_dim_names is None:
@@ -591,6 +593,8 @@ class FSDPParam:
                 if self.mesh_info.is_spmd_mesh
                 else self._tp_spec
             )
+            if spec is None:
+                raise AssertionError("Expected DTensorSpec for unsharded param")
             unsharded_param = _from_local_no_grad(unsharded_param, spec)
         self._unsharded_param = nn.Parameter(
             unsharded_param, requires_grad=self.sharded_param.requires_grad
@@ -836,8 +840,12 @@ class FSDPParam:
             if not isinstance(grad, DTensor):
                 raise AssertionError(f"Expected DTensor, got {type(grad)}")
             if self.mesh_info.is_spmd_mesh:
+                if self._unsharded_param_spec is None:
+                    raise AssertionError("Expected _unsharded_param_spec for SPMD mesh")
                 placements = self._unsharded_param_spec.placements
             else:
+                if self._tp_spec is None:
+                    raise AssertionError("Expected _tp_spec for non-SPMD mesh")
                 placements = self._tp_spec.placements
             if placements != grad.placements:
                 if len(placements) != len(grad.placements):

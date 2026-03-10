@@ -70,7 +70,7 @@ def fully_shard(
     mp_policy: MixedPrecisionPolicy = ...,
     offload_policy: OffloadPolicy = ...,
     ignored_params: set[nn.Parameter] | None = ...,
-    dp_mesh_dim_names: DataParallelMeshDims | None = ...,
+    dp_mesh_dims: DataParallelMeshDims | None = ...,
 ) -> FSDPModule: ...
 
 
@@ -85,7 +85,7 @@ def fully_shard(
     mp_policy: MixedPrecisionPolicy = ...,
     offload_policy: OffloadPolicy = ...,
     ignored_params: set[nn.Parameter] | None = ...,
-    dp_mesh_dim_names: DataParallelMeshDims | None = ...,
+    dp_mesh_dims: DataParallelMeshDims | None = ...,
 ) -> list[FSDPModule]: ...
 
 
@@ -104,7 +104,7 @@ def fully_shard(
     mp_policy: MixedPrecisionPolicy = MixedPrecisionPolicy(),
     offload_policy: OffloadPolicy = OffloadPolicy(),
     ignored_params: set[nn.Parameter] | None = None,
-    dp_mesh_dim_names: DataParallelMeshDims | None = None,
+    dp_mesh_dims: DataParallelMeshDims | None = None,
 ):
     """
     Apply fully sharded data parallelism (FSDP) to ``module``, where FSDP
@@ -203,7 +203,7 @@ def fully_shard(
         ignored_params: Optional(Set[nn.Parameter]): The set of parameters to be
             ignored by FSDP. They will not be sharded, nor moved to the device
             during init, nor have their gradients reduced in backward.
-        dp_mesh_dim_names (Optional[DataParallelMeshDims]): When provided,
+        dp_mesh_dims (Optional[DataParallelMeshDims]): When provided,
             ``mesh`` is treated as the full SPMD mesh, and parameters should be
             DTensors on this mesh with ``Replicate()`` on all DP dimensions.
             The ``shard`` field names which dim(s) FSDP shards on (multiple
@@ -216,8 +216,8 @@ def fully_shard(
     torch._C._log_api_usage_once("torch.distributed.fsdp.fully_shard")
     _validate_module(module, "fully_shard")
     mesh = mesh or _init_default_mesh()
-    _validate_mesh(mesh, dp_mesh_dim_names)
-    mesh_info = _get_mesh_info(mesh, dp_mesh_dim_names)
+    _validate_mesh(mesh, dp_mesh_dims)
+    mesh_info = _get_mesh_info(mesh, dp_mesh_dims)
     device = _get_device_from_mesh(mesh)
     auto_reshard_after_forward = reshard_after_forward is None
     # If the user does not provide ``reshard_after_forward``, we set it to True.
@@ -230,7 +230,7 @@ def fully_shard(
         ):
             raise NotImplementedError(
                 "reshard_after_forward as int is not yet supported with "
-                "SPMD mesh (dp_mesh_dim_names)"
+                "SPMD mesh (dp_mesh_dims)"
             )
         post_forward_mesh_info = _get_post_forward_mesh_info(
             reshard_after_forward if not auto_reshard_after_forward else True,  # type: ignore[arg-type]

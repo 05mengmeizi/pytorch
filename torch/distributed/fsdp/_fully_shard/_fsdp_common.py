@@ -33,7 +33,7 @@ class DataParallelMeshInfo:
     mesh: DeviceMesh
     shard_mesh_dim: int | None = None
     replicate_mesh_dim: int | None = None
-    dp_mesh_dim_names: DataParallelMeshDims | None = None
+    dp_mesh_dims: DataParallelMeshDims | None = None
     spmd_mesh: DeviceMesh | None = field(default=None, repr=False)
     is_spmd_mesh: bool = field(default=False, init=False, repr=False)
 
@@ -42,7 +42,7 @@ class DataParallelMeshInfo:
             raise AssertionError(
                 "At least one of shard_mesh_dim and replicate_mesh_dim must not be None"
             )
-        self.is_spmd_mesh = self.dp_mesh_dim_names is not None
+        self.is_spmd_mesh = self.dp_mesh_dims is not None
 
 
 @dataclass
