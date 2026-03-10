@@ -15,7 +15,7 @@ import re
 import tempfile
 from collections.abc import Callable
 from itertools import chain, count
-from typing import Any, TYPE_CHECKING
+from typing import Any, get_type_hints, TYPE_CHECKING
 
 import sympy
 from sympy import Expr
@@ -310,6 +310,168 @@ def user_defined_kernel_grid_fn_code(
     return fn_name, output.getvalue()
 
 
+def _is_triton_symbol(symbol) -> bool:
+    """Check if a symbol is from Triton."""
+    return hasattr(symbol, "__module__") and symbol.__module__.startswith("triton")
+
+
+def extract_triton_type_hints(fn) -> OrderedSet[Any]:
+    """
+    Extract Triton types used in function annotations.
+    """
+
+    type_hints = OrderedSet()
+    for annotation in get_type_hints(fn, include_extras=True).values():
+        if isinstance(annotation, str):
+            if annotation in fn.__globals__:
+                symbol = fn.__globals__[annotation]
+                if _is_triton_symbol(symbol):
+                    type_hints.add(symbol)
+        # Handle direct type references
+        elif _is_triton_symbol(annotation):
+            type_hints.add(annotation)
+
+    return type_hints
+
+
+def _user_defined_triton_kernel_collect_dependencies(
+    kernel, seen=None
+) -> dict[str, Any]:
+    """
+    Collect all dependencies for user defined trition kernel.
+    """
+    import triton
+    from triton import JITFunction
+    from triton.language import constexpr
+
+    if seen is None:
+        seen = OrderedSet()
+
+    deps = {
+        "type_imports": OrderedSet(),
+        "jit_functions": [],
+        "constexpr_functions": [],
+        "triton_symbols": [],
+        "other_imports": [],
+        "constants": [],
+    }
+
+    if kernel.__name__ in seen:
+        return deps
+    seen.add(kernel.__name__)
+    type_hints = extract_triton_type_hints(kernel.fn)
+    deps["type_imports"].update(type_hints)
+    unqualified_loads = OrderedSet(
+        inst.argval for inst in dis.Bytecode(kernel.fn) if inst.opname == "LOAD_GLOBAL"
+    )
+    global_annotations = kernel.fn.__globals__.get("__annotations__", {})
+
+    # Collect dependencies from co_names
+    for symbol_name in kernel.fn.__code__.co_names:
+        if symbol_name not in kernel.fn.__globals__:
+            continue
+
+        symbol = kernel.fn.__globals__[symbol_name]
+
+        if isinstance(symbol, JITFunction):
+            child_deps = _user_defined_triton_kernel_collect_dependencies(symbol, seen)
+            deps["type_imports"].update(child_deps["type_imports"])
+            deps["jit_functions"].append((symbol_name, symbol, child_deps))
+        elif hasattr(triton, "constexpr_function") and isinstance(
+            symbol, triton.runtime.jit.ConstexprFunction
+        ):
+            child_deps = _user_defined_triton_kernel_collect_dependencies(symbol, seen)
+            deps["type_imports"].update(child_deps["type_imports"])
+            deps["constexpr_functions"].append((symbol_name, symbol, child_deps))
+        elif isinstance(symbol, (int, str, bool, constexpr)):
+            annotation = global_annotations.get(symbol_name)
+            deps["constants"].append((symbol_name, symbol, annotation))
+        elif (
+            symbol_name in unqualified_loads
+            and symbol_name != "tl"
+            and _is_triton_symbol(symbol)
+        ):
+            if isinstance(symbol, triton.language.core.dtype):
+                deps["triton_symbols"].append((symbol_name, symbol))
+            elif hasattr(symbol, "__name__"):
+                deps["other_imports"].append((symbol_name, symbol))
+
+    return deps
+
+
+def _user_defined_triton_kernel_emit_dependencies(
+    compile_wrapper, deps, symbols_included
+):
+    """
+    Emit collected dependencies from user triton kernel in correct order.
+    """
+    from triton.language import constexpr  # type: ignore[name-defined]
+
+    # 1. Emit type imports FIRST (needed for annotations)
+    for type_hint in deps["type_imports"]:
+        type_name = getattr(type_hint, "__name__", None)
+        if type_name and type_name not in symbols_included:
+            compile_wrapper.writeline(
+                f"from {type_hint.__module__} import {type_name} as {type_name}"
+            )
+            symbols_included.add(type_name)
+
+    for symbol_name, jit_fn, child_deps in deps["jit_functions"]:
+        if symbol_name in symbols_included:
+            continue
+        _user_defined_triton_kernel_emit_dependencies(
+            compile_wrapper, child_deps, symbols_included
+        )
+        compile_wrapper.newline()
+        compile_wrapper.writeline("@triton.jit")
+        compile_wrapper.splice(jit_fn.src, strip=True)
+        fn_name = jit_fn.fn.__name__
+        if symbol_name != fn_name:
+            compile_wrapper.writeline(f"{symbol_name} = {fn_name}")
+        symbols_included.add(symbol_name)
+
+    for symbol_name, constexpr_fn, child_deps in deps["constexpr_functions"]:
+        if symbol_name in symbols_included:
+            continue
+        _user_defined_triton_kernel_emit_dependencies(
+            compile_wrapper, child_deps, symbols_included
+        )
+        compile_wrapper.newline()
+        compile_wrapper.writeline("@triton.constexpr_function")
+        compile_wrapper.splice(constexpr_fn.src, strip=True)
+        fn_name = constexpr_fn.fn.__name__
+        if symbol_name != fn_name:
+            compile_wrapper.writeline(f"{symbol_name} = {fn_name}")
+        symbols_included.add(symbol_name)
+
+    for symbol_name, symbol in deps["triton_symbols"]:
+        if symbol_name not in symbols_included:
+            compile_wrapper.writeline(f"{symbol_name} = tl.{symbol}")
+            symbols_included.add(symbol_name)
+
+    for symbol_name, symbol in deps["other_imports"]:
+        if symbol_name not in symbols_included:
+            compile_wrapper.writeline(
+                f"from {symbol.__module__} import {symbol.__name__} as {symbol_name}"
+            )
+            symbols_included.add(symbol_name)
+
+    for symbol_name, value, annotation in deps["constants"]:
+        if symbol_name not in symbols_included:
+            compile_wrapper.newline()
+            if isinstance(value, constexpr):
+                value_str = f"tl.constexpr({value.value!r})"
+            else:
+                value_str = f"{value!r}"
+            if annotation and isinstance(annotation, type):
+                compile_wrapper.writeline(
+                    f"{symbol_name}: {annotation.__module__}.{annotation.__name__} = {value_str}"
+                )
+            else:
+                compile_wrapper.writeline(f"{symbol_name} = {value_str}")
+            symbols_included.add(symbol_name)
+
+
 def user_defined_triton_kernel_transitive_closure_source_code(
     kernel, epilogue_fusion: tuple[ir.ComputedBuffer, str] | None = None
 ) -> str:
@@ -325,83 +487,15 @@ def user_defined_triton_kernel_transitive_closure_source_code(
         kernel_src = epilogue_fusion[1]
     compile_wrapper.splice(kernel_src, strip=True)
 
-    # Also include any possible kernel being called indirectly
-    import triton
-    from triton import JITFunction  # type: ignore[name-defined, attr-defined]
-    from triton.language import constexpr  # type: ignore[name-defined]
+    # Phase 1: Collect all dependencies
+    deps = _user_defined_triton_kernel_collect_dependencies(kernel)
 
-    # global constexpr vars handled above
+    # Phase 2: Emit dependencies in correct order
     symbols_included = OrderedSet([kernel.__name__])
+    _user_defined_triton_kernel_emit_dependencies(
+        compile_wrapper, deps, symbols_included
+    )
 
-    def traverse(cur_kernel):
-        # here we extract the unqualified names (i.e., not attributes and
-        # without prepended module name) loaded in the kernel code, which
-        # are matched with the co_names and __globals__ below to codegen
-        # the respective imports necessary for the kernel compilation
-        unqualified_loads = OrderedSet(
-            inst.argval
-            for inst in dis.Bytecode(cur_kernel.fn)
-            if inst.opname == "LOAD_GLOBAL"
-        )
-        global_annotations = cur_kernel.fn.__globals__.get("__annotations__", {})
-        for symbol_name in cur_kernel.fn.__code__.co_names:
-            if symbol_name in symbols_included:
-                continue
-            if symbol_name in cur_kernel.fn.__globals__:
-                symbol = cur_kernel.fn.__globals__[symbol_name]
-                if isinstance(symbol, JITFunction):
-                    compile_wrapper.newline()
-                    compile_wrapper.writeline("@triton.jit")
-
-                    compile_wrapper.splice(symbol.src, strip=True)
-                    symbols_included.add(symbol_name)
-                    traverse(symbol)
-                elif hasattr(triton, "constexpr_function") and isinstance(
-                    symbol,
-                    triton.runtime.jit.ConstexprFunction,
-                ):
-                    compile_wrapper.newline()
-                    compile_wrapper.writeline("@triton.constexpr_function")
-                    compile_wrapper.splice(symbol.src, strip=True)
-                    symbols_included.add(symbol_name)
-                    traverse(symbol)
-                elif isinstance(symbol, (int, str, bool, constexpr)):
-                    compile_wrapper.newline()
-                    if isinstance(symbol, constexpr):
-                        symbol_str = f"tl.constexpr({symbol.value!r})"
-                    else:
-                        symbol_str = f"{symbol!r}"
-                    if annotation := global_annotations.get(symbol_name):
-                        if isinstance(annotation, type):
-                            annotation_code = (
-                                f": {annotation.__module__}.{annotation.__name__}"
-                            )
-                        else:
-                            annotation_code = f": {annotation!r}"
-                        compile_wrapper.writeline(
-                            f"{symbol_name}{annotation_code} = {symbol_str}"
-                        )
-                    else:
-                        compile_wrapper.writeline(f"{symbol_name} = {symbol_str}")
-                    symbols_included.add(symbol_name)
-                elif (
-                    symbol_name in unqualified_loads
-                    and symbol_name != "tl"  # already imported
-                    and hasattr(symbol, "__module__")
-                    # only codegen imports from triton; JITFunctions
-                    # imported from other modules will be codegened
-                    # in the separate branch above
-                    and symbol.__module__.startswith("triton")
-                ):
-                    # a global symbol imported from triton is referenced
-                    # without module qualification (i.e., `store` instead
-                    # of `tl.store`): need to codegen an import
-                    compile_wrapper.writeline(
-                        f"from {symbol.__module__} import {symbol.__name__} as {symbol_name}"
-                    )
-                    symbols_included.add(symbol_name)
-
-    traverse(kernel)
     return compile_wrapper.getvalue()
 
 
