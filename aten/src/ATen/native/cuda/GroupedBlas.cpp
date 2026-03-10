@@ -22,6 +22,7 @@
 #include <ATen/native/cuda/RowwiseScaledMM.h>
 #include <ATen/native/cuda/ScaledGroupMM.h>
 #include <ATen/native/cuda/GroupMM.h>
+#include <ATen/native/cuda/CublasLtGroupedGemm.h>
 #ifdef USE_ROCM
 #include <ATen/native/hip/ck_group_gemm.h>
 #endif
@@ -68,6 +69,12 @@ using scaled_blas::convert_int_to_enum;
 namespace at::native {
 
 namespace {
+
+bool _use_cublaslt_grouped_gemm() {
+  static const char* env = std::getenv("TORCH_GROUPED_GEMM_BACKEND");
+  return env != nullptr && std::string(env) == "cublaslt" &&
+         at::cuda::detail::cublaslt_grouped_gemm_supported();
+}
 
 bool _scaled_mm_allowed_device(bool sm90_only=false, bool sm100_only=false) {
 #ifdef USE_ROCM
@@ -154,16 +161,27 @@ _f8_f8_bf16_rowwise_grouped_mm_cuda(
   TORCH_CHECK_VALUE(mat_a.dtype() == at::kFloat8_e4m3fn, "Expected mat_a to be Float8_e4m3 matrix got ", mat_a.scalar_type());
   TORCH_CHECK_VALUE(mat_b.dtype() == at::kFloat8_e4m3fn, "Expected mat_a to be Float8_e4m3 matrix got ", mat_b.scalar_type());
 
-  at::cuda::detail::f8f8bf16_grouped_mm(
-      mat_a,
-      mat_b,
-      scale_a,
-      scale_b,
-      offs,
-      bias,
-      use_fast_accum,
-      out);
-    return out;
+  if (_use_cublaslt_grouped_gemm() && !bias.has_value()) {
+    at::cuda::detail::cublaslt_f8f8bf16_grouped_mm(
+        mat_a,
+        mat_b,
+        scale_a,
+        scale_b,
+        offs,
+        use_fast_accum,
+        out);
+  } else {
+    at::cuda::detail::f8f8bf16_grouped_mm(
+        mat_a,
+        mat_b,
+        scale_a,
+        scale_b,
+        offs,
+        bias,
+        use_fast_accum,
+        out);
+  }
+  return out;
 }
 
 // 2d-2d and 2d-3d cases
@@ -700,8 +718,9 @@ std::optional<c10::ScalarType> out_dtype) {
   bool use_fast_path = _scaled_mm_allowed_device(/*sm90_only*/true, /*sm100_only*/true) && a_b_and_out_are_bf16;
   const auto out_dtype_ = _resolve_grouped_mm_out_dtype(mat_a, mat_b, out_dtype);
   Tensor out = create_grouped_gemm_output_tensor(mat_a, mat_b, offs, out_dtype_);
-  if (use_fast_path) {
-    // fast path, no d2h sync needed
+  if (use_fast_path && _use_cublaslt_grouped_gemm()) {
+    at::cuda::detail::cublaslt_bf16_grouped_mm(mat_a, mat_b, offs, out);
+  } else if (use_fast_path) {
     at::cuda::detail::bf16bf16_grouped_mm(mat_a, mat_b, offs, bias, out);
   } else {
     _grouped_mm_fallback(mat_a, mat_b, offs, bias, out_dtype, out);
