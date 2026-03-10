@@ -980,6 +980,123 @@ test_inductor_torchbench_smoketest_perf() {
   done
 }
 
+test_unbacked_parity_smoketest() {
+  # Check that unbacked batch-only has performance parity with backed batch-only
+  # Fails if any model regresses >1% consistently across 3 retries
+  TEST_REPORTS_DIR=$(pwd)/test/test-reports
+  mkdir -p "$TEST_REPORTS_DIR"
+
+  local THRESHOLD=1.0
+  local MAX_RETRIES=3
+  local MODELS="MobileBertForMaskedLM|DistilBertForMaskedLM|DistillGPT2|T5Small"
+  local OUTPUT_FILE="$TEST_REPORTS_DIR/unbacked_parity_results.txt"
+
+  run_comparison() {
+    python benchmarks/dynamo/huggingface.py \
+      --compare-backed-unbacked \
+      --performance --inference --inductor --device cuda \
+      --filter "$MODELS" 2>&1 | tee "$OUTPUT_FILE"
+  }
+
+  check_regressions() {
+    # Parse the comparison table and check for regressions > threshold
+    # Returns 0 if regressions found, 1 if no regressions
+    local regressions=()
+    while IFS= read -r line; do
+      # Match lines like: "  ModelName                      10.000      10.500    +5.0%"
+      if [[ "$line" =~ ^[[:space:]]+([A-Za-z0-9_]+)[[:space:]]+([0-9.]+)[[:space:]]+([0-9.]+)[[:space:]]+\+([0-9.]+)% ]]; then
+        local model="${BASH_REMATCH[1]}"
+        local diff="${BASH_REMATCH[4]}"
+        if (( $(echo "$diff > $THRESHOLD" | bc -l) )); then
+          regressions+=("$model:+${diff}%")
+        fi
+      fi
+    done < "$OUTPUT_FILE"
+
+    if [[ ${#regressions[@]} -gt 0 ]]; then
+      echo "Regressions found: ${regressions[*]}"
+      return 0
+    fi
+    return 1
+  }
+
+  check_failures() {
+    # Check if any model had both backed and unbacked fail
+    # Returns 0 if failures found, 1 if no failures
+    local current_model=""
+    local backed_failed=false
+    local unbacked_failed=false
+    local failures=()
+
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^---[[:space:]]+([A-Za-z0-9_]+)[[:space:]]+--- ]]; then
+        # New model - check previous model
+        if [[ -n "$current_model" ]] && $backed_failed && $unbacked_failed; then
+          failures+=("$current_model")
+        fi
+        current_model="${BASH_REMATCH[1]}"
+        backed_failed=false
+        unbacked_failed=false
+      elif [[ "$line" =~ backed.*FAILED|backed.*TIMEOUT|backed.*ERROR ]]; then
+        backed_failed=true
+      elif [[ "$line" =~ unbacked.*FAILED|unbacked.*TIMEOUT|unbacked.*ERROR ]]; then
+        unbacked_failed=true
+      fi
+    done < "$OUTPUT_FILE"
+
+    # Check last model
+    if [[ -n "$current_model" ]] && $backed_failed && $unbacked_failed; then
+      failures+=("$current_model")
+    fi
+
+    if [[ ${#failures[@]} -gt 0 ]]; then
+      echo "❌ FAILURES DETECTED: ${failures[*]}"
+      return 0
+    fi
+    return 1
+  }
+
+  # Run initial comparison
+  echo "=== Run 1/$MAX_RETRIES ==="
+  run_comparison
+
+  # Check for failures first
+  if check_failures; then
+    echo "❌ Test failed: Models failed to run"
+    exit 1
+  fi
+
+  # Check for regressions
+  if ! check_regressions; then
+    echo "✅ PASSED: No regressions above ${THRESHOLD}% threshold"
+    exit 0
+  fi
+
+  # Regression detected - retry to confirm
+  local regression_count=1
+  for ((retry=2; retry<=MAX_RETRIES; retry++)); do
+    echo ""
+    echo "=== Retry $retry/$MAX_RETRIES (potential regression detected) ==="
+    run_comparison
+
+    if check_regressions; then
+      ((regression_count++))
+    fi
+  done
+
+  # Check if regression was consistent (majority of runs)
+  local required=$((MAX_RETRIES / 2 + 1))
+  if [[ $regression_count -ge $required ]]; then
+    echo ""
+    echo "❌ REGRESSION CONFIRMED: Detected in $regression_count/$MAX_RETRIES runs (threshold: ${THRESHOLD}%)"
+    exit 1
+  else
+    echo ""
+    echo "✅ PASSED: Regressions were not consistent ($regression_count/$MAX_RETRIES runs, needed $required)"
+    exit 0
+  fi
+}
+
 test_inductor_set_cpu_affinity(){
   JEMALLOC_LIB="$(find /usr/lib -name libjemalloc.so.2)"
   export LD_PRELOAD="$JEMALLOC_LIB":"$LD_PRELOAD"
@@ -1936,7 +2053,11 @@ elif [[ "${TEST_CONFIG}" == *aoti_cross_compile_for_windows* ]]; then
 elif [[ "${TEST_CONFIG}" == *huggingface* ]]; then
   install_torchvision
   id=$((SHARD_NUMBER-1))
-  test_dynamo_benchmark huggingface "$id"
+  if [[ "${TEST_CONFIG}" == *unbacked_parity* ]]; then
+    test_unbacked_parity_smoketest
+  else
+    test_dynamo_benchmark huggingface "$id"
+  fi
 elif [[ "${TEST_CONFIG}" == *timm* ]]; then
   install_torchvision
   id=$((SHARD_NUMBER-1))
