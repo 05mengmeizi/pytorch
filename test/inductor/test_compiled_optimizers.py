@@ -1011,11 +1011,13 @@ class CompiledOptimizerBitwiseTests(TestCase):
     def _test_optimizer_bitwise(
         test_case,
         optim_cls,
+        kernel_count=None,
         num_steps=10,
         **optim_kwargs,
     ):
         """Helper to test optimizer bitwise equality."""
         torch._dynamo.reset()
+        torch._inductor.metrics.reset()
         torch.manual_seed(42)
 
         params_eager = [
@@ -1076,6 +1078,14 @@ class CompiledOptimizerBitwiseTests(TestCase):
                         msg=f"State '{key}' differs",
                     )
 
+        if kernel_count is not None and test_case.check_kernel_count:
+            if isinstance(kernel_count, types.LambdaType):
+                kernel_count(str(torch._inductor.metrics.generated_kernel_count))
+            else:
+                test_case.assertEqual(
+                    torch._inductor.metrics.generated_kernel_count, kernel_count
+                )
+
 
 for optim_cls, name, kwargs, scheduler_cls in COMPILED_OPT_KWARG_DB:
     setattr(
@@ -1085,7 +1095,7 @@ for optim_cls, name, kwargs, scheduler_cls in COMPILED_OPT_KWARG_DB:
     )
 
 
-def _make_bitwise_test(optim_cls, **optim_kwargs):
+def _make_bitwise_test(optim_cls, kernel_count=None, **optim_kwargs):
     @skipIfRocm(msg="ROCm may have different numerical behavior")
     @requires_cuda_and_triton
     @config.patch(
@@ -1097,7 +1107,7 @@ def _make_bitwise_test(optim_cls, **optim_kwargs):
     )
     def test_fn(self):
         CompiledOptimizerBitwiseTests._test_optimizer_bitwise(
-            self, optim_cls, **optim_kwargs
+            self, optim_cls, kernel_count=kernel_count, **optim_kwargs
         )
 
     return test_fn
@@ -1117,6 +1127,7 @@ _BITWISE_CAPTURABLE_OPTIMS = (
 # SGD doesn't support capturable but has no item() calls
 # so it compiles without graph breaks and can be tested bitwise.
 _BITWISE_NON_CAPTURABLE_OPTIMS = (SGD,)
+
 for optim_cls, name, kwargs, scheduler_cls in COMPILED_OPT_KWARG_DB:
     if (
         kwargs.get("device") == GPU_TYPE
@@ -1130,13 +1141,22 @@ for optim_cls, name, kwargs, scheduler_cls in COMPILED_OPT_KWARG_DB:
             or optim_cls in _BITWISE_NON_CAPTURABLE_OPTIMS
         )
     ):
+        bitwise_name = name.replace("test_", "test_bitwise_")
+        # Compute from KERNEL_COUNTS directly rather than reusing
+        # kwargs["kernel_count"], which may be a lambda from
+        # KERNEL_COUNT_OVERRIDES tied to a specific source location.
+        kernel_count = (
+            KERNEL_COUNTS[optim_cls].multitensor
+            if kwargs.get("foreach", False)
+            else KERNEL_COUNTS[optim_cls].singletensor
+        )
         optim_kwargs = {
             k: v for k, v in kwargs.items() if k not in ("device", "kernel_count")
         }
         setattr(
             CompiledOptimizerTests,
-            name.replace("test_", "test_bitwise_"),
-            _make_bitwise_test(optim_cls, **optim_kwargs),
+            bitwise_name,
+            _make_bitwise_test(optim_cls, kernel_count=kernel_count, **optim_kwargs),
         )
 
 
