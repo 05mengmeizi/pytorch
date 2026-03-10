@@ -101,8 +101,34 @@ class DistMathOpsTest(DTensorTestBase):
             "amin",
             "var",
             "std",
+            "nansum",
         ):
             self.linear_op_reductions(op_str)
+
+    @with_comms
+    def test_nansum_with_nan(self):
+        device_mesh = self.build_device_mesh()
+        # Tensor with NaN values sharded across the reduction dim
+        tensor = torch.tensor(
+            [[1.0, float("nan"), 3.0], [float("nan"), 5.0, 6.0]],
+            device=self.device_type,
+        )
+        dtensor = distribute_tensor(tensor, device_mesh, [Shard(0)])
+
+        # Full reduction: Shard(0) reduces to Partial(sum), then to Replicate
+        dt_full = dtensor.nansum()
+        self.assertEqual(dt_full.full_tensor(), tensor.nansum())
+        self.assertEqual(dt_full.placements, (Partial("sum"),))
+
+        # Reduction along sharded dim 0: produces Partial(sum)
+        dt_dim0 = dtensor.nansum(dim=0)
+        self.assertEqual(dt_dim0.full_tensor(), tensor.nansum(dim=0))
+        self.assertEqual(dt_dim0.placements, (Partial("sum"),))
+
+        # Reduction along non-sharded dim 1: preserves Shard(0)
+        dt_dim1 = dtensor.nansum(dim=1)
+        self.assertEqual(dt_dim1.full_tensor(), tensor.nansum(dim=1))
+        self.assertEqual(dt_dim1.placements, (Shard(0),))
 
     @with_comms
     @skip_unless_torch_gpu
@@ -875,6 +901,33 @@ class DistMathOpsTest(DTensorTestBase):
         out = torch.ops.aten.linalg_vector_norm(dt, 0)
         self.assertEqual(out.full_tensor().item(), 3.0)
         self.assertEqual(out.placements, (Replicate(),))
+
+    @with_comms
+    def test_max_min_dim_sharded(self):
+        """max.dim/min.dim on sharded tensors produce correct values and indices."""
+        device_mesh = self.build_device_mesh()
+        t = torch.randn(128, 64, device=self.device_type)
+
+        for op in [torch.max, torch.min]:
+            expected_vals, expected_idx = op(t, dim=1)
+
+            # Shard on non-reduction dim: should work directly
+            dt = distribute_tensor(t, device_mesh, [Shard(0)])
+            dt_vals, dt_idx = op(dt, dim=1)
+            self.assertEqual(dt_vals.full_tensor(), expected_vals)
+            self.assertEqual(dt_idx.full_tensor(), expected_idx)
+
+            # Shard on reduction dim: forces redistribute to Replicate
+            dt = distribute_tensor(t, device_mesh, [Shard(1)])
+            dt_vals, dt_idx = op(dt, dim=1)
+            self.assertEqual(dt_vals.full_tensor(), expected_vals)
+            self.assertEqual(dt_idx.full_tensor(), expected_idx)
+
+            # Partial input: forces redistribute to Replicate
+            dt = distribute_tensor(t, device_mesh, [Partial()])
+            dt_vals, dt_idx = op(dt, dim=1)
+            self.assertEqual(dt_vals.full_tensor(), expected_vals)
+            self.assertEqual(dt_idx.full_tensor(), expected_idx)
 
     @with_comms
     @skip_if_lt_x_gpu(4)

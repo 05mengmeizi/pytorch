@@ -203,12 +203,13 @@ def _wrap_with_inductor_config(
 ) -> Callable[..., Any]:
     """
     Wrap a compiler function to apply inductor config patches during compilation.
+
+    Passes config_patches as a keyword argument so that compile_fx can
+    propagate them to backward compilation via its inner_compile wrapping.
     """
-    from torch._inductor import config as inductor_config
 
     def wrapped(gm: Any, example_inputs: Any) -> Any:
-        with inductor_config.patch(config_patches):
-            return compiler_fn(gm, example_inputs)
+        return compiler_fn(gm, example_inputs, config_patches=config_patches)
 
     # Preserve function metadata for logging
     wrapped.__name__ = getattr(compiler_fn, "__name__", "<wrapped>")
@@ -658,6 +659,7 @@ class OutputGraph(OutputGraphCommon):
         self.cudagraph_annotation: _CudagraphAnnotation | None = None
 
         self.region_tracker = GraphRegionTracker()
+        self._emit_debugger_breakpoint: bool = False
 
         # tracked_fakes says where any tensor that was wrapped to fake came
         # from.  It is similar to GraphArg, in that all GraphArgs will get
@@ -814,6 +816,17 @@ class OutputGraph(OutputGraphCommon):
 
         # Bytecode to insert right before we call the graph
         self.pregraph_bytecode: list[Instruction] = []
+
+        # Maps SyntheticLocalSource → (fn, args, arg_sources) for hoisted
+        # graph inputs created by synthetic_graph_input, so invoke_subgraph
+        # reuse can recreate them on cache hit. arg_sources allows stamp-out
+        # to resolve new ctor arg values via source replacement.
+        self.synthetic_source_ctor_info: dict[
+            SyntheticLocalSource,
+            tuple[
+                Callable[..., Any], tuple[Any, ...], tuple[Source | None, ...] | None
+            ],
+        ] = {}
 
         # Use to pass values to backward hooks when using compiled autograd
         self.backward_state: dict[str, VariableTracker] = {}
@@ -1018,7 +1031,10 @@ class OutputGraph(OutputGraphCommon):
         return [pack_subgraph_name, unpack_subgraph_name]
 
     def synthetic_graph_input(
-        self, fn: Callable[..., Any], args: tuple[Any, ...]
+        self,
+        fn: Callable[..., Any],
+        args: tuple[Any, ...],
+        ctor_arg_sources: tuple[Source | None, ...] | None = None,
     ) -> VariableTracker:
         """
         call fn(*args) before the graph runs and turn the result into a fake input.
@@ -1032,11 +1048,18 @@ class OutputGraph(OutputGraphCommon):
                 fn.__name__,
             )
         )
-        cg.foreach(map(variables.ConstantVariable.create, args))
+        if ctor_arg_sources:
+            cg.foreach(
+                src if src is not None else variables.ConstantVariable.create(val)
+                for val, src in zip(args, ctor_arg_sources)
+            )
+        else:
+            cg.foreach(map(variables.ConstantVariable.create, args))
         cg.call_function(len(args), False)
         cg.store(varname)
         self.pregraph_bytecode.extend(cg.get_instructions())
         source = SyntheticLocalSource(varname)
+        self.synthetic_source_ctor_info[source] = (fn, args, ctor_arg_sources)
         result = VariableTracker.build(self.root_tx, example_value, source)
         # Realize the VT because we will delete the guards on it in the next line.
         result = result.realize()
@@ -1205,6 +1228,19 @@ class OutputGraph(OutputGraphCommon):
     @property
     def current_tx(self) -> "InstructionTranslatorBase":
         return self.root_tx if not self._current_tx else self._current_tx[-1]
+
+    def resolve_source_value(self, source: Source) -> Any:
+        """
+        Resolve the runtime value a Source points to using root_tx's frame.
+
+        Useful to inspect the python object associated with the source during
+        debugging. Will also be used by invoke subgraph caching later on.
+        """
+        return source.get_value(
+            {"G": self.root_tx.f_globals, "L": self.root_tx.f_locals},
+            {},
+            {},  # type: ignore[arg-type]
+        )
 
     def count_calls(self) -> int:
         return count_calls(self.graph)
@@ -1384,6 +1420,27 @@ class OutputGraph(OutputGraphCommon):
                 )
 
             # HACKY CODE REGION END
+        elif is_opaque_type(type(target)):
+            # HACKY CODE REGION BEGIN
+            # Same as SymInt/SymFloat above: piggybacking on self.nn_modules
+            # to store opaque objects as graph attributes.
+
+            tracer = self.current_tracer
+            if not self.is_root_tracer():
+                tracer = self.root_tracer
+
+            def wrap_name(module_key: str) -> VariableTracker:
+                fake_script_obj = torch._library.fake_class_registry.maybe_to_fake_obj(
+                    self.fake_mode, target
+                )
+                proxy = tracer.create_proxy("get_attr", module_key, (), {})
+                set_example_value(proxy.node, fake_script_obj)
+                return torch._dynamo.variables.script_object.TorchScriptObjectVariable.create(
+                    proxy, fake_script_obj, **options
+                )
+
+            # HACKY CODE REGION END
+
         else:
 
             def wrap_name(module_key: str) -> VariableTracker:
@@ -1698,6 +1755,12 @@ class OutputGraph(OutputGraphCommon):
         self.side_effects.prune_dead_object_new(tx)
 
         self.add_output_instructions(prefix_insts)
+
+        if self._emit_debugger_breakpoint:
+            from .bytecode_transformation import create_breakpoint
+
+            self.add_output_instructions(create_breakpoint())
+            self._emit_debugger_breakpoint = False
 
         assert not (self.pregraph_bytecode and self.export), (
             "export does not support pregraph_bytecode"
@@ -2679,6 +2742,13 @@ class OutputGraph(OutputGraphCommon):
             if hasattr(compiler_fn, "__name__")
             else "<unknown compiler_fn>"
         )
+        if config.inline_invoke_subgraph:
+            from torch._higher_order_ops.passes.inline_invoke_subgraph import (
+                inline_invoke_subgraph,
+            )
+
+            gm = inline_invoke_subgraph(gm)
+
         try:
             _step_logger()(logging.INFO, f"calling compiler function {name}")
             if config.verify_correctness:
@@ -3276,6 +3346,14 @@ class SubgraphTracer(fx.Tracer):
         # This is set when enable_side_effects_in_hop=True for HOPs like invoke_subgraph
         # and checkpoint (when skip_fwd_side_effects_in_bwd_under_checkpoint config is True).
         self.allow_side_effects_in_hop = False
+        # User code stack at the point where an externally-visible side effect
+        # was first detected and allowed (not raised).  None means no side
+        # effect; non-None means one occurred.
+        self.side_effect_stack: traceback.StackSummary | None = None
+        # All sources accessed via VariableBuilder (and cell loads) during
+        # this subtracer's trace. Used by invoke_subgraph reuse to collect
+        # guards and detect mutations on captured variables.
+        self.traced_sources: OrderedSet[Source] = OrderedSet()
 
         # True if this tracer is currently tracing (reconstructing) into a Python generator
         self.is_reconstructing_generator = False
