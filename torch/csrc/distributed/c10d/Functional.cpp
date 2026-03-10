@@ -939,15 +939,6 @@ at::Tensor shard_dim_alltoall(
                             : output.view(output_sizes);
 }
 
-at::Tensor shard_dim_alltoall(
-    const at::Tensor& input,
-    int64_t gather_dim,
-    int64_t shard_dim,
-    const std::string& group_name) {
-  auto group = c10d::resolve_process_group(group_name);
-  return shard_dim_alltoall(input, gather_dim, shard_dim, std::move(group));
-}
-
 at::Tensor shard_dim_alltoall_dispatch(
     const at::Tensor& input,
     int64_t gather_dim,
