@@ -775,6 +775,65 @@ def linalg_replicate_strategy(op_schema: OpSchema) -> OpStrategy:
     return OpStrategy(output_strategies)
 
 
+AVG_POOL_OPS = [
+    aten.avg_pool2d.default,
+    aten.avg_pool3d.default,
+    aten._adaptive_avg_pool2d.default,
+    aten._adaptive_avg_pool3d.default,
+]
+
+# S(1) is safe for non-adaptive avg_pool (pooling never touches the channel
+# dim).  Adaptive variants are excluded because some OpInfo samples use
+# unbatched inputs where dim 1 is spatial, not channel.
+CHANNEL_SHARDABLE_POOL_OPS = [
+    aten.avg_pool2d.default,
+    aten.avg_pool3d.default,
+]
+
+MAX_POOL_OPS = [
+    aten.adaptive_max_pool2d.default,
+    aten.adaptive_max_pool3d.default,
+    aten.fractional_max_pool2d.default,
+    aten.fractional_max_pool3d.default,
+    aten.max_pool2d_with_indices.default,
+    aten.max_pool3d_with_indices.default,
+]
+
+DUAL_OUTPUT_POOL_OPS = MAX_POOL_OPS
+
+
+@register_op_strategy(
+    AVG_POOL_OPS + MAX_POOL_OPS,
+    schema_info=RuntimeSchemaInfo(1),
+)
+def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
+    input_strategy = cast(OpStrategy, op_schema.args_schema[0])
+    mesh = input_strategy.mesh
+    num_outputs = 2 if op_schema.op in DUAL_OUTPUT_POOL_OPS else 1
+    num_inputs = len(op_schema.args_strategy) + len(op_schema.kwargs_strategy)
+    n = num_outputs + num_inputs
+    single_mesh_dim_strategies: list[PlacementList] = [
+        [Replicate()] * n,
+        [Shard(0)] * n,
+    ]
+    # avg_pool is linear: Partial(sum) and Partial(avg) pass through unchanged.
+    if op_schema.op in AVG_POOL_OPS:
+        single_mesh_dim_strategies.append([Partial("sum")] * n)
+        single_mesh_dim_strategies.append([Partial("avg")] * n)
+    # max distributes over max for the values output; indices output is
+    # undefined under P(max) reduction so we mark it None.
+    if op_schema.op in MAX_POOL_OPS:
+        single_mesh_dim_strategies.append(
+            # pyrefly: ignore [bad-argument-type]
+            [Partial("max"), None] + [Partial("max")] * num_inputs
+        )
+    if op_schema.op in CHANNEL_SHARDABLE_POOL_OPS:
+        single_mesh_dim_strategies.append([Shard(1)] * n)
+    return expand_to_full_mesh_op_strategy(
+        mesh, op_schema, single_mesh_dim_strategies, input_index=num_outputs
+    )
+
+
 @register_op_strategy(
     [aten._log_softmax.default, aten._softmax.default, aten._safe_softmax.default],
     schema_info=RuntimeSchemaInfo(1),
