@@ -1329,13 +1329,13 @@ class Reduction(Loops):
         reduction_numel: Expr,
         input_node: IRNode | None = None,
     ) -> tuple[ReductionHint, _IntLike]:
-        # TODO Laith support unbacked!
-        reduction_numel_hint = V.graph.sizevars.replace_backed_symbols_with_hints(
-            reduction_numel
-        )
-        numel_hint = V.graph.sizevars.replace_backed_symbols_with_hints(
-            sympy_product(ranges)
-        )
+        # Use optimization_hint when all unbacked symbols have explicit hints,
+        # otherwise fall back conservatively.
+        exprs = [reduction_numel, sympy_product(ranges)]
+        if not V.graph.sizevars.all_unbacked_explicitly_hinted(exprs):
+            return ReductionHint.DEFAULT, 1
+        reduction_numel_hint = V.graph.sizevars.optimization_hint(reduction_numel)
+        numel_hint = V.graph.sizevars.optimization_hint(sympy_product(ranges))
 
         should_split = reduction_type == "scan" or (
             not V.graph.has_feature(device, BackendFeature.REDUCE_TO_SINGLE_ELEMENT)
@@ -1346,10 +1346,6 @@ class Reduction(Loops):
             )
             and config.split_reductions
         )
-
-        if not (_is_static(reduction_numel_hint) and _is_static(numel_hint)):
-            # We don't support unbacked symints
-            return ReductionHint.DEFAULT, 1
 
         if reduction_type == "dot":
             # Don't split when doing native matmul
@@ -7553,6 +7549,11 @@ class UserDefinedTritonKernel(ExternKernel):
 
     @override
     def get_read_writes(self) -> dependencies.ReadWrites:
+        # Limit the new `get_read_writes` to `epilogue_fusion_user_defined_triton_kernel`
+        # to avoid potential regression to existing models.
+        if not config.epilogue_fusion_user_defined_triton_kernel:
+            return super().get_read_writes()
+
         # maps formal arg name to actual arg name
         read_renames = {
             formal_arg_dep.name: self.kernel_args[formal_arg_dep.name].get_name()
