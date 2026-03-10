@@ -1154,6 +1154,11 @@ test_libtorch_jit() {
   popd
 }
 
+test_libtorch_profiler() {
+  export CPP_TESTS_DIR="${TORCH_BIN_DIR}"
+  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler
+}
+
 test_libtorch_api() {
   # Start background download
   MNIST_DIR="${PWD}/test/cpp/api/mnist"
@@ -2018,6 +2023,7 @@ elif [[ "${SHARD_NUMBER}" == 2 && $NUM_TEST_SHARDS -gt 1 ]]; then
   test_custom_script_ops
   test_custom_backend
   test_torch_function_benchmark
+  test_libtorch_profiler
 elif [[ "${SHARD_NUMBER}" -gt 2 ]]; then
   # Handle arbitrary number of shards
   install_torchvision
