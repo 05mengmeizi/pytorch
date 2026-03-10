@@ -1084,6 +1084,7 @@ def aot_module_simplified(
     boxed_forward_device_index: BoxedDeviceIndex | None = None,
     ignore_shape_env: bool = False,
     disable_functionalization: bool = False,
+    custom_autograd_cache_key_fn: Callable[..., Any] | None = None,
 ) -> Callable[..., Any]:
     """
     This is the simplified or low overhead version of aot_module. For frontends
@@ -1143,6 +1144,7 @@ def aot_module_simplified(
                     boxed_forward_device_index,
                     local,
                     remote,
+                    custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
                 )
 
         if compiled_fn is None:

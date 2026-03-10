@@ -2552,6 +2552,7 @@ def compile_fx(
     config_patches: dict[str, Any] | None = None,
     decompositions: dict[OpOverload, Callable[..., Any]] | None = None,
     ignore_shape_env: bool = False,
+    custom_autograd_cache_key_fn: Callable | None = None,
 ) -> CompileFxOutput:
     """
     Main entry point for compiling given FX graph.  Despite the fact that this
@@ -2582,6 +2583,7 @@ def compile_fx(
                 inner_compile=config.patch(config_patches)(inner_compile),
                 decompositions=decompositions,
                 ignore_shape_env=ignore_shape_env,
+                custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
             )
 
     # Wake up the AsyncCompile subproc pool as early as possible (if there's cuda).
@@ -2624,6 +2626,7 @@ def compile_fx(
                     ),
                     decompositions=decompositions,
                     ignore_shape_env=ignore_shape_env,
+                    custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
                 )
 
     return _maybe_wrap_and_compile_fx_main(
@@ -2632,6 +2635,7 @@ def compile_fx(
         inner_compile,
         decompositions,
         ignore_shape_env,
+        custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
     )
 
 
@@ -2672,6 +2676,7 @@ def _maybe_wrap_and_compile_fx_main(
     inner_compile: Callable[..., OutputCode],
     decompositions: dict[OpOverload, Callable[..., Any]] | None,
     ignore_shape_env: bool,
+    custom_autograd_cache_key_fn: Callable | None = None,
 ) -> CompileFxOutput:
     """
     Part of compile_fx, called after patching configs.
@@ -2687,6 +2692,7 @@ def _maybe_wrap_and_compile_fx_main(
         inner_compile=inner_compile,
         decompositions=decompositions,
         ignore_shape_env=ignore_shape_env,
+        custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
     )
     if not graph_returns_tuple(model_):
         return make_graph_return_tuple(model_, example_inputs_, compile_gm)
@@ -2709,6 +2715,7 @@ def _maybe_wrap_and_compile_fx_main(
         inner_compile,
         decompositions,
         ignore_shape_env,
+        custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
     )
 
 
@@ -2718,6 +2725,7 @@ def _compile_fx_main(
     inner_compile: Callable[..., OutputCode],
     decompositions: dict[OpOverload, Callable[..., Any]] | None,
     ignore_shape_env: bool,
+    custom_autograd_cache_key_fn: Callable | None = None,
 ) -> CompileFxOutput:
     """
     Main part of compile_fx, called after wrapping is done.
@@ -2909,6 +2917,7 @@ def _compile_fx_main(
                     cudagraphs=compiler_config_extra.cudagraphs,
                     boxed_forward_device_index=compiler_config_extra.forward_device,
                     ignore_shape_env=ignore_shape_env,
+                    custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
                 )(model_, example_inputs_)
             except ShortenTraceback as e:
                 # We will also shorten the traceback inside dynamo.

@@ -13,6 +13,8 @@ from .standalone_compile import CompiledArtifact  # noqa: TC001
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from torch._inductor.utils import InputType
     from torch.export import ExportedProgram
     from torch.export.pt2_archive._package import AOTICompiledModel
@@ -412,6 +414,7 @@ def standalone_compile(
     ] = "from_graph",
     options: dict[str, Any] | None = None,
     aot: bool = False,  # AOT mode, which uses BundledAOTAutogradCache
+    custom_autograd_cache_key_fn: Callable[..., Any] | None = None,
 ) -> CompiledArtifact:
     """
     Precompilation API for inductor.
@@ -443,7 +446,12 @@ def standalone_compile(
 
     options = options if options else {}
     return standalone_compile(
-        gm, example_inputs, dynamic_shapes=dynamic_shapes, options=options, aot=aot
+        gm,
+        example_inputs,
+        dynamic_shapes=dynamic_shapes,
+        options=options,
+        aot=aot,
+        custom_autograd_cache_key_fn=custom_autograd_cache_key_fn,
     )
 
 
