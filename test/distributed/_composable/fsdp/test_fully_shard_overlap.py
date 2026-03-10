@@ -69,8 +69,6 @@ class TestFullyShardOverlap(FSDPTest):
             fully_shard(lin, reshard_after_forward=True)
         fully_shard(model, reshard_after_forward=True)
 
-        orig_all_gather_into_tensor = dist.all_gather_into_tensor
-        orig_reduce_scatter_tensor = dist.reduce_scatter_tensor
         comm_stream = torch.get_device_module(device_type).Stream()
 
         def delay_collective():
@@ -89,29 +87,29 @@ class TestFullyShardOverlap(FSDPTest):
 
         def delayed_all_gather(*args, **kwargs):
             delay_collective()
-            return orig_all_gather_into_tensor(*args, **kwargs)
+            return dist.all_gather_into_tensor(*args, **kwargs)
 
         def delayed_reduce_scatter(*args, **kwargs):
             delay_collective()
-            return orig_reduce_scatter_tensor(*args, **kwargs)
+            return dist.reduce_scatter_tensor(*args, **kwargs)
 
         inp = torch.randn((2, dim), device=device_type.type)
         loss = model(inp).sum()  # warmup CUDA and allocator
         loss.backward()
 
         def ref_fwd():
-            with patch_all_gather(delayed_all_gather):
-                # Run dummy all-gathers per weight (which is one FSDP group)
-                for lin in ref_model:
-                    dummy_ag_output = torch.empty_like(lin.weight)
-                    dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
-                        self.rank
-                    ]
-                    dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
-                return ref_model(inp)
+            # Run dummy delayed all-gathers per weight (which is one FSDP group)
+            for lin in ref_model:
+                dummy_ag_output = torch.empty_like(lin.weight)
+                dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
+                    self.rank
+                ]
+                delay_collective()
+                dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
+            return ref_model(inp)
 
         def fwd():
-            with patch_all_gather(delayed_all_gather):
+            with patch_all_gather(model, delayed_all_gather):
                 model(inp)
 
         ref_fwd_time = self._time_fn(ref_fwd)
@@ -122,36 +120,37 @@ class TestFullyShardOverlap(FSDPTest):
         self.assertLessEqual(fwd_time, ref_fwd_time)
 
         def ref_fwd_bwd():
-            with patch_all_gather(delayed_all_gather):
-                # Run dummy all-gathers per weight (which is one FSDP group)
-                for lin in ref_model:
-                    dummy_ag_output = torch.empty_like(lin.weight)
-                    dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
-                        self.rank
-                    ]
-                    dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
-                loss = ref_model(inp).sum()
-                # Run dummy all-gathers per weight again since we are
-                # resharding after forward
-                for lin in ref_model:
-                    dummy_ag_output = torch.empty_like(lin.weight)
-                    dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
-                        self.rank
-                    ]
-                    dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
-                loss.backward()
-                # Run dummy reduce-scatters per weight
-                for lin in ref_model:
-                    dummy_rs_input = torch.empty_like(lin.weight)
-                    dummy_rs_output = torch.chunk(dummy_rs_input, self.world_size)[
-                        self.rank
-                    ]
-                    dist.reduce_scatter_tensor(dummy_rs_output, dummy_rs_input)
+            # Run dummy delayed all-gathers per weight (which is one FSDP group)
+            for lin in ref_model:
+                dummy_ag_output = torch.empty_like(lin.weight)
+                dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
+                    self.rank
+                ]
+                delay_collective()
+                dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
+            loss = ref_model(inp).sum()
+            # Run dummy all-gathers per weight again since we are
+            # resharding after forward
+            for lin in ref_model:
+                dummy_ag_output = torch.empty_like(lin.weight)
+                dummy_ag_input = torch.chunk(dummy_ag_output, self.world_size)[
+                    self.rank
+                ]
+                delay_collective()
+                dist.all_gather_into_tensor(dummy_ag_output, dummy_ag_input)
+            loss.backward()
+            # Run dummy reduce-scatters per weight
+            for lin in ref_model:
+                dummy_rs_input = torch.empty_like(lin.weight)
+                dummy_rs_output = torch.chunk(dummy_rs_input, self.world_size)[
+                    self.rank
+                ]
+                dist.reduce_scatter_tensor(dummy_rs_output, dummy_rs_input)
 
         def fwd_bwd():
             with (
-                patch_all_gather(delayed_all_gather),
-                patch_reduce_scatter(delayed_reduce_scatter),
+                patch_all_gather(model, delayed_all_gather),
+                patch_reduce_scatter(model, delayed_reduce_scatter),
             ):
                 loss = model(inp).sum()
                 loss.backward()
@@ -182,20 +181,18 @@ class TestFullyShardOverlap(FSDPTest):
         fully_shard(model[1], reshard_after_forward=False)
         optim = torch.optim.AdamW(model.parameters(), lr=1e-2)
 
-        orig_all_gather_into_tensor = dist.all_gather_into_tensor
-
         def delayed_all_gather(*args, **kwargs):
             torch.get_device_module(device_type)._sleep(
                 int(comm_sleep_ms * get_cycles_per_ms())
             )
-            return orig_all_gather_into_tensor(*args, **kwargs)
+            return dist.all_gather_into_tensor(*args, **kwargs)
 
         inp = torch.randn((2, dim), device=device_type)
 
         def run_train_steps(num_iters: int, use_post_optim_event: bool):
             for _ in range(num_iters):
                 optim.zero_grad()
-                with patch_all_gather(delayed_all_gather):
+                with patch_all_gather(model, delayed_all_gather):
                     loss = model(inp).sum()
                 loss.backward()
                 with implicit_replication():

@@ -986,22 +986,32 @@ class DoubleLinear(nn.Module):
         return self.relu(self.lin1(x))
 
 
-# NOTE: For these patch methods, if we want safety under multi-threading (e.g.
-# when using multi-threaded process group), then we want:
-# (1) a barrier immediately after reading the original value to ensure that all
-# threads see the same original value
-# (2) a barrier immediately before restoring the original value to ensure that
-# all threads use the patched value inside the context
+# NOTE: These patch methods replace the comm objects on FSDP param groups
+# directly via the AllGather/ReduceScatter abstraction, rather than
+# monkey-patching global dist functions.
 @contextlib.contextmanager
-def patch_all_gather(new_all_gather_into_tensor: Callable):
-    orig_all_gather = dist.all_gather_into_tensor
-    dist.barrier()
-    dist.all_gather_into_tensor = new_all_gather_into_tensor
+def patch_all_gather(model: nn.Module, new_all_gather_into_tensor: Callable):
+    from torch.distributed.fsdp._fully_shard._fsdp_collectives import DefaultAllGather
+
+    class _PatchedAllGather(DefaultAllGather):
+        def __call__(self, output_tensor, input_tensor, group, async_op=False):
+            return new_all_gather_into_tensor(
+                output_tensor, input_tensor, group=group, async_op=async_op
+            )
+
+    patched = _PatchedAllGather()
+    orig_comms: list[tuple] = []
+    for module in model.modules():
+        state = fully_shard.state(module)
+        if state is not None:
+            for pg in state._fsdp_param_groups:
+                orig_comms.append((pg, pg._all_gather_comm))
+                pg._all_gather_comm = patched
     try:
         yield
     finally:
-        dist.barrier()
-        dist.all_gather_into_tensor = orig_all_gather
+        for pg, orig_comm in orig_comms:
+            pg._all_gather_comm = orig_comm
 
 
 @contextlib.contextmanager
@@ -1041,15 +1051,30 @@ def patch_foreach_reduce(new_foreach_reduce: Callable):
 
 
 @contextlib.contextmanager
-def patch_reduce_scatter(new_reduce_scatter_tensor: Callable):
-    orig_reduce_scatter = dist.reduce_scatter_tensor
-    dist.barrier()
-    dist.reduce_scatter_tensor = new_reduce_scatter_tensor
+def patch_reduce_scatter(model: nn.Module, new_reduce_scatter_tensor: Callable):
+    from torch.distributed.fsdp._fully_shard._fsdp_collectives import (
+        DefaultReduceScatter,
+    )
+
+    class _PatchedReduceScatter(DefaultReduceScatter):
+        def __call__(self, output_tensor, input_tensor, group, op, async_op=False):
+            return new_reduce_scatter_tensor(
+                output_tensor, input_tensor, group=group, op=op, async_op=async_op
+            )
+
+    patched = _PatchedReduceScatter()
+    orig_comms: list[tuple] = []
+    for module in model.modules():
+        state = fully_shard.state(module)
+        if state is not None:
+            for pg in state._fsdp_param_groups:
+                orig_comms.append((pg, pg._reduce_scatter_comm))
+                pg._reduce_scatter_comm = patched
     try:
         yield
     finally:
-        dist.barrier()
-        dist.reduce_scatter_tensor = orig_reduce_scatter
+        for pg, orig_comm in orig_comms:
+            pg._reduce_scatter_comm = orig_comm
 
 
 @contextlib.contextmanager
