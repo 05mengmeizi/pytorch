@@ -418,6 +418,7 @@ class TritonTemplateKernel(TritonKernel):
         hint_override: int | None = None,
         triton_meta: dict[str, object] | None = None,
         always_freeze_layout: bool = False,
+        use_constexpr_params: bool = False,
     ) -> None:
         if tma_store:
             pass
@@ -470,6 +471,7 @@ class TritonTemplateKernel(TritonKernel):
         self.defines = defines
         self.kernel_name = kernel_name
         self.use_jit = use_jit
+        self.use_constexpr_params = use_constexpr_params
         self.tma_store = tma_store
         self.transpose_discontiguous_tensor_descriptors_override = (
             transpose_discontiguous_tensor_descriptors_override
@@ -709,6 +711,12 @@ class TritonTemplateKernel(TritonKernel):
 
         inductor_meta["config_args"] = self.meta
 
+        # For structural caching: emit @triton.jit only and store meta
+        # for programmatic CachingAutotuner construction
+        if self.use_constexpr_params:
+            self._computed_inductor_meta = inductor_meta
+            return "@triton.jit"
+
         template_args = f"""
             num_stages={self.num_stages},
             num_warps={self.num_warps},
@@ -746,6 +754,22 @@ class TritonTemplateKernel(TritonKernel):
 
     def gen_defines(self):
         return self.defines
+
+    def _get_constexpr_param_names(self) -> list[str]:
+        """Extract constexpr parameter names from defines string.
+
+        Parses lines like 'BLOCK_M : tl.constexpr = 64' to get ['BLOCK_M', ...].
+        """
+        names = []
+        for line in self.defines.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Format: "NAME : tl.constexpr = VALUE"
+            name = line.split(":")[0].strip()
+            if name:
+                names.append(name)
+        return names
 
     def def_kernel(self, *argnames):
         """
@@ -812,13 +836,26 @@ class TritonTemplateKernel(TritonKernel):
             code = IndentedBuffer()
             code.splice(self.gen_common_triton_imports())
             code.splice(self.jit_lines())
-            code.writeline(
-                f"def {self.kernel_name}({', '.join(x.full_name() for x in arg_defs)}):"
-            )
-            with code.indent():
-                code.splice(self.defines)
-                code.splice(renames.getvalue())
-                self.codegen_prologue(code)
+
+            if self.use_constexpr_params:
+                # Add constexpr kwargs as function parameters instead of body defines
+                constexpr_params = self._get_constexpr_param_names()
+                all_params = [x.full_name() for x in arg_defs] + [
+                    f"{name}: tl.constexpr" for name in constexpr_params
+                ]
+                code.writeline(f"def {self.kernel_name}({', '.join(all_params)}):")
+                with code.indent():
+                    # No body defines — values come from triton.Config kwargs
+                    code.splice(renames.getvalue())
+                    self.codegen_prologue(code)
+            else:
+                code.writeline(
+                    f"def {self.kernel_name}({', '.join(x.full_name() for x in arg_defs)}):"
+                )
+                with code.indent():
+                    code.splice(self.defines)
+                    code.splice(renames.getvalue())
+                    self.codegen_prologue(code)
             return code.getvalue()
 
         return self._register_hook("<DEF_KERNEL>", hook)
@@ -1635,12 +1672,58 @@ class GenerateAndLoadResult(NamedTuple):
     prologue_supported_inputs: OrderedSet[str]
     kernel_args_sizevars_keys: tuple[sympy.Expr, ...]
     kernel_options: dict[str, Any]
+    # Structural cache data: when set, the module contains a bare @triton.jit
+    # function and the CachingAutotuner must be created programmatically
+    structural_cache_triton_meta: dict[str, object] | None = None
+    structural_cache_inductor_meta: dict[str, object] | None = None
+    # index_dtype string ("tl.int32" or "tl.int64") for structural cache path,
+    # needed to populate INDEX_DTYPE in config_kwargs
+    index_dtype: str | None = None
 
 
 class GeneratedCodeCacheEntry(NamedTuple):
     code: str
     extra: str
     events: list[Any]
+
+
+@dataclasses.dataclass
+class _StructuralCacheEntry:
+    """Cached entry for structural code sharing across configs.
+
+    When multiple autotuning configs produce structurally identical kernel
+    bodies (differing only in constexpr tile sizes), we can generate and load
+    the module once and reuse it. This entry stores everything needed to
+    reconstruct a CachingAutotuner for subsequent configs without re-rendering
+    the Jinja2 template or reloading the module.
+    """
+
+    mod: ModuleType
+    jit_fn: object
+    triton_meta: dict[str, object]
+    inductor_meta: dict[str, object]
+    events: RecordedEventsType
+    input_call_args: tuple[str, ...]
+    prologue_supported_inputs: OrderedSet[str]
+    kernel_args_sizevars_keys: tuple[sympy.Expr, ...]
+    kernel_options: dict[str, object]
+    extra: str
+
+
+class _StructuralCodeCache:
+    """Dict-like cache with cache_clear() for clear_on_fresh_cache compatibility."""
+
+    def __init__(self) -> None:
+        self._cache: dict[str, _StructuralCacheEntry] = {}
+
+    def get(self, key: str) -> _StructuralCacheEntry | None:
+        return self._cache.get(key)
+
+    def __setitem__(self, key: str, value: _StructuralCacheEntry) -> None:
+        self._cache[key] = value
+
+    def cache_clear(self) -> None:
+        self._cache.clear()
 
 
 class GeneratedCodeCache:
@@ -1779,6 +1862,7 @@ class TritonTemplate(KernelTemplate):
         cache_codegen_enabled_for_template=False,
         prologue_loads_all_inputs=False,
         always_freeze_layout: bool = False,
+        structural_kwargs_keys: tuple[str, ...] | None = None,
     ) -> None:
         super().__init__(name, hash=hashlib.sha256(source.encode("utf-8")).hexdigest())
         self.grid = grid
@@ -1797,9 +1881,99 @@ class TritonTemplate(KernelTemplate):
         # FlexAttention templates which require frozen layouts.
         self.always_freeze_layout = always_freeze_layout
 
+        # Structural caching: which kwargs affect the Jinja2 template body.
+        # When set, configs sharing the same structural kwargs values produce
+        # identical kernel source and can share a single loaded module.
+        self.structural_kwargs_keys = structural_kwargs_keys
+        self._structural_code_cache = _StructuralCodeCache()
+        clear_on_fresh_cache(self._structural_code_cache)
+
     # When this flag is on, we ensure that the cached results and the generated result if cache
     # was not used are the same.
     test_cache = False
+
+    def _can_use_structural_cache(
+        self,
+        subgraphs: list[ir.Buffer] | None,
+        workspace_arg: WorkspaceArg | None,
+        epilogue_fn: Callable[..., Any] | None,
+        layout: ir.Layout,
+        input_nodes: tuple[ir.IRNode, ...],
+    ) -> bool:
+        """Check if structural caching can be used for this generate_and_load call."""
+        if self.structural_kwargs_keys is None:
+            return False
+        if subgraphs is not None or workspace_arg is not None:
+            return False
+        if epilogue_fn is not identity:
+            return False
+        if isinstance(layout, ir.FlexibleLayout):
+            return False
+        for node in input_nodes:
+            if isinstance(node.get_layout(), ir.FlexibleLayout):
+                return False
+        return True
+
+    def _compute_structural_key(
+        self,
+        input_nodes: tuple[ir.IRNode, ...],
+        layout: ir.Layout,
+        kwargs: dict[str, Any],
+        call_sizes: Sequence[sympy.core.symbol.Symbol],
+        prefix_args: int,
+        suffix_args: int,
+        epilogue_fn_hash: str | None,
+        tma_store: bool,
+        transpose_discontiguous_tensor_descriptors_override: bool | None,
+        hint_override: int | None,
+        triton_meta: dict[str, Any] | None,
+        num_consumer_groups: int,
+        num_buffers_warp_spec: int,
+    ) -> str:
+        """Compute a cache key based only on structural kwargs and layout info."""
+        assert self.structural_kwargs_keys is not None
+
+        def layout_key(lay: ir.Layout) -> str:
+            return repr([lay.size, lay.stride, lay.dtype, lay.device, lay.offset])
+
+        structural_kwargs = {
+            k: kwargs[k] for k in self.structural_kwargs_keys if k in kwargs
+        }
+        # Include all non-structural aspects that affect code generation
+        non_config_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in (
+                "BLOCK_M",
+                "BLOCK_N",
+                "BLOCK_K",
+                "GROUP_M",
+                "num_stages",
+                "num_warps",
+            )
+            and k not in self.structural_kwargs_keys
+        }
+
+        return repr(
+            {
+                "input_nodes": [layout_key(node.get_layout()) for node in input_nodes],
+                "layout": layout_key(layout),
+                "structural_kwargs": structural_kwargs,
+                "non_config_kwargs": non_config_kwargs,
+                "kwargs_keys": tuple(sorted(kwargs.keys())),
+                "call_sizes": call_sizes,
+                "prefix_args": prefix_args,
+                "suffix_args": suffix_args,
+                "epilogue_fn_hash": epilogue_fn_hash,
+                "tma_store": tma_store,
+                "transpose_override": transpose_discontiguous_tensor_descriptors_override,
+                "hint_override": hint_override,
+                "triton_meta": triton_meta,
+                "num_consumer_groups": num_consumer_groups,
+                "num_buffers_warp_spec": num_buffers_warp_spec,
+            }
+        )
 
     @property
     def uid(self) -> str:
@@ -1941,28 +2115,42 @@ class TritonTemplate(KernelTemplate):
                 **kernel_options,
             )
 
-        def generate_code(kernel) -> tuple[str, str] | None:
-            def make_extra() -> str:
-                extra_parts = [
-                    f"{kwarg}={repr(kwargs[kwarg])}" for kwarg in sorted(kwargs.keys())
-                ]
+        def make_kernel_with_constexpr_params():
+            return self.kernel_type(
+                kernel_name=kernel_name,
+                output_node=fake_out,
+                workspace_arg=workspace_arg,
+                use_jit=False,
+                use_constexpr_params=True,
+                hint_override=hint_override,
+                tma_store=tma_store,
+                transpose_discontiguous_tensor_descriptors_override=transpose_discontiguous_tensor_descriptors_override,
+                triton_meta=triton_meta,
+                **kernel_options,
+            )
 
+        def make_extra() -> str:
+            extra_parts = [
+                f"{kwarg}={repr(kwargs[kwarg])}" for kwarg in sorted(kwargs.keys())
+            ]
+
+            extra_parts.extend(
+                [
+                    f"num_stages={num_stages}",
+                    f"num_warps={num_warps}",
+                ]
+            )
+            if HAS_WARP_SPEC:
                 extra_parts.extend(
                     [
-                        f"num_stages={num_stages}",
-                        f"num_warps={num_warps}",
+                        f"num_consumer_groups={num_consumer_groups}",
+                        f"num_buffers_warp_spec={num_buffers_warp_spec}",
                     ]
                 )
-                if HAS_WARP_SPEC:
-                    extra_parts.extend(
-                        [
-                            f"num_consumer_groups={num_consumer_groups}",
-                            f"num_buffers_warp_spec={num_buffers_warp_spec}",
-                        ]
-                    )
-                extra = "-".join(extra_parts) + "-"
-                return extra
+            extra = "-".join(extra_parts) + "-"
+            return extra
 
+        def generate_code(kernel) -> tuple[str, str] | None:
             try:
                 template = kernel.render(self.template, kwargs, caching_enabled)
                 code = template.finalize_all()
@@ -1994,13 +2182,88 @@ class TritonTemplate(KernelTemplate):
                         and kernel.args.sizevars == kernel_test.args.sizevars
                     ), "Generated code cache results in wrong output"
 
+        # Check structural cache before full render
+        use_structural_cache = self._can_use_structural_cache(
+            subgraphs,
+            workspace_arg,
+            epilogue_fn,
+            layout,
+            input_nodes,
+        )
+        structural_key: str | None = None
+        if use_structural_cache:
+            if epilogue_fn is identity:
+                epilogue_hash_for_key = "identity"
+            else:
+                epilogue_hash_for_key = epilogue_fn_hash
+            structural_key = self._compute_structural_key(
+                input_nodes,
+                layout,
+                kwargs,
+                call_sizes,
+                prefix_args,
+                suffix_args,
+                epilogue_hash_for_key,
+                tma_store,
+                transpose_discontiguous_tensor_descriptors_override,
+                hint_override,
+                triton_meta,
+                num_consumer_groups,
+                num_buffers_warp_spec,
+            )
+            cached_structural = self._structural_code_cache.get(structural_key)
+            if cached_structural is not None:
+                # STRUCTURAL CACHE HIT: skip render and module load
+                counters["inductor"]["structural_code_cache_hit"] += 1
+                with (
+                    patch.object(
+                        V.graph,
+                        "get_dtype",
+                        self._fake_get_dtype(fake_out),
+                    ),
+                    V.graph.set_current_device(layout.device),
+                    make_kernel() as kernel,
+                ):
+                    kernel.replay_cached_events(cached_structural.events)
+
+                    # Verify structural cache correctness in test mode
+                    if self.test_cache:
+                        with make_kernel() as kernel_verify:
+                            verify_result = generate_code(kernel_verify)
+                            assert verify_result is not None, (
+                                "Structural cache hit but full render failed"
+                            )
+                            assert (
+                                kernel.args.input_buffers
+                                == kernel_verify.args.input_buffers
+                                and kernel.prologue_supported_inputs
+                                == kernel_verify.prologue_supported_inputs
+                                and kernel.args.sizevars == kernel_verify.args.sizevars
+                            ), "Structural code cache produced wrong side effects"
+
+                return GenerateAndLoadResult(
+                    cached_structural.mod,
+                    make_extra(),
+                    cached_structural.input_call_args,
+                    cached_structural.prologue_supported_inputs,
+                    cached_structural.kernel_args_sizevars_keys,
+                    cached_structural.kernel_options,
+                    structural_cache_triton_meta=cached_structural.triton_meta,
+                    structural_cache_inductor_meta=cached_structural.inductor_meta,
+                    index_dtype=index_dtype,
+                )
+
         # Generate code, extra.
         code: str | None = None
         extra: str | None = None
         with (
             patch.object(V.graph, "get_dtype", self._fake_get_dtype(fake_out)),
             V.graph.set_current_device(layout.device),
-            make_kernel() as kernel,
+            (
+                make_kernel_with_constexpr_params()
+                if use_structural_cache
+                else make_kernel()
+            ) as kernel,
         ):
             cache_entry = self._generated_code_cache.get_entry(cache_key)
             cache_hit = False
@@ -2030,6 +2293,33 @@ class TritonTemplate(KernelTemplate):
         if cache_hit:
             maybe_test_cache(code, extra, kernel)
 
+        structural_triton_meta = None
+        structural_inductor_meta = None
+        if use_structural_cache and structural_key is not None:
+            counters["inductor"]["structural_code_cache_miss"] += 1
+            computed_triton_meta = (
+                kernel.triton_meta if kernel.triton_meta is not None else {}
+            )
+            computed_inductor_meta = getattr(
+                kernel,
+                "_computed_inductor_meta",
+                {},
+            )
+            self._structural_code_cache[structural_key] = _StructuralCacheEntry(
+                mod=mod,
+                jit_fn=getattr(mod, kernel_name),
+                triton_meta=computed_triton_meta,
+                inductor_meta=computed_inductor_meta,
+                events=kernel.cached_replay_events or [],
+                input_call_args=input_call_args,
+                prologue_supported_inputs=prologue_supported_inputs.copy(),
+                kernel_args_sizevars_keys=kernel_args_sizevars_keys,
+                kernel_options=kernel_options,
+                extra=extra,
+            )
+            structural_triton_meta = computed_triton_meta
+            structural_inductor_meta = computed_inductor_meta
+
         return GenerateAndLoadResult(
             mod,
             extra,
@@ -2037,6 +2327,9 @@ class TritonTemplate(KernelTemplate):
             prologue_supported_inputs,
             kernel_args_sizevars_keys,
             kernel_options,
+            structural_cache_triton_meta=structural_triton_meta,
+            structural_cache_inductor_meta=structural_inductor_meta,
+            index_dtype=index_dtype,
         )
 
     def generate(  # type: ignore[override]
@@ -2224,6 +2517,13 @@ class TritonTemplate(KernelTemplate):
             workspace_zero_fill=workspace_zero_fill,
             input_tensor_meta=TensorMeta.from_irnodes(kernel_input_nodes),  # type: ignore[arg-type]
             output_tensor_meta=TensorMeta.from_irnodes(layout),
+            config_kwargs=(
+                {**kwargs, "INDEX_DTYPE": result.index_dtype}
+                if result.structural_cache_triton_meta is not None
+                else None
+            ),
+            triton_meta_data=result.structural_cache_triton_meta,
+            inductor_meta_data=result.structural_cache_inductor_meta,
         )
 
         # Convolution-specific parameters to include in logging
@@ -2455,12 +2755,16 @@ class TritonTemplateCaller(ir.TritonTemplateCallerBase):
         return f"template_kernels.{self.name}"
 
     def hash_key(self):
-        return "-".join(
-            [
-                self.name.rsplit("_", 1)[0],
-                self.bmreq.module_cache_key,
-            ]
-        )
+        parts = [
+            self.name.rsplit("_", 1)[0],
+            self.bmreq.module_cache_key,
+        ]
+        # Structural cache choices share the same module but differ in
+        # constexpr config kwargs. Include the description (which encodes
+        # the tile config) so different configs aren't deduped.
+        if self.bmreq.config_kwargs is not None:
+            parts.append(self.description)
+        return "-".join(parts)
 
     def output_node(self):
         buffer = ir.TritonTemplateBuffer(
@@ -3714,6 +4018,8 @@ class AlgorithmSelectorCache(PersistentCache):
         # Some choices only differ in runtime arguments, so we
         # skip a choice if it has the same hash as a previously seen choice
         seen_choices: OrderedSet[str] = OrderedSet()
+        source_cache: dict[str, str] = {}
+        shared_structural_meta: dict[str, dict[str, Any]] = {}
         for c in choices:
             # Skip choices which we have already issued a precompile
             if c.kernel_hash_key() in seen_choices:
@@ -3727,10 +4033,35 @@ class AlgorithmSelectorCache(PersistentCache):
                     c.bmreq, TritonGPUBenchmarkRequest
                 )
                 if triton_cuda_choice and async_compile.use_process_pool():
-                    with open(c.bmreq.module_path) as file:
-                        source_code = file.read()
+                    module_path = c.bmreq.module_path
+                    if module_path not in source_cache:
+                        with open(module_path) as file:
+                            source_cache[module_path] = file.read()
+                    source_code = source_cache[module_path]
+                    # For structural cache modules, pass config data so the
+                    # worker can create a CachingAutotuner programmatically.
+                    structural_cache_data = None
+                    if (
+                        hasattr(c.bmreq, "config_kwargs")
+                        and c.bmreq.config_kwargs is not None
+                    ):
+                        if module_path not in shared_structural_meta:
+                            shared_structural_meta[module_path] = {
+                                "triton_meta_data": c.bmreq.triton_meta_data,
+                                "inductor_meta_data": c.bmreq.inductor_meta_data,
+                            }
+                        structural_cache_data = {
+                            "config_kwargs": c.bmreq.config_kwargs,
+                            "num_stages": c.bmreq.num_stages,
+                            "num_warps": c.bmreq.num_warps,
+                            "num_consumer_groups": c.bmreq.num_consumer_groups,
+                            "num_buffers_warp_spec": c.bmreq.num_buffers_warp_spec,
+                            **shared_structural_meta[module_path],
+                        }
                     future = async_compile.triton(
-                        kernel_name=c.bmreq.kernel_name, source_code=source_code
+                        kernel_name=c.bmreq.kernel_name,
+                        source_code=source_code,
+                        structural_cache_data=structural_cache_data,
                     ).future
                     log.debug("Submitted triton async compile for choice: %s", c)
                 else:

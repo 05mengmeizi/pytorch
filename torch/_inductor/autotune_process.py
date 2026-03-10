@@ -607,6 +607,69 @@ class CPUDeviceBenchmarkMixin:
         return benchmarker.benchmark_cpu(fn)
 
 
+def build_structural_cache_autotuner(
+    jit_fn: Any,
+    config_kwargs: dict[str, Any],
+    num_stages: int,
+    num_warps: int,
+    num_consumer_groups: int,
+    num_buffers_warp_spec: int,
+    triton_meta_data: dict[str, Any],
+    inductor_meta_data: dict[str, Any] | None,
+) -> Any:
+    """Build a CachingAutotuner for a structural cache kernel.
+
+    Shared between the in-process benchmarking path (TritonBenchmarkRequest)
+    and the subprocess/async-compile path (codecache._load_triton_kernel_from_source).
+    """
+    from torch._inductor.runtime.triton_compat import HAS_WARP_SPEC, triton
+    from torch._inductor.runtime.triton_heuristics import (
+        CachingAutotuner,
+        HeuristicType,
+    )
+
+    tl = triton.language  # pyrefly: ignore[missing-attribute]
+    resolved_kwargs: dict[str, Any] = {}
+    for key, val in config_kwargs.items():
+        if isinstance(val, str) and val.startswith("tl."):
+            resolved_kwargs[key] = getattr(tl, val[3:])
+        else:
+            resolved_kwargs[key] = val
+
+    config_args: dict[str, Any] = {
+        "num_stages": num_stages,
+        "num_warps": num_warps,
+    }
+    if HAS_WARP_SPEC:
+        config_args["num_consumer_groups"] = num_consumer_groups
+        config_args["num_buffers_warp_spec"] = num_buffers_warp_spec
+    triton_config = triton.Config(  # pyrefly: ignore[missing-attribute]
+        resolved_kwargs, **config_args
+    )
+
+    inductor_meta = dict(inductor_meta_data or {})
+    mutated_arg_names = inductor_meta.pop("mutated_arg_names", ())
+    optimize_mem = inductor_meta.pop("optimize_mem", True)
+
+    return CachingAutotuner(
+        jit_fn,
+        triton_meta=dict(triton_meta_data),
+        configs=[triton_config],
+        save_cache_hook=None,
+        mutated_arg_names=list(mutated_arg_names),
+        optimize_mem=optimize_mem,
+        heuristic_type=HeuristicType.TEMPLATE,
+        inductor_meta=inductor_meta,
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _run_method_has_warmup(run_method: Any) -> bool:
+    import inspect
+
+    return "warmup" in inspect.signature(run_method).parameters
+
+
 class TritonBenchmarkRequest(BenchmarkRequest):
     """
     Represents a standalone benchmark request for a Triton Template.
@@ -632,6 +695,12 @@ class TritonBenchmarkRequest(BenchmarkRequest):
         kpack: int = 0,  # ROCm specific gemm parameter
         workspace_size: int | None = None,  # size of workspace buffer in bytes
         workspace_zero_fill: bool = False,  # whether to zero-fill workspace
+        # Structural cache fields: when config_kwargs is set, the module contains
+        # a bare @triton.jit function and the CachingAutotuner must be created
+        # programmatically with these parameters.
+        config_kwargs: dict[str, Any] | None = None,
+        triton_meta_data: dict[str, Any] | None = None,
+        inductor_meta_data: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(kernel_name, input_tensor_meta, output_tensor_meta, extra_args)
         self.module_path = module_path
@@ -645,18 +714,49 @@ class TritonBenchmarkRequest(BenchmarkRequest):
         self.kpack = kpack
         self.workspace_size = workspace_size
         self.workspace_zero_fill = workspace_zero_fill
+        self.config_kwargs = config_kwargs
+        self.triton_meta_data = triton_meta_data
+        self.inductor_meta_data = inductor_meta_data
+        self._cached_autotuner: Any = None
+
+    def _get_autotuner(self, mod: Any) -> Any:
+        """Get or create the autotuner for the kernel.
+
+        For shared modules (structural cache), creates a CachingAutotuner
+        programmatically. For legacy modules, returns the module attribute
+        which is already a CachingAutotuner (via @template() decorator).
+        """
+        if self.config_kwargs is not None:
+            assert self.triton_meta_data is not None
+            return build_structural_cache_autotuner(
+                jit_fn=getattr(mod, self.kernel_name),
+                config_kwargs=self.config_kwargs,
+                num_stages=self.num_stages,
+                num_warps=self.num_warps,
+                num_consumer_groups=self.num_consumer_groups,
+                num_buffers_warp_spec=self.num_buffers_warp_spec,
+                triton_meta_data=self.triton_meta_data,
+                inductor_meta_data=self.inductor_meta_data,
+            )
+        return getattr(mod, self.kernel_name)
 
     def make_run_fn(
         self, *input_tensors: torch.Tensor, out: torch.Tensor
     ) -> Callable[[], None]:
-        mod = PyCodeCache.load_by_key_path(self.module_cache_key, self.module_path)
+        if self._cached_autotuner is not None:
+            autotuner = self._cached_autotuner
+        else:
+            mod = PyCodeCache.load_by_key_path(
+                self.module_cache_key, self.module_path
+            )
+            autotuner = self._get_autotuner(mod)
         autotuning_log.debug(
             "benchmark module key: %s, path: %s",
             self.module_cache_key,
             self.module_path,
         )
 
-        run_method = getattr(mod, self.kernel_name).run
+        run_method = autotuner.run
         extra_args = list(self.extra_args)
 
         # Recreate workspace tensor if needed (for TMA templates)
@@ -675,14 +775,12 @@ class TritonBenchmarkRequest(BenchmarkRequest):
             workspace_index = extra_args.index(WORKSPACE_ARG_PLACEHOLDER)
             extra_args[workspace_index] = workspace_tensor
 
-        run_method.__self__.with_bandwidth_info = False
+        autotuner.with_bandwidth_info = False
 
         # Newer version of triton add warmup argument to JITFunction.run.
         # This code handles backward-compatibility.
         warmup_arg = {}
-        import inspect
-
-        if "warmup" in inspect.signature(run_method).parameters:
+        if _run_method_has_warmup(run_method):
             warmup_arg["warmup"] = False
 
         if out.device.type == "cpu":
@@ -695,7 +793,7 @@ class TritonBenchmarkRequest(BenchmarkRequest):
             )
 
         if isinstance(
-            getattr(mod, self.kernel_name),
+            autotuner,
             torch._inductor.runtime.triton_heuristics.DebugAutotuner,
         ):
             return functools.partial(
@@ -719,10 +817,11 @@ class TritonBenchmarkRequest(BenchmarkRequest):
 
     def precompile(self):
         mod = PyCodeCache.load_by_key_path(self.module_cache_key, self.module_path)
-        kernel = getattr(mod, self.kernel_name)
-        kernel.precompile()
+        autotuner = self._get_autotuner(mod)
+        autotuner.precompile()
 
-        self.n_regs = kernel.launchers[0].n_regs
+        self.n_regs = autotuner.launchers[0].n_regs
+        self._cached_autotuner = autotuner
 
     def __str__(self) -> str:
         return f"{self.kernel_name=}, {self.module_path=}, {self.module_cache_key=}"

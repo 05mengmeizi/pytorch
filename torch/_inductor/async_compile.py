@@ -341,7 +341,13 @@ class AsyncCompile:
         if isinstance(pool, SubprocPool):
             pool.wakeup()
 
-    def triton(self, kernel_name: str, source_code: str, device_str: str = "cuda"):
+    def triton(
+        self,
+        kernel_name: str,
+        source_code: str,
+        device_str: str = "cuda",
+        structural_cache_data: dict[str, Any] | None = None,
+    ):
         """
         Async_compile.triton is more complicated than the other backends because
         we're trying to optimize compile time as much as possible for this hot callsite.
@@ -364,7 +370,10 @@ class AsyncCompile:
           and pickled by to us via `CachingAutotuner.save_cache_hook`.
         """
         load_kernel = functools.partial(
-            _load_triton_kernel_from_source, kernel_name, source_code
+            _load_triton_kernel_from_source,
+            kernel_name,
+            source_code,
+            structural_cache_data,
         )
 
         def reload_kernel_in_parent():
@@ -378,8 +387,8 @@ class AsyncCompile:
         _compile_start()
 
         if os.environ.get("TRITON_INTERPRET", "0") == "1":
-            return getattr(
-                torch._inductor.codecache.PyCodeCache.load(source_code), kernel_name
+            return _load_triton_kernel_from_source(
+                kernel_name, source_code, structural_cache_data
             )
 
         is_parallel = self.use_process_pool()
@@ -388,7 +397,12 @@ class AsyncCompile:
         compile_id = torch._guards.CompileContext.current_compile_id()
         is_backward = getattr(V.graph, "is_backward", False)
 
-        if (future := CompiledTritonKernels.get(source_code)) is not None:
+        # Skip CompiledTritonKernels dedup for structural cache choices:
+        # they share the same source code but have different configs.
+        # The caller already deduplicates via hash_key().
+        if structural_cache_data is None and (
+            (future := CompiledTritonKernels.get(source_code)) is not None
+        ):
             counters["inductor"]["async_compile_cache_hit"] += 1
             # Set reload_kernel_from_src properly based on source_code
             if isinstance(future, StaticAutotunerFuture):
@@ -471,7 +485,11 @@ class AsyncCompile:
                 return kernel
 
             future = LambdaFuture(get_result, future=task)
-            CompiledTritonKernels.save(source_code, future)
+            # Don't cache structural cache configs — they share the same
+            # source code but have different constexpr configs. Caching would
+            # cause all configs to resolve to the same CachingAutotuner.
+            if structural_cache_data is None:
+                CompiledTritonKernels.save(source_code, future)
             return future
         else:
             with dynamo_timed(

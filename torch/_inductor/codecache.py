@@ -3837,9 +3837,35 @@ class PyCodeCache:
 
 
 def _load_triton_kernel_from_source(
-    kernel_name: str, source_code: str
+    kernel_name: str,
+    source_code: str,
+    structural_cache_data: dict[str, Any] | None = None,
 ) -> CachingAutotuner:
-    return getattr(PyCodeCache.load(source_code), kernel_name)
+    mod = PyCodeCache.load(source_code)
+    kernel = getattr(mod, kernel_name)
+    # For structural cache modules, the module has @triton.jit (not @template),
+    # so the attribute is a JITFunction, not a CachingAutotuner. Create one
+    # programmatically using the provided config data.
+    if structural_cache_data is not None and not hasattr(kernel, "precompile"):
+        from torch._inductor.autotune_process import (
+            build_structural_cache_autotuner,
+        )
+
+        kernel = build_structural_cache_autotuner(
+            jit_fn=kernel,
+            config_kwargs=structural_cache_data["config_kwargs"],
+            num_stages=structural_cache_data["num_stages"],
+            num_warps=structural_cache_data["num_warps"],
+            num_consumer_groups=structural_cache_data.get(
+                "num_consumer_groups", 0
+            ),
+            num_buffers_warp_spec=structural_cache_data.get(
+                "num_buffers_warp_spec", 0
+            ),
+            triton_meta_data=structural_cache_data["triton_meta_data"],
+            inductor_meta_data=structural_cache_data.get("inductor_meta_data"),
+        )
+    return kernel
 
 
 @torch_key_cache

@@ -92,6 +92,7 @@ mm_template = TritonTemplate(
     else load_kernel_template("triton_mm_rocm"),
     cache_codegen_enabled_for_template=True,
     prologue_loads_all_inputs=True,
+    structural_kwargs_keys=("EVEN_K", "USE_FAST_ACCUM"),
 )
 
 persistent_tma_mm_template = TritonTemplate(
