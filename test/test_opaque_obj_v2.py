@@ -364,17 +364,6 @@ register_opaque_type(
     guard_fn=lambda obj: [obj.scale] if not isinstance(obj.scale, torch.Tensor) else [],
 )
 
-@torch.library.custom_op(
-    "_TestOpaqueObject::scale_with_weight", mutates_args=[]
-)
-def scale_with_weight(x: torch.Tensor, state: StatefulObject) -> torch.Tensor:
-    return x * state.scale
-
-
-@scale_with_weight.register_fake
-def scale_with_weight(x, state):
-    return torch.empty_like(x)
-
 
 # A tensor subclass (similar to TwoTensor) that also holds an opaque Counter
 # object
@@ -883,6 +872,16 @@ class TestOpaqueObject(TestCase):
         @torch.library.register_fake("_TestOpaqueObject::counter_start", lib=self.lib)
         def counter_start_fake(a: Counter) -> torch.Tensor:
             return torch.scalar_tensor(0, dtype=torch.int64)
+
+        @torch.library.custom_op(
+            "_TestOpaqueObject::scale_with_stateful_object", mutates_args=[]
+        )
+        def scale_with_stateful_object(x: torch.Tensor, state: StatefulObject) -> torch.Tensor:
+            return x * state.scale
+
+        @scale_with_stateful_object.register_fake
+        def _(x, state):
+            return torch.empty_like(x)
 
         super().setUp()
 
@@ -3061,7 +3060,7 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
         """Reference-type opaque object + custom_op works with CUDA graphs."""
 
         def fn(x, state):
-            return torch.ops._TestOpaqueObject.scale_with_weight(x, state)
+            return torch.ops._TestOpaqueObject.scale_with_stateful_object(x, state)
 
         x = torch.ones(8, device="cuda")
         state = StatefulObject(scale=0.5)
@@ -3088,7 +3087,7 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
         """Opaque object with CUDA tensor member works across cudagraph replays."""
 
         def fn(x, state):
-            return torch.ops._TestOpaqueObject.scale_with_weight(x, state)
+            return torch.ops._TestOpaqueObject.scale_with_stateful_object(x, state)
 
         weight = torch.tensor([2.0], device="cuda")
         x = torch.randn(1, device="cuda")
