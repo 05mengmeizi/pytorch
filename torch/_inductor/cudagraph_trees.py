@@ -1772,7 +1772,7 @@ class CUDAGraphNode:
                 continue
 
             tensor_members = OrderedSet()
-            for attr_name in opaque_info.members.keys():
+            for attr_name in opaque_info.members:
                 val = getattr(inp, attr_name)
                 if isinstance(val, torch.Tensor) and val.is_cuda:
                     tensor_members.add(attr_name)
@@ -1783,14 +1783,14 @@ class CUDAGraphNode:
                     setattr(inp, attr_name, static_buf)
                     self._opaque_tensor_members.append((i, attr_name, static_buf))
 
-            # Sanity check there are no unregistered CUDA tensor members
+            # Sanity check that there are no unregistered CUDA tensor members
             for k, v in vars(inp).items():
                 if (
                     k not in tensor_members
                     and isinstance(v, torch.Tensor)
                     and v.is_cuda
                 ):
-                    assert False, (
+                    raise AssertionError(
                         f"attribute {k} of {type(inp)} is a CUDA tensor but not a registered member"
                     )
 

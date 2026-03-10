@@ -3136,8 +3136,6 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
 
     @unittest.skipIf(not TEST_CUDA, "requires CUDA")
     def test_cudagraph_opaque_unregistered_tensor_member_errors(self):
-        opaque_type_name = get_opaque_type_name(StatefulObjectWithHiddenTensor)
-
         @torch.library.custom_op(
             "_TestOpaqueObject::use_hidden_tensor", mutates_args=[]
         )
