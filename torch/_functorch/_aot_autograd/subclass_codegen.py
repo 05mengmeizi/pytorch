@@ -7,6 +7,7 @@ a straight-line function where all metadata (indices, attr names,
 subclass types, symint positions) is baked in at compile time.
 """
 
+import functools
 import keyword
 import logging
 from collections.abc import Callable, Iterable
@@ -276,4 +277,9 @@ def codegen_subclass_wrapper(
     code = compile(source, "<subclass_wrapper>", "exec")
     local_dict: dict[str, object] = {}
     exec(code, globals_dict, local_dict)  # noqa: S102
-    return local_dict["inner_fn"]  # type: ignore[return-value]
+    inner_fn = local_dict["inner_fn"]
+    # Replicate @wraps(compiled_fn): sets __wrapped__ (so autograd_cache can
+    # unwrap to the underlying OutputCode) and copies __dict__ (so attributes
+    # like _fx_graph_cache_key are visible on the wrapper).
+    functools.update_wrapper(inner_fn, compiled_fn)  # type: ignore[arg-type]
+    return inner_fn  # type: ignore[return-value]
