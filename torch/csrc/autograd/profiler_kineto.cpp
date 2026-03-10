@@ -647,16 +647,6 @@ void prepareProfiler(
       config.state == ProfilerState::ITT) {
     return;
   }
-  TORCH_CHECK(
-      isKinetoCompatibleState(config.state),
-      "Supported only in Kineto profiler");
-  torch::profiler::impl::kineto::prepareTrace(
-      /*cpuOnly=*/!(
-          at::hasCUDA() || at::hasXPU() || at::hasMTIA() ||
-          c10::get_privateuse1_backend() != "privateuseone"),
-      activities,
-      config.experimental_config,
-      config.trace_id);
 
   // Forward registered PrivateUse1 profiler factory to Kineto.
   // Only for KINETO_PRIVATEUSE1 state where backend provides its own
@@ -667,6 +657,17 @@ void prepareProfiler(
         .onKinetoInit();
   }
 #endif // USE_KINETO
+
+  TORCH_CHECK(
+      isKinetoCompatibleState(config.state),
+      "Supported only in Kineto profiler");
+  torch::profiler::impl::kineto::prepareTrace(
+      /*cpuOnly=*/!(
+          at::hasCUDA() || at::hasXPU() || at::hasMTIA() ||
+          c10::get_privateuse1_backend() != "privateuseone"),
+      activities,
+      config.experimental_config,
+      config.trace_id);
 
   if (!config.experimental_config.performance_events.empty()) {
     /* For now only CPU activity is supported */
