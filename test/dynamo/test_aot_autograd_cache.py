@@ -25,6 +25,7 @@ from torch._functorch._aot_autograd.autograd_cache import (
 from torch._functorch._aot_autograd.schemas import AOTConfig
 from torch._guards import TracingContext
 from torch._inductor import config as inductor_config
+from torch._inductor.compile_fx import compile_fx
 from torch._inductor.custom_graph_pass import CustomRuntimeEstimator
 from torch._inductor.runtime.runtime_utils import cache_dir
 from torch._inductor.runtime.triton_compat import tl, triton
@@ -2537,6 +2538,138 @@ class AOTAutogradCacheTests(InductorTestCase):
         self.assertEqual(
             x_view2.untyped_storage().data_ptr(), x2.untyped_storage().data_ptr()
         )
+
+    @inductor_config.patch("fx_graph_remote_cache", False)
+    @inductor_config.patch("fx_graph_cache", True)
+    @functorch_config.patch({"enable_autograd_cache": True})
+    def test_custom_autograd_cache_key_fn(self):
+        """
+        Verify that a custom_autograd_cache_key_fn overrides the default
+        cache key generation. Uses a constant key to prove the custom
+        function's return value is what controls cache identity.
+        """
+
+        def constant_key_fn(gm, example_inputs, config, fx_config):
+            return "constant_key", []
+
+        def fn(x, y):
+            return (x * 2, y @ y)
+
+        a = torch.rand(25)
+        b = torch.rand(5, 5)
+
+        compiled_fn = torch.compile(
+            fn,
+            backend=functools.partial(
+                compile_fx, custom_autograd_cache_key_fn=constant_key_fn
+            ),
+        )
+
+        # First call: cache miss
+        self.assertEqual(fn(a, b), compiled_fn(a, b))
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 1)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 0)
+
+        self._clear_dynamo_and_codecache()
+
+        # Second call with a DIFFERENT graph but the same constant key:
+        # this must hit because our custom key fn returns the same key.
+        def fn2(x, y):
+            return (x * 3, y + y)
+
+        compiled_fn2 = torch.compile(
+            fn2,
+            backend=functools.partial(
+                compile_fx, custom_autograd_cache_key_fn=constant_key_fn
+            ),
+        )
+
+        compiled_fn2(a, b)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 1)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 1)
+
+    @inductor_config.patch("fx_graph_remote_cache", False)
+    @inductor_config.patch("fx_graph_cache", True)
+    @functorch_config.patch({"enable_autograd_cache": True})
+    def test_custom_autograd_cache_key_fn_is_called(self):
+        """
+        Verify that the custom_autograd_cache_key_fn is actually invoked
+        and that stable keys produce cache hits on recompilation.
+        """
+        call_count = 0
+
+        def custom_key_fn(gm, example_inputs, config, fx_config):
+            nonlocal call_count
+            call_count += 1
+            return autograd_cache_key(gm, example_inputs, config, fx_config)
+
+        def fn(x, y):
+            return (x * 2, y @ y)
+
+        a = torch.rand(25)
+        b = torch.rand(5, 5)
+
+        compiled_fn = torch.compile(
+            fn,
+            backend=functools.partial(
+                compile_fx, custom_autograd_cache_key_fn=custom_key_fn
+            ),
+        )
+
+        # First call: cache miss, custom key fn is called
+        self.assertEqual(fn(a, b), compiled_fn(a, b))
+        self.assertGreater(call_count, 0)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 1)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 0)
+
+        self._clear_dynamo_and_codecache()
+        prev_count = call_count
+
+        # Second call: cache hit, custom key fn is called again
+        self.assertEqual(fn(a, b), compiled_fn(a, b))
+        self.assertGreater(call_count, prev_count)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 1)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 1)
+
+    @inductor_config.patch("fx_graph_remote_cache", False)
+    @inductor_config.patch("fx_graph_cache", True)
+    @functorch_config.patch({"enable_autograd_cache": True})
+    def test_custom_autograd_cache_key_fn_unique_disables_caching(self):
+        """
+        Verify that a custom key fn returning a unique key each time
+        effectively disables caching: every compilation is a miss.
+        """
+        counter = 0
+
+        def unique_key_fn(gm, example_inputs, config, fx_config):
+            nonlocal counter
+            counter += 1
+            return f"unique_{counter}", []
+
+        def fn(x, y):
+            return (x * 2, y @ y)
+
+        a = torch.rand(25)
+        b = torch.rand(5, 5)
+
+        compiled_fn = torch.compile(
+            fn,
+            backend=functools.partial(
+                compile_fx, custom_autograd_cache_key_fn=unique_key_fn
+            ),
+        )
+
+        # First call: miss
+        self.assertEqual(fn(a, b), compiled_fn(a, b))
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 1)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 0)
+
+        self._clear_dynamo_and_codecache()
+
+        # Second call with same graph: still a miss because the key changed
+        self.assertEqual(fn(a, b), compiled_fn(a, b))
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_miss"], 2)
+        self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 0)
 
 
 @functorch_config.patch({"bundled_autograd_cache": True})

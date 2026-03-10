@@ -750,6 +750,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
         boxed_forward_device_index: BoxedDeviceIndex | None,
         local: bool,
         remote: bool,
+        custom_autograd_cache_key_fn: Callable[..., Any] | None = None,
     ) -> Callable[..., Any] | None:
         """
         Load a result from the cache, and reconstruct a runtime wrapper around the object
@@ -767,7 +768,10 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
                 "boxed_forward_device_index": boxed_forward_device_index,
             }
             try:
-                cache_key, debug_lines = autograd_cache_key(
+                autograd_cache_key_fn = (
+                    custom_autograd_cache_key_fn or autograd_cache_key
+                )
+                cache_key, debug_lines = autograd_cache_key_fn(
                     gm, args, aot_config, fx_config
                 )
                 result: tuple[GenericAOTAutogradResult[Any, Any], bytes] | None = (
