@@ -100,7 +100,7 @@ def make_pallas(cls):
     return test_class
 
 
-def _skip_if(condition_fn, *, reason):
+def _skip_if(condition_fn, reason):
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(self, *args, **kwargs):
@@ -113,9 +113,9 @@ def _skip_if(condition_fn, *, reason):
     return decorator
 
 
-skip_if_tpu = functools.partial(_skip_if, lambda self: self.DEVICE == "tpu", reason="Not yet working on TPU")
-skip_if_cpu = functools.partial(_skip_if, lambda self: self.DEVICE == "cpu", reason="Not yet working on CPU")
-skip_if_cuda = functools.partial(_skip_if, lambda self: self.DEVICE == "cuda", reason="Not yet working on GPU")
+skip_if_tpu = _skip_if(lambda self: self.DEVICE == "tpu", "Not yet working on TPU")
+skip_if_cpu = _skip_if(lambda self: self.DEVICE == "cpu", "Not yet working on CPU")
+skip_if_cuda = _skip_if(lambda self: self.DEVICE == "cuda", "Not yet working on GPU")
 
 
 class PallasTestsMixin:
