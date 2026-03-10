@@ -737,9 +737,7 @@ inline torch::stable::Tensor from_blob(
 /// @param storage_offset The offset into the data buffer. Defaults to 0.
 /// @param layout The memory layout. Defaults to Strided.
 /// @return A tensor backed by the provided data.
-template <
-    class F,
-    std::enable_if_t<std::is_invocable_v<F, void*>, int> = 0>
+template <class F, std::enable_if_t<std::is_invocable_v<F, void*>, int> = 0>
 inline torch::stable::Tensor from_blob(
     void* data,
     torch::headeronly::IntHeaderOnlyArrayRef sizes,
@@ -777,8 +775,7 @@ inline torch::stable::Tensor from_blob(
         nullptr,
         0,
         deleter_callback,
-        reinterpret_cast<void*>(
-            static_cast<DeleterFnPtr>(deleter))));
+        reinterpret_cast<void*>(static_cast<DeleterFnPtr>(deleter))));
   } else {
     // Capturing lambda: heap-allocate and type-erase.
     F* heap_allocated_deleter = new F(std::move(deleter));
