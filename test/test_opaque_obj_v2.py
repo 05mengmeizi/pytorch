@@ -3077,7 +3077,9 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
             compiled_out = compiled_fn(x, state)
 
         self.assertEqual(compiled_out, eager_out)
-        self.assertEqual(counters["inductor"]["cudagraph_skips"], 0)
+        self.assertGreater(
+            counters["inductor"]["cudagraph_recorded_non_static_inputs"], 0
+        )
 
         # Update the state and verify correctness on replay
         state.scale = 1.0
@@ -3104,7 +3106,9 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
             compiled_out = compiled_fn(x, state)
 
         self.assertEqual(compiled_out, eager_out)
-        self.assertEqual(counters["inductor"]["cudagraph_skips"], 0)
+        self.assertGreater(
+            counters["inductor"]["cudagraph_recorded_non_static_inputs"], 0
+        )
 
         # Update the tensor member and verify correctness on replay
         state.scale = torch.tensor([3.0], device="cuda")
