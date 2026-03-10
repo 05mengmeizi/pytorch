@@ -775,16 +775,21 @@ def linalg_replicate_strategy(op_schema: OpSchema) -> OpStrategy:
     return OpStrategy(output_strategies)
 
 
+AVG_POOL_OPS = [
+    aten.avg_pool2d.default,
+    aten.avg_pool3d.default,
+    aten._adaptive_avg_pool3d.default,
+]
+
+# S(1) is safe for non-adaptive avg_pool (pooling never touches the channel
+# dim).  Adaptive variants are excluded because some OpInfo samples use
+# unbatched inputs where dim 1 is spatial, not channel.
 CHANNEL_SHARDABLE_POOL_OPS = [
     aten.avg_pool2d.default,
     aten.avg_pool3d.default,
 ]
 
-OTHER_SINGLE_OUTPUT_POOL_OPS = [
-    aten._adaptive_avg_pool3d.default,
-]
-
-DUAL_OUTPUT_POOL_OPS = [
+MAX_POOL_OPS = [
     aten.adaptive_max_pool2d.default,
     aten.adaptive_max_pool3d.default,
     aten.fractional_max_pool2d.default,
@@ -793,9 +798,11 @@ DUAL_OUTPUT_POOL_OPS = [
     aten.max_pool3d_with_indices.default,
 ]
 
+DUAL_OUTPUT_POOL_OPS = MAX_POOL_OPS
+
 
 @register_op_strategy(
-    CHANNEL_SHARDABLE_POOL_OPS + OTHER_SINGLE_OUTPUT_POOL_OPS + DUAL_OUTPUT_POOL_OPS,
+    AVG_POOL_OPS + MAX_POOL_OPS,
     schema_info=RuntimeSchemaInfo(1),
 )
 def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
@@ -808,6 +815,10 @@ def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
         [Replicate()] * n,
         [Shard(0)] * n,
     ]
+    # avg_pool is linear: Partial(sum) and Partial(avg) pass through unchanged.
+    if op_schema.op in AVG_POOL_OPS:
+        single_mesh_dim_strategies.append([Partial("sum")] * n)
+        single_mesh_dim_strategies.append([Partial("avg")] * n)
     if op_schema.op in CHANNEL_SHARDABLE_POOL_OPS:
         single_mesh_dim_strategies.append([Shard(1)] * n)
     return expand_to_full_mesh_op_strategy(
