@@ -440,23 +440,8 @@ def argmax_argmin_strategy(op_schema: OpSchema) -> OpStrategy:
     )
 
 
-@register_op_strategy(aten.cumsum.default, schema_info=RuntimeSchemaInfo(1))
-def cumsum_strategy(op_schema: OpSchema) -> OpStrategy:
-    args_schema = op_schema.args_schema
-    input_strategy = args_schema[0]
-    if not isinstance(input_strategy, OpStrategy):
-        raise AssertionError(f"Expected OpStrategy, got {type(input_strategy)}")
-    dim = args_schema[1]
-    if not isinstance(dim, int):
-        raise AssertionError(f"Expected int, got {type(dim)}")
-
-    return common_reduction_strategy(
-        input_strategy, [dim], keep_dim=True, reduction_linear=False
-    )
-
-
 @register_op_strategy(
-    [aten.cumprod.default, aten.logcumsumexp.default],
+    [aten.cumsum.default, aten.cumprod.default, aten.logcumsumexp.default],
     schema_info=RuntimeSchemaInfo(1),
 )
 def scan_strategy(op_schema: OpSchema) -> OpStrategy:
@@ -790,10 +775,13 @@ def linalg_replicate_strategy(op_schema: OpSchema) -> OpStrategy:
     return OpStrategy(output_strategies)
 
 
-SINGLE_OUTPUT_POOL_OPS = [
-    aten._adaptive_avg_pool3d.default,
+CHANNEL_SHARDABLE_POOL_OPS = [
     aten.avg_pool2d.default,
     aten.avg_pool3d.default,
+]
+
+OTHER_SINGLE_OUTPUT_POOL_OPS = [
+    aten._adaptive_avg_pool3d.default,
 ]
 
 DUAL_OUTPUT_POOL_OPS = [
@@ -807,7 +795,7 @@ DUAL_OUTPUT_POOL_OPS = [
 
 
 @register_op_strategy(
-    SINGLE_OUTPUT_POOL_OPS + DUAL_OUTPUT_POOL_OPS,
+    CHANNEL_SHARDABLE_POOL_OPS + OTHER_SINGLE_OUTPUT_POOL_OPS + DUAL_OUTPUT_POOL_OPS,
     schema_info=RuntimeSchemaInfo(1),
 )
 def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
@@ -820,6 +808,8 @@ def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
         [Replicate()] * n,
         [Shard(0)] * n,
     ]
+    if op_schema.op in CHANNEL_SHARDABLE_POOL_OPS:
+        single_mesh_dim_strategies.append([Shard(1)] * n)
     return expand_to_full_mesh_op_strategy(
         mesh, op_schema, single_mesh_dim_strategies, input_index=num_outputs
     )
