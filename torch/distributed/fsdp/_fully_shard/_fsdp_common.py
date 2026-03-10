@@ -48,6 +48,11 @@ class FSDPMeshInfo(DataParallelMeshInfo):
         self.shard_mesh_size: int = self.mesh.size(self.shard_mesh_dim)
         self.shard_process_group = self.mesh.get_group(self.shard_mesh_dim)
         self.shard_mesh_rank: int = self.shard_process_group.rank()
+        # Use a separate PG for reduce-scatter so that AG and RS go
+        # through different NCCL communicators and can overlap.
+        self.reduce_scatter_process_group = dist.new_group(
+            dist.get_process_group_ranks(self.shard_process_group)
+        )
 
 
 @dataclass

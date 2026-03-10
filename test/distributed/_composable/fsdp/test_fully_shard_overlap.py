@@ -167,6 +167,78 @@ class TestFullyShardOverlap(FSDPTest):
         # )
         self.assertLessEqual(fwd_bwd_time, ref_fwd_bwd_time)
 
+    @skip_if_rocm_arch_multiprocess(MI200_ARCH)
+    @skip_if_lt_x_gpu(2)
+    def test_fully_shard_backward_comm_overlap(self):
+        """Verify that backward all-gather and reduce-scatter overlap.
+
+        Uses real compute (large matmuls) and real collectives (large
+        parameter tensors) instead of CUDA sleeps.
+
+        ref_bwd: AG and RS use the same ProcessGroup (single NCCL
+        communicator), forcing serialization.
+
+        fsdp_bwd: real fully_shard code path with separate ProcessGroups
+        for AG and RS (FSDPMeshInfo.reduce_scatter_process_group),
+        enabling true overlap.
+        """
+        torch.manual_seed(42)
+
+        # Large dim for non-trivial collective time, small batch so
+        # comm dominates compute; AG becomes back-to-back on its stream
+        dim, num_linears, batch = 16384, 3, 4
+        model = nn.Sequential(
+            *[nn.Linear(dim, dim, bias=False) for _ in range(num_linears)]
+        )
+        for lin in model:
+            fully_shard(lin, reshard_after_forward=True)
+        fully_shard(model, reshard_after_forward=True)
+
+        optim = torch.optim.SGD(model.parameters(), lr=1e-2)
+        inp = torch.randn((batch, dim), device=device_type.type)
+        loss = model(inp).sum()
+        loss.backward()
+        with implicit_replication():
+            optim.step()
+        optim.zero_grad()  # warmup
+
+        # Collect FSDP param groups to toggle PG config
+        fsdp_param_groups = []
+        for module in model.modules():
+            state = fully_shard.state(module)
+            if state is not None:
+                fsdp_param_groups.extend(state._fsdp_param_groups)
+
+        # ref_bwd: force RS to use the same PG as AG (serialized)
+        saved_rs_pgs = []
+        for pg in fsdp_param_groups:
+            saved_rs_pgs.append(pg.mesh_info.reduce_scatter_process_group)
+            pg.mesh_info.reduce_scatter_process_group = pg.mesh_info.shard_process_group
+
+        def ref_bwd():
+            loss = model(inp).sum()
+            loss.backward()
+            with implicit_replication():
+                optim.step()
+            optim.zero_grad()
+
+        ref_time = self._time_fn(ref_bwd)
+
+        # Restore separate PGs for fsdp_bwd
+        for pg, saved_pg in zip(fsdp_param_groups, saved_rs_pgs):
+            pg.mesh_info.reduce_scatter_process_group = saved_pg
+
+        def fsdp_bwd():
+            loss = model(inp).sum()
+            loss.backward()
+            with implicit_replication():
+                optim.step()
+            optim.zero_grad()
+
+        fsdp_time = self._time_fn(fsdp_bwd)
+        # FSDP with separate PGs should be faster than serialized ref
+        self.assertLessEqual(fsdp_time, ref_time)
+
     @skip_if_lt_x_gpu(2)
     @unittest.skipIf(TEST_HPU, "Sleep is not supported on HPU")
     def test_fully_shard_post_optim_event_overlap(self):

@@ -776,7 +776,7 @@ class FSDPParamGroup:
             raise AssertionError(
                 f"Expected mesh_info to be FSDPMeshInfo, got {type(self.mesh_info)}"
             )
-        return self.mesh_info.shard_process_group
+        return self.mesh_info.reduce_scatter_process_group
 
     @property
     def _all_reduce_process_group(self) -> dist.ProcessGroup:
