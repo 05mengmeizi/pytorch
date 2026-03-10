@@ -369,15 +369,13 @@ class Vectorized<float> {
     const float32x4_t inv_ln2 = vdupq_n_f32(0x1.715476p+0f);
     constexpr float ln2 = 0x1.62e43p-1f;
     constexpr float c2 = 0x1.5592ecp-3f;
-
+    const float32x4_t c3 = vdupq_n_f32(0x1.017d34p-1f);
     const uint32x4_t lt_lower = vcltq_f32(values, lower_bound);
     const uint32x4_t gt_upper = vcgtq_f32(values, upper_bound);
 
     // exp(x) = 2^n (1 + exp(r))
     // r = x - n*ln2, with n = round(x/ln2)
     // exp(r) ~ poly(r) = r + r^2 * (c3 + c2 * r)
-    const uint32x4_t exponent_bias = vdupq_n_u32(0x3f800000);
-    const float32x4_t c3 = vdupq_n_f32(0x1.017d34p-1f);
 
     // n = round(x / ln2), r = x - n*ln2
     float32x4_t n = vrndaq_f32(vmulq_f32(values, inv_ln2));
@@ -391,7 +389,6 @@ class Vectorized<float> {
     float32x4_t p = vfmaq_f32(s, q, r2);
 
     // 2^n * p
-    // bump p's exponent by n
     float32x4_t y =
         vreinterpretq_f32_u32(vaddq_u32(vreinterpretq_u32_f32(p), e));
 
