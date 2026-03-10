@@ -6,6 +6,9 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed._composable import replicate
+from torch.distributed._composable.replicate_with_fsdp import (
+    replicate as replicate_with_fsdp,
+)
 from torch.distributed.fsdp import DataParallelMeshDims, fully_shard
 from torch.distributed.tensor import (
     distribute_module,
@@ -394,6 +397,161 @@ class TestFullyShardDTensor(FSDPTest):
                 mesh=mesh,
                 dp_mesh_dim_names=DataParallelMeshDims(),
             )
+
+    @skip_if_lt_x_gpu(2)
+    def test_validation_spmd_mesh_non_dtensor_params(self):
+        """Error when dp_mesh_dim_names is provided but params are not DTensors."""
+        mesh = init_device_mesh(
+            device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
+        )
+        model = MLP(16, device=device_type)
+        # Do NOT call distribute_module -- params are plain tensors
+        with self.assertRaisesRegex(ValueError, "must be DTensors"):
+            fully_shard(
+                model,
+                mesh=mesh,
+                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            )
+
+    @skip_if_lt_x_gpu(2)
+    def test_validation_reshard_after_forward_int_spmd(self):
+        """Error when reshard_after_forward is int with SPMD mesh."""
+        mesh = init_device_mesh(
+            device_type.type, (self.world_size,), mesh_dim_names=("fsdp",)
+        )
+        model = MLP(16, device=device_type)
+        distribute_module(model, mesh)
+        with self.assertRaisesRegex(
+            NotImplementedError, "reshard_after_forward as int"
+        ):
+            fully_shard(
+                model,
+                mesh=mesh,
+                reshard_after_forward=2,
+                dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp"),
+            )
+
+    @skip_if_lt_x_gpu(4)
+    def test_hsdp_tp_dtensor_train_parity(self):
+        """HSDP+TP on 3D SPMD mesh: (ddp, fsdp, tp)."""
+        # With 4 GPUs: ddp=1, fsdp=2, tp=2 -- ddp_size=1 means the
+        # replicate dim is trivial; needs 8+ GPUs for non-trivial replication.
+        tp_size = 2
+        fsdp_size = self.world_size // tp_size
+        ddp_size = 1
+        mesh = init_device_mesh(
+            device_type.type,
+            (ddp_size, fsdp_size, tp_size),
+            mesh_dim_names=("ddp", "fsdp", "tp"),
+        )
+
+        mlp_dim = 16
+        torch.manual_seed(42)
+        model = MLP(mlp_dim, device=device_type)
+        ref_model = copy.deepcopy(model)
+
+        def partition_fn(name, module, device_mesh):
+            if not isinstance(module, nn.Linear):
+                return
+            for param_name, param in list(module.named_parameters(recurse=False)):
+                if param_name == "weight":
+                    if "in_proj" in name:
+                        placements = [Replicate(), Replicate(), Shard(0)]
+                    else:
+                        placements = [Replicate(), Replicate(), Shard(1)]
+                else:
+                    placements = [Replicate(), Replicate(), Replicate()]
+                dist_param = nn.Parameter(
+                    distribute_tensor(param, device_mesh, placements),
+                    requires_grad=param.requires_grad,
+                )
+                module.register_parameter(param_name, dist_param)
+
+        distribute_module(model, mesh, partition_fn)
+
+        def shard_fn(param):
+            if any(isinstance(p, Shard) and p.dim == 0 for p in param.placements):
+                return Shard(1)
+            return Shard(0)
+
+        fully_shard(
+            model,
+            mesh=mesh,
+            shard_placement_fn=shard_fn,
+            dp_mesh_dim_names=DataParallelMeshDims(shard="fsdp", replicate="ddp"),
+        )
+
+        # The effective DP group is ddp x fsdp (all non-TP ranks)
+        dp_pg = mesh["fsdp"].get_group()
+        replicate(
+            ref_model,
+            device_ids=[self.rank] if device_type.type != "cpu" else None,
+            process_group=dp_pg,
+        )
+
+        self._run_train_parity(model, ref_model, dp_pg, mesh=mesh, mlp_dim=mlp_dim)
+
+    @skip_if_lt_x_gpu(4)
+    def test_multi_dim_replicate_dtensor_train_parity(self):
+        """Multi-dim replicate: DataParallelMeshDims(shard="fsdp", replicate=("ddp0", "ddp1"))."""
+        # With 4 GPUs: ddp0=1, ddp1=2, fsdp=2 -- ddp0_size=1 means the
+        # outer replicate dim is trivial; needs 8+ GPUs for non-trivial replication.
+        fsdp_size = 2
+        ddp1_size = self.world_size // fsdp_size
+        ddp0_size = 1
+        mesh = init_device_mesh(
+            device_type.type,
+            (ddp0_size, ddp1_size, fsdp_size),
+            mesh_dim_names=("ddp0", "ddp1", "fsdp"),
+        )
+
+        torch.manual_seed(42)
+        model = MLP(16, device=device_type)
+        ref_model = copy.deepcopy(model)
+
+        distribute_module(model, mesh)
+        fully_shard(
+            model,
+            mesh=mesh,
+            dp_mesh_dim_names=DataParallelMeshDims(
+                shard="fsdp", replicate=("ddp0", "ddp1")
+            ),
+        )
+
+        replicate(
+            ref_model,
+            device_ids=[self.rank] if device_type.type != "cpu" else None,
+            process_group=dist.group.WORLD,
+        )
+
+        self._run_train_parity(model, ref_model, dist.group.WORLD, mesh=mesh)
+
+    @skip_if_lt_x_gpu(2)
+    def test_replicate_with_fsdp_spmd_mesh(self):
+        """replicate() from replicate_with_fsdp with dp_mesh_dim_names."""
+        mesh = init_device_mesh(
+            device_type.type, (self.world_size,), mesh_dim_names=("ddp",)
+        )
+        dp_pg = mesh.get_group()
+
+        torch.manual_seed(42)
+        model = MLP(16, device=device_type)
+        ref_model = copy.deepcopy(model)
+
+        distribute_module(model, mesh)
+        replicate_with_fsdp(
+            model,
+            mesh=mesh,
+            dp_mesh_dim_names=DataParallelMeshDims(replicate="ddp"),
+        )
+
+        replicate(
+            ref_model,
+            device_ids=[self.rank] if device_type.type != "cpu" else None,
+            process_group=dp_pg,
+        )
+
+        self._run_train_parity(model, ref_model, dp_pg, mesh=mesh)
 
 
 if __name__ == "__main__":

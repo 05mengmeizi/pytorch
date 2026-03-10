@@ -167,7 +167,8 @@ class FSDPParam:
     unsharded_accumulated_grad: torch.Tensor | None  # ND
     _sharding_spec: DTensorSpec
     # DTensor attributes (only defined for DTensor `param`):
-    _tp_spec: DTensorSpec
+    _unsharded_param_spec: DTensorSpec  # SPMD path
+    _tp_spec: DTensorSpec  # TP/EP path
     all_gather_outputs: list[torch.Tensor]  # 1D
     # All-gather extension attributes
     _extensions_data: ExtensionsData
@@ -321,6 +322,12 @@ class FSDPParam:
         Build ``_sharding_spec``, ``_spmd_mesh``, and ``_spmd_placements`` and
         return the local tensor data to be sharded.
         """
+        if self.mesh_info.is_spmd_mesh and not self.is_dtensor:
+            raise ValueError(
+                "When dp_mesh_dim_names is provided, all parameters must be "
+                "DTensors on the full SPMD mesh (e.g. via distribute_module). "
+                f"Got plain tensor for parameter '{self._module_info.param_name}'."
+            )
         if self.is_dtensor and self.mesh_info.is_spmd_mesh:
             return self._init_sharding_spec_spmd(param, fsdp_placement, shard_dim)
         if self.is_dtensor:

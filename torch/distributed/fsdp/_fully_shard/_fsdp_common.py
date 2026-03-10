@@ -13,7 +13,6 @@ from torch.distributed._composable.contract import _get_registry
 from torch.distributed.tensor import DeviceMesh, DTensor, Shard
 from torch.distributed.tensor._dtensor_spec import DTensorSpec
 
-
 from ._fsdp_api import DataParallelMeshDims
 
 

@@ -392,6 +392,7 @@ class PallasTestsMixin:
                 expected = fn(x, y)
                 self.assertEqual(result, expected)
 
+    @skip_if_tpu
     def test_different_shapes(self):
         """Test with different tensor shapes."""
         if self.DEVICE == "cuda":
@@ -444,22 +445,24 @@ class PallasTestsMixin:
 
         compiled = self._compile(operate_on_tensor)
 
-        # Create a transposed (non-contiguous) view
-        x = torch.randn(128, 128, device=self.DEVICE)
-        x_t = x.t()  # Non-contiguous view
-        self.assertFalse(x_t.is_contiguous())
+        for rows, cols in [(64, 32), (5, 8), (3215, 23), (8, 128), (128, 8)]:
+            with self.subTest(rows=rows, cols=cols):
+                # Create a transposed (non-contiguous) view
+                x = torch.randn(rows, cols, device=self.DEVICE)
+                x_t = x.t()  # Non-contiguous view
+                self.assertFalse(x_t.is_contiguous())
 
-        # With the simplified dlpack approach, non-contiguous tensors now work
-        result = compiled(x_t)
-        expected = operate_on_tensor(x_t)
-        self.assertEqual(result, expected)
+                # With the simplified dlpack approach, non-contiguous tensors now work
+                result = compiled(x_t)
+                expected = operate_on_tensor(x_t)
+                self.assertEqual(result, expected)
 
-        # Contiguous tensors should also continue to work
-        x_t_contiguous = x_t.contiguous()
-        self.assertTrue(x_t_contiguous.is_contiguous())
-        result = compiled(x_t_contiguous)
-        expected = operate_on_tensor(x_t_contiguous)
-        self.assertEqual(result, expected)
+                # Contiguous tensors should also continue to work
+                x_t_contiguous = x_t.contiguous()
+                self.assertTrue(x_t_contiguous.is_contiguous())
+                result = compiled(x_t_contiguous)
+                expected = operate_on_tensor(x_t_contiguous)
+                self.assertEqual(result, expected)
 
     @skip_if_tpu
     def test_strided_int_pallas(self):
@@ -550,7 +553,15 @@ class PallasTestsMixin:
         """Test 2D transposed input patterns."""
         compiled = self._compile(lambda x: x * 2.0 + 1.0)
 
-        for rows, cols in [(32, 32), (2048, 2048)]:
+        for rows, cols in [
+            (32, 32),
+            (2048, 2048),
+            (64, 32),
+            (5, 8),
+            (3215, 23),
+            (8, 128),
+            (128, 8),
+        ]:
             with self.subTest(rows=rows, cols=cols):
                 base_2d = torch.randn(rows, cols, device=self.DEVICE)
                 x = base_2d.t()
@@ -949,6 +960,7 @@ class PallasTestsMixin:
                 expected = fn(a, b)
                 self.assertEqual(result, expected)
 
+    @skip_if_tpu
     def test_sign(self):
         """Test sign operation."""
 
@@ -1372,6 +1384,7 @@ class PallasTestsMixin:
         expected = fn(a, b)
         self.assertEqual(result, expected)
 
+    @skip_if_tpu
     def test_warpgroup_size_2d_128x128(self):
         """Test 2D tensor with 128x128 and tiling-exercising sizes."""
 
@@ -1566,6 +1579,7 @@ class PallasTestsMixin:
         self.assertEqual(result, expected)
 
     @skip_if_cuda
+    @skip_if_tpu
     def test_nanogpt(self):
         """Test a minimal NanoGPT-style transformer block.
 

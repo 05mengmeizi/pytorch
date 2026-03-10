@@ -223,6 +223,15 @@ def fully_shard(
     # If the user does not provide ``reshard_after_forward``, we set it to True.
     # During lazy_init, we identify which module is the root and override its value to False
     if isinstance(mesh_info, FSDPMeshInfo):
+        if (
+            mesh_info.is_spmd_mesh
+            and not isinstance(reshard_after_forward, bool)
+            and isinstance(reshard_after_forward, int)
+        ):
+            raise NotImplementedError(
+                "reshard_after_forward as int is not yet supported with "
+                "SPMD mesh (dp_mesh_dim_names)"
+            )
         post_forward_mesh_info = _get_post_forward_mesh_info(
             reshard_after_forward if not auto_reshard_after_forward else True,  # type: ignore[arg-type]
             mesh_info,
