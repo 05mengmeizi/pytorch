@@ -778,6 +778,7 @@ def linalg_replicate_strategy(op_schema: OpSchema) -> OpStrategy:
 AVG_POOL_OPS = [
     aten.avg_pool2d.default,
     aten.avg_pool3d.default,
+    aten._adaptive_avg_pool2d.default,
     aten._adaptive_avg_pool3d.default,
 ]
 
@@ -819,6 +820,13 @@ def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
     if op_schema.op in AVG_POOL_OPS:
         single_mesh_dim_strategies.append([Partial("sum")] * n)
         single_mesh_dim_strategies.append([Partial("avg")] * n)
+    # max distributes over max for the values output; indices output is
+    # undefined under P(max) reduction so we mark it None.
+    if op_schema.op in MAX_POOL_OPS:
+        single_mesh_dim_strategies.append(
+            # pyrefly: ignore [bad-argument-type]
+            [Partial("max"), None] + [Partial("max")] * num_inputs
+        )
     if op_schema.op in CHANNEL_SHARDABLE_POOL_OPS:
         single_mesh_dim_strategies.append([Shard(1)] * n)
     return expand_to_full_mesh_op_strategy(
