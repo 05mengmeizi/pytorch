@@ -804,26 +804,12 @@ class FSDPParam:
                 raise AssertionError(
                     f"Shard({shard_dim}) requires even sharding: {local_tensor.size()=}"
                 )
-            # Check if local_tensor is already a narrow view of a padded buffer
-            # (e.g., from another FSDPParam sharing the same parameter via weight
-            # tying). If so, reuse that buffer to keep _sharded_param_data in
-            # sync across all FSDPParams that share the parameter.
-            padded_numel = padded_sharded_size.numel()
-            storage_numel = (
-                local_tensor.untyped_storage().size() // local_tensor.element_size()
+            padded_local_tensor = local_tensor.new_zeros(padded_sharded_size)
+            padded_local_tensor.narrow(dim=shard_dim, start=0, length=length).copy_(
+                local_tensor
             )
-            if local_tensor.storage_offset() == 0 and storage_numel >= padded_numel:
-                local_tensor = local_tensor.as_strided(
-                    padded_sharded_size,
-                    make_contiguous_strides_for(padded_sharded_size),
-                )
-            else:
-                padded_local_tensor = local_tensor.new_zeros(padded_sharded_size)
-                padded_local_tensor.narrow(dim=shard_dim, start=0, length=length).copy_(
-                    local_tensor
-                )
-                local_tensor = padded_local_tensor
-                updated_local_tensor = True
+            local_tensor = padded_local_tensor
+            updated_local_tensor = True
         if self.pin_memory and not local_tensor.is_pinned():
             local_tensor = local_tensor.cpu().pin_memory()
             updated_local_tensor = True
