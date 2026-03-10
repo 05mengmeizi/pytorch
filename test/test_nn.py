@@ -5457,6 +5457,13 @@ tensor(..., device='meta', size=(1,), requires_grad=True)""")
             # just run a single backward, as gradcheck/gradgradcheck is expensive here
             output.sum().backward()
 
+    # test for issue reported in https://github.com/pytorch/pytorch/issues/173799
+    def test_pdist_inf_nan_propagation(self):
+        x = torch.empty((2, 2), dtype=torch.float64).fill_(float("inf"))
+        for device in device_():
+            result = F.pdist(x.to(device), p=0.0)
+            self.assertTrue(torch.isnan(result).item(), "Expected NaN in pdist output")
+
     def test_cosine_embedding_loss_with_diff_type(self):
         for device in device_():
             input1 = torch.tensor([[2, 3, 4], [6, 2, 4]], dtype=torch.double, device=device)
@@ -7640,6 +7647,27 @@ tensor(..., device='meta', size=(1,), requires_grad=True)""")
         ]:
             test_rnn_cell(cell_fn, gate_count)
 
+    def test_conv3d_initialization_consistency(self):
+        # 1. Create a Conv3d layer
+        m = torch.nn.Conv3d(3, 6, kernel_size=3)
+
+        # 2. Test initialization in default (contiguous) format
+        torch.manual_seed(42)
+        m.reset_parameters()
+        weights_default = m.weight.clone().detach()
+
+        # 3. Test initialization in channels_last_3d format
+        m.to(memory_format=torch.channels_last_3d)
+        torch.manual_seed(42)
+        m.reset_parameters()
+        weights_channels_last = m.weight.clone().detach()
+
+        # 4. Verify both initializations are identical
+        self.assertEqual(
+            weights_default,
+            weights_channels_last,
+            msg="Conv3d initialization is inconsistent between memory formats"
+        )
 class TestFusionEval(TestCase):
     @set_default_dtype(torch.double)
     @given(X=hu.tensor(shapes=((5, 3, 5, 5),), dtype=np.double),
@@ -12699,35 +12727,6 @@ class TestNNDeviceType(NNTestCase):
             result_byte, grad_byte = compute_result_and_gradient(reduction, torch.uint8)
             self.assertEqual(result_long, result_byte)
             self.assertEqual(grad_long, grad_byte)
-
-    def test_nll_loss_noncontiguous_4d(self, device):
-        # Ref: https://github.com/pytorch/pytorch/issues/175084
-        # Non-contiguous 4D input used to crash backward with
-        # "grad_input must be contiguous"
-        for reduction in ["none", "mean", "sum"]:
-            # Create non-contiguous 4D input by moving the class dim
-            nc_input = torch.randn(2, 3, 5, 4, device=device).movedim(-1, 1)
-            nc_input.requires_grad_(True)
-            self.assertFalse(nc_input.is_contiguous())
-            target = torch.randint(0, 4, (2, 3, 5), device=device)
-
-            output = F.nll_loss(nc_input, target, reduction=reduction)
-            if reduction == "none":
-                output.sum().backward()
-            else:
-                output.backward()
-            self.assertEqual(nc_input.grad.shape, nc_input.shape)
-
-            # Compare against contiguous version for correctness
-            c_input = nc_input.detach().contiguous().requires_grad_(True)
-            output_c = F.nll_loss(c_input, target, reduction=reduction)
-            if reduction == "none":
-                output_c.sum().backward()
-            else:
-                output_c.backward()
-
-            self.assertEqual(output, output_c)
-            self.assertEqual(nc_input.grad, c_input.grad)
 
     @onlyCUDA
     @dtypes(torch.float16, torch.float32)

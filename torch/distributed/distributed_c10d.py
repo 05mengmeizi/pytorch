@@ -146,6 +146,9 @@ try:
     # pyrefly: ignore [missing-import]
     from torchcomms._comms import _BackendWrapper, new_comm
 
+    # pyrefly: ignore [missing-import]
+    from torchcomms.hooks import FlightRecorderHook
+
     _TORCHCOMM_AVAILABLE = True
 except ImportError:
     _TORCHCOMM_AVAILABLE = False
@@ -2057,6 +2060,12 @@ def _new_process_group_helper(
             comm = new_comm(
                 backend_str, torch_device, name=group_name, store=backend_prefix_store
             )
+            buffer_size = os.environ.get(
+                "TORCH_FR_BUFFER_SIZE",
+                os.environ.get("TORCH_NCCL_TRACE_BUFFER_SIZE", "0"),
+            )
+            recorder = FlightRecorderHook(max_entries=int(buffer_size))
+            recorder.register_with_comm(comm)
             # Keep a reference so the comm outlives this function scope.
             _world.comms.append(comm)
             group_name = GroupName(group_name)
@@ -2752,6 +2761,12 @@ def _coalescing_manager(
         # - coalesced `all_gather_into_tensor`
         # - coalesced `reduce_scatter_tensor`
         op0 = op_list[0].op
+        if any(op.op is not op0 for op in op_list):
+            raise RuntimeError(
+                "Coalescing manager requires all collectives to be the same type, "
+                f"but got mixed types: {set(op.op.__name__ for op in op_list)}"  # noqa: C401
+            )
+
         if op0 is all_reduce:
             tensors = [op.tensor for op in op_list]
             all_reduce_opts = AllreduceCoalescedOptions()
@@ -2766,7 +2781,9 @@ def _coalescing_manager(
                 outputs.append(not_none(op.dst_tensor))
             all_gather_opts = AllgatherOptions()
             all_gather_opts.asyncOp = async_ops
-            work = group.allgather_into_tensor_coalesced(outputs, inputs)
+            work = group.allgather_into_tensor_coalesced(
+                outputs, inputs, all_gather_opts
+            )
         elif op0 is reduce_scatter_tensor:
             inputs = []
             outputs = []
@@ -2926,6 +2943,15 @@ def batch_isend_irecv(p2p_op_list: list[P2POp]) -> list[Work]:
         return reqs
 
 
+def _is_fp8(tensor):
+    return tensor.dtype in (
+        torch.float8_e4m3fn,
+        torch.float8_e4m3fnuz,
+        torch.float8_e5m2,
+        torch.float8_e5m2fnuz,
+    )
+
+
 @_exception_logger
 def broadcast(
     tensor: torch.Tensor,
@@ -2966,8 +2992,14 @@ def broadcast(
     opts.rootRank = group_src
     opts.rootTensor = 0
     opts.asyncOp = async_op
+    sm90_or_more = not (
+        tensor.is_cuda and torch.cuda.get_device_capability(tensor.device)[0] >= 9
+    )
     if tensor.is_complex():
         tensor = torch.view_as_real(tensor)
+    elif _is_fp8(tensor) and not sm90_or_more:
+        # FP8 is supported by NCCL on sm90+, use workaround for older GPUs
+        tensor = tensor.view(torch.uint8)
     work = group.broadcast([tensor], opts)
     if async_op:
         return work
@@ -5370,6 +5402,7 @@ def new_group(
     use_local_synchronization: bool = False,
     group_desc=None,
     device_id: torch.device | None = None,
+    sort_ranks: bool = True,
 ):
     """
     Create a new distributed group.
@@ -5424,6 +5457,11 @@ def new_group(
         device_id (torch.device, optional): a single, specific device
             to "bind" this process to,  The `new_group` call will try to initialize
             a communication backend immediately for the device if this field is given.
+        sort_ranks (bool, optional): If ``True`` (the default), sort the
+            ``ranks`` list before creating the group. If ``False``, preserve
+            the caller-provided rank order so that position in the ``ranks``
+            list determines group rank.  All processes must pass the identical
+            ``ranks`` list.  Default is ``True``.
 
     Returns:
         A handle of distributed group that can be given to collective calls or
@@ -5448,6 +5486,7 @@ def new_group(
         use_local_synchronization=use_local_synchronization,
         group_desc=group_desc,
         device_id=device_id,
+        sort_ranks=sort_ranks,
     )
 
 
@@ -5460,6 +5499,7 @@ def _new_group_with_tag(
     use_local_synchronization=False,
     group_desc=None,
     device_id: torch.device | None = None,
+    sort_ranks: bool = True,
 ):
     """
     Variant of ``new_group`` that exposes tag creation.
@@ -5504,7 +5544,12 @@ def _new_group_with_tag(
 
     # checks the input ranks
     if ranks is not None:
-        ranks = sorted(ranks)
+        if sort_ranks:
+            ranks = sorted(ranks)
+        if len(set(ranks)) != len(ranks):
+            raise ValueError(
+                f"ranks list must not contain duplicate entries, got {ranks}"
+            )
         group_world_size = len(ranks)
         if group_world_size > global_world_size:
             raise ValueError(
@@ -5516,8 +5561,8 @@ def _new_group_with_tag(
         for rank in ranks:
             if rank < 0 or rank >= global_world_size:
                 raise ValueError(
-                    "The new group's rank should be within "
-                    "the world_size set by init_process_group"
+                    f"Rank {rank} is out of range. Valid ranks are 0 to {global_world_size - 1} "
+                    f"(world_size={global_world_size})"
                 )
         if global_rank in ranks:
             group_rank = ranks.index(global_rank)

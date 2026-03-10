@@ -37,7 +37,7 @@ import types
 import weakref
 from collections.abc import Callable, MutableMapping
 from types import ModuleType
-from typing import Any, NamedTuple, NoReturn, Optional, overload, TYPE_CHECKING, Union
+from typing import Any, NamedTuple, NoReturn, overload, TYPE_CHECKING, Union
 
 import sympy
 
@@ -63,6 +63,7 @@ from torch._library.opaque_object import (
     is_opaque_value_type,
     should_hoist,
 )
+from torch._opaque_base import OpaqueBase
 from torch._ops import HigherOrderOperator, OpOverload, OpOverloadPacket
 from torch._subclasses.fake_tensor import (
     FakeTensor,
@@ -175,6 +176,7 @@ from ..utils import (
     wrap_fake_exception,
 )
 from .base import (
+    AttributeMutationExisting,
     AttributeMutationNew,
     typestr,
     ValueMutationExisting,
@@ -186,6 +188,7 @@ from .builtin import BuiltinVariable
 from .constant import ConstantVariable, EnumVariable
 from .ctx_manager import (
     AutocastModeVariable,
+    CudagraphOverrideVariable,
     DynamoConfigPatchVariable,
     ErrorOnGraphBreakVariable,
     NullContextVariable,
@@ -209,7 +212,6 @@ from .functions import (
     CreateTMADescriptorExperimentalVariable,
     CreateTMADescriptorStableVariable,
     FunctoolsPartialVariable,
-    FunctoolsWrapsVariable,
     SysFunctionVariable,
     TritonKernelVariable,
     TritonSetAllocatorSkipVariable,
@@ -486,6 +488,7 @@ class VariableBuilder:
             )
 
     def _call_impl(self, value: object) -> VariableTracker:
+        self.tx.output.current_tracer.traced_sources.add(self.source)
         if value in self.tx.output.side_effects:
             side_effect_result = self.tx.output.side_effects[value]
             dup_guard = make_dupe_guard(self.source, side_effect_result.source)
@@ -716,6 +719,7 @@ class VariableBuilder:
         )
 
         from ..decorators import (
+            CudagraphOverrideContextManager,
             DynamoConfigPatchProxy,
             ErrorOnGraphBreakDecoratorContextManager,
         )
@@ -1140,6 +1144,8 @@ class VariableBuilder:
             return DynamoConfigPatchVariable(value.changes)
         elif isinstance(value, ErrorOnGraphBreakDecoratorContextManager):
             return ErrorOnGraphBreakVariable(value.error_on_graph_break)
+        elif isinstance(value, CudagraphOverrideContextManager):
+            return CudagraphOverrideVariable(value.fwd, value.bwd)
         elif callable(value) and trace_rules.lookup_callable(value) is not None:
             if trace_rules.is_callable_allowed(value):
                 self.tx.output.has_user_defined_allowed_in_graph = True
@@ -1213,7 +1219,11 @@ class VariableBuilder:
         elif isinstance(value, torch.optim.Optimizer):
             self.install_guards(GuardBuilder.ID_MATCH)
             self.source = OptimizerSource(self.source)
-            return OptimizerVariable(value, source=self.source)
+            return OptimizerVariable(
+                value,
+                source=self.source,
+                mutation_type=AttributeMutationExisting(),
+            )
         elif isinstance(value, torch.DispatchKeySet):
             self.install_guards(GuardBuilder.DISPATCH_KEY_SET_MATCH)
             return DispatchKeySetVariable(value)
@@ -1391,9 +1401,6 @@ class VariableBuilder:
             return WrapperUserFunctionVariable(
                 value, "_torchdynamo_inline", source=self.source
             )
-        elif value is functools.wraps:
-            self.install_guards(GuardBuilder.ID_MATCH)
-            return FunctoolsWrapsVariable(value, source=self.source)
         elif value is collections.namedtuple:
             self.install_guards(GuardBuilder.ID_MATCH)
             return CollectionsNamedTupleFunction(value, source=self.source)
@@ -2215,14 +2222,14 @@ class VariableBuilder:
     @overload
     def _wrap_lazy_constant(
         self,
-        value: Union[int, float, bool, str],
+        value: int | float | bool | str,
         wrap_fn: None = None,
     ) -> VariableTracker: ...
 
     def _wrap_lazy_constant(
         self,
-        value: Union[int, float, bool, str],
-        wrap_fn: Optional[Callable[[Any], VariableTracker]] = None,
+        value: int | float | bool | str,
+        wrap_fn: Callable[[Any], VariableTracker] | None = None,
     ) -> VariableTracker:
         """Wrap a primitive constant, deferring guard installation if allowed."""
         if not self.allow_lazy_constant:
@@ -2488,6 +2495,15 @@ class VariableBuilder:
             attrs, _ = value.__tensor_flatten__()
             for attr in attrs:
                 inner_value = getattr(value, attr)
+                if not isinstance(
+                    inner_value, torch.Tensor
+                ) and not is_opaque_reference_type(type(inner_value)):
+                    raise RuntimeError(
+                        f"{type(inner_value).__name__!r} found in tensor attrs of "
+                        f"{type(value).__name__}.__tensor_flatten__(). "
+                        "Only tensors and reference-type opaques are allowed "
+                        "in tensor attrs."
+                    )
                 inner_source = AttrSource(self.source, attr)
                 LazyVariableTracker.realize_all(
                     VariableBuilder(self.tx, inner_source)(inner_value)
@@ -3372,6 +3388,8 @@ def handle_traced_output(
         proxy.node.target
         in [
             torch.sym_int,
+            torch.sym_max,
+            torch.sym_min,
             getattr,
             operator.getitem,
             torch._utils._element_size,
@@ -3689,11 +3707,18 @@ def _automatic_dynamic(
         inner_contexts = {}  # mapping from attr -> symbolic context
         attrs, _ = type(e).__tensor_flatten__(e)
         for attr in attrs:
-            inner_tensor = getattr(e, attr)
-            inner_source = AttrSource(source, attr)
-            inner_contexts[attr] = _automatic_dynamic(
-                inner_tensor, tx, inner_source, static_shapes
-            )
+            match getattr(e, attr):
+                case torch.Tensor() as inner_value:
+                    inner_source = AttrSource(source, attr)
+                    inner_contexts[attr] = _automatic_dynamic(
+                        inner_value, tx, inner_source, static_shapes
+                    )
+                case OpaqueBase():
+                    pass
+                case unexpected:
+                    raise AssertionError(
+                        f"expected Tensor or OpaqueBase, got {type(unexpected)}"
+                    )
 
         return SubclassSymbolicContext(
             dynamic_sizes=outer_context.dynamic_sizes,
@@ -3925,6 +3950,7 @@ def _automatic_dynamic(
         tensor_source=source,
         shape_env_to_source_to_symbol_cache=shape_env_to_source_to_symbol_cache,
         shape_ids=getattr(e, "_dynamo_shape_ids", None),
+        unbacked_bounds=getattr(e, "_dynamo_unbacked_bounds", None),
     )
 
 
@@ -4177,8 +4203,6 @@ class SourcelessBuilder:
             return UserDefinedObjectVariable(value)
         elif DeviceMeshVariable.is_device_mesh(value):
             return DeviceMeshVariable(value)
-        elif value is functools.wraps:
-            return FunctoolsWrapsVariable(value)
         elif isinstance(value, re.Pattern):
             return ConstantLikeVariable(value)
         elif isinstance(value, torch._dynamo.variables.lazy.LazySymNodeFormatString):
