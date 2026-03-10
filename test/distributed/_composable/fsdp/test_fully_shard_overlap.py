@@ -167,6 +167,132 @@ class TestFullyShardOverlap(FSDPTest):
         # )
         self.assertLessEqual(fwd_bwd_time, ref_fwd_bwd_time)
 
+    @skip_if_rocm_arch_multiprocess(MI200_ARCH)
+    @skip_if_lt_x_gpu(2)
+    @unittest.skipIf(TEST_HPU, "Sleep is not supported on HPU")
+    def test_fully_shard_backward_comm_overlap(self):
+        """Verify that backward all-gather and reduce-scatter overlap.
+
+        ref_bwd: AG and RS serialize on a shared delay stream,
+        simulating a single NCCL communicator (shared_comm_stream +
+        async_op=False).
+
+        fsdp_bwd: real fully_shard code path. AG and RS use different
+        ProcessGroups (separate NCCL communicators via
+        FSDPMeshInfo.reduce_scatter_process_group) and run on FSDP's
+        separate all-gather/reduce-scatter streams, enabling true
+        overlap.
+        """
+        torch.manual_seed(42)
+
+        # comm > compute so AG/RS overlap savings are visible in timing
+        dim, num_linears, compute_sleep_ms, comm_sleep_ms = (4, 3, 5, 15)
+        model = nn.Sequential(
+            *[LinearWithSleep(dim, compute_sleep_ms) for _ in range(num_linears)]
+        )
+        for lin in model:
+            fully_shard(lin, reshard_after_forward=True)
+        fully_shard(model, reshard_after_forward=True)
+
+        orig_all_gather = dist.all_gather_into_tensor
+        orig_reduce_scatter = dist.reduce_scatter_tensor
+
+        # Ref: simulate a single NCCL communicator where AG and RS
+        # serialize. Both collectives run on the same shared_comm_stream
+        # with async_op=False.
+        shared_comm_stream = device_module.Stream()
+
+        def shared_delayed_ag(*args, **kwargs):
+            kwargs.pop("async_op", None)
+            shared_comm_stream.wait_stream(device_module.current_stream())
+            with device_module.stream(shared_comm_stream):
+                device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+                orig_all_gather(*args, async_op=False, **kwargs)
+            device_module.current_stream().wait_stream(shared_comm_stream)
+
+        def shared_delayed_rs(*args, **kwargs):
+            kwargs.pop("async_op", None)
+            shared_comm_stream.wait_stream(device_module.current_stream())
+            with device_module.stream(shared_comm_stream):
+                device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+                orig_reduce_scatter(*args, async_op=False, **kwargs)
+            device_module.current_stream().wait_stream(shared_comm_stream)
+
+        # FSDP: real code path — delay sleeps on the calling stream
+        # (FSDP's all-gather or reduce-scatter stream). AG and RS use
+        # different PGs (FSDPMeshInfo.shard_process_group for AG,
+        # FSDPMeshInfo.reduce_scatter_process_group for RS).
+        def fsdp_delayed_ag(*args, **kwargs):
+            device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+            return orig_all_gather(*args, **kwargs)
+
+        def fsdp_delayed_rs(*args, **kwargs):
+            device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+            return orig_reduce_scatter(*args, **kwargs)
+
+        # Fully overlapped: AG and RS delays on separate explicit
+        # comm streams, verifying the same overlap as fsdp_bwd but
+        # via a different mechanism.
+        ag_comm_stream = device_module.Stream()
+        rs_comm_stream = device_module.Stream()
+
+        def fully_overlapped_ag(*args, **kwargs):
+            kwargs.pop("async_op", None)
+            ag_comm_stream.wait_stream(device_module.current_stream())
+            with device_module.stream(ag_comm_stream):
+                device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+                orig_all_gather(*args, async_op=False, **kwargs)
+            device_module.current_stream().wait_stream(ag_comm_stream)
+
+        def fully_overlapped_rs(*args, **kwargs):
+            kwargs.pop("async_op", None)
+            rs_comm_stream.wait_stream(device_module.current_stream())
+            with device_module.stream(rs_comm_stream):
+                device_module._sleep(int(comm_sleep_ms * get_cycles_per_ms()))
+                orig_reduce_scatter(*args, async_op=False, **kwargs)
+            device_module.current_stream().wait_stream(rs_comm_stream)
+
+        inp = torch.randn((2, dim), device=device_type.type)
+        loss = model(inp).sum()
+        loss.backward()  # warmup
+
+        # Ref: compute overlaps with AG/RS, but AG and RS serialize
+        # (delay + collective both on shared_comm_stream)
+        def ref_bwd():
+            with (
+                patch_all_gather(shared_delayed_ag),
+                patch_reduce_scatter(shared_delayed_rs),
+            ):
+                loss = model(inp).sum()
+                loss.backward()
+
+        # FSDP: real code path with separate PGs and separate streams.
+        # AG and RS truly overlap via different NCCL communicators.
+        def fsdp_bwd():
+            with (
+                patch_all_gather(fsdp_delayed_ag),
+                patch_reduce_scatter(fsdp_delayed_rs),
+            ):
+                loss = model(inp).sum()
+                loss.backward()
+
+        # Fully overlapped: AG and RS overlap via separate comm streams
+        def fully_overlapped_bwd():
+            with (
+                patch_all_gather(fully_overlapped_ag),
+                patch_reduce_scatter(fully_overlapped_rs),
+            ):
+                loss = model(inp).sum()
+                loss.backward()
+
+        ref_time = self._time_fn(ref_bwd)
+        fsdp_time = self._time_fn(fsdp_bwd)
+        fully_overlapped_time = self._time_fn(fully_overlapped_bwd)
+        # FSDP with separate PGs should be faster than serialized ref
+        self.assertLessEqual(fsdp_time, ref_time)
+        # Fully overlapped should also be faster than serialized ref
+        self.assertLessEqual(fully_overlapped_time, ref_time)
+
     @skip_if_lt_x_gpu(2)
     @unittest.skipIf(TEST_HPU, "Sleep is not supported on HPU")
     def test_fully_shard_post_optim_event_overlap(self):
