@@ -338,7 +338,9 @@ class Match:
                         return fake_mode.from_tensor(it)
                     return it
 
-                example_vals = [_convert_to_fake_mode(it) for it in example_vals]
+                example_vals = torch.fx.node.map_aggregate(
+                    example_vals, _convert_to_fake_mode
+                )
                 replacement = trace_fn(replacement_fn, example_vals)
             if len(self.nodes) == 1:
                 for n in replacement.graph.nodes:
