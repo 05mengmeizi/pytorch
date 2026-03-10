@@ -169,10 +169,12 @@ def _get_shard_size_and_offsets(
     if shard_size == 0:
         return shard_size, torch.arange(zero_global_offset, zero_global_offset + 1)
     if isinstance(placement, Shard) and not isinstance(placement, _StridedShard):
-        assert isinstance(shard_offsets, int)
+        if not isinstance(shard_offsets, int):
+            raise AssertionError
         index = torch.arange(shard_offsets, shard_offsets + shard_size)
     else:
-        assert isinstance(shard_offsets, list)
+        if not isinstance(shard_offsets, list):
+            raise AssertionError
         index = torch.tensor(shard_offsets)
     if previous_offsets is None:
         return shard_size, index
@@ -231,7 +233,8 @@ def _compute_local_shape_and_global_offset(
         def coordinate_lookup(dim: int) -> RankType:
             return _coord[dim]
     else:
-        assert my_coordinate is not None
+        if my_coordinate is None:
+            raise AssertionError
         coordinate_lookup = my_coordinate
 
     local_shape = list(global_shape)
@@ -253,9 +256,10 @@ def _compute_local_shape_and_global_offset(
             continue
         shard_dim = placement.dim
         zero_global_offset = global_shape[shard_dim]
-        assert shard_dim < len(local_shape), (
-            f"Sharding dim {shard_dim} greater than tensor ndim {len(local_shape)}"
-        )
+        if shard_dim >= len(local_shape):
+            raise AssertionError(
+                f"Sharding dim {shard_dim} greater than tensor ndim {len(local_shape)}"
+            )
         previous_offsets = shard_dim_to_global_offsets.get(shard_dim)
         shard_size, shard_offsets = _get_shard_size_and_offsets(
             local_shape[shard_dim],
@@ -318,15 +322,17 @@ def compute_local_tensor_info(
                     f"the user-facing APIs: {shard_placement}"
                 )
             shard_dim = shard_placement.dim
-            assert shard_dim < len(local_shape), (
-                f"Sharding dim {shard_dim} greater than tensor ndim {len(local_shape)} "
-                f"for placement number {idx}."
-            )
+            if shard_dim >= len(local_shape):
+                raise AssertionError(
+                    f"Sharding dim {shard_dim} greater than tensor ndim {len(local_shape)} "
+                    f"for placement number {idx}."
+                )
 
             global_dim_size = local_shape[shard_dim]
-            assert global_dim_size % mesh_dim_size == 0, (
-                f"Global dim {global_dim_size} not divisible by mesh size {mesh_dim_size}"
-            )
+            if global_dim_size % mesh_dim_size != 0:
+                raise AssertionError(
+                    f"Global dim {global_dim_size} not divisible by mesh size {mesh_dim_size}"
+                )
             local_shape[shard_dim] = global_dim_size // mesh_dim_size
 
             # shrink strides that were scaled up globally
@@ -491,6 +497,9 @@ def assert_no_mixed_partial_types(placements: Sequence[Placement]) -> None:
     semantically critical during redistribution. Rather than introducing complex ordering
     constraints, we prohibit mixing different Partial reduce types.
 
+    Note: Partial("sum") and Partial("avg") DO commute with each other, so they can be ordered
+    arbitrarily, and we allow this.
+
     This function is called internally by public APIs like :meth:`DTensor.from_local` and
     :func:`distribute_tensor` to validate placements early, before DTensor construction.
 
@@ -506,7 +515,7 @@ def assert_no_mixed_partial_types(placements: Sequence[Placement]) -> None:
         if isinstance(p, Partial):
             partial_reduce_ops.add(p.reduce_op)
 
-    if len(partial_reduce_ops) > 1:
+    if len(partial_reduce_ops) > 1 and partial_reduce_ops != {"sum", "avg"}:
         raise ValueError(
             f"Mixed Partial reduce types are not supported in the same placement list. "
             f"Found reduce ops: {partial_reduce_ops}. "
