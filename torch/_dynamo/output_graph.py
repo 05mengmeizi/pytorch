@@ -631,6 +631,9 @@ class OutputGraph(OutputGraphCommon):
         # Map from graph input's `Source` to its `VariableTracker` to
         # de-duplicate graph inputs by source and reuse the tracker
         self.input_source_to_var: dict[Source, VariableTracker] = {}
+        # Concrete scalar values seen during this compilation, keyed by
+        # source name. Used by per-cache-entry exclusion guards.
+        self.scalar_source_to_value: dict[str, int] = {}
         # List of TensorVariables that are leaf tensors created in-graph
         # (e.g., nn.Parameter via tracable_create_parameter). These need to be
         # tracked separately from input_source_to_var for backward() auto-detection.

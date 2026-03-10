@@ -287,6 +287,7 @@ class GuardManagerWrapper:
         self.extra_state: ExtraState | None = None
         self.id_matched_objs: dict[str, ReferenceType[object]] = {}
         self.no_tensor_aliasing_sources: list[str] = []
+        self.static_signature: dict[str, int | None] = {}
 
         self.printed_relational_guards: set[RelationalGuard] = set()
 
@@ -2698,6 +2699,12 @@ class GuardBuilder(GuardBuilderBase):
             fs = output_graph.shape_env.tracked_fakes or []
             input_contexts = [a.symbolic_context for a in fs]
 
+            # Populate prior static signatures from cache entries for
+            # per-cache-entry exclusion guards.
+            output_graph.shape_env.prior_static_signatures = (
+                extract_prior_static_signatures(self.check_fn_manager.cache_entry)
+            )
+
             def get_sources(t_id: int, dim: int) -> list[Source]:
                 # Looks up base sources mapped to a tensor id and uses them to create
                 # sources for the corresponding tensor dimension.
@@ -3817,6 +3824,7 @@ class CheckFunctionManager:
         )
         self.output_graph: OutputGraphCommon | None = output_graph
         assert self.output_graph is not None
+        self.cache_entry = cache_entry
 
         # Only used for serialization.
         self.shape_code_parts = shape_code_parts
@@ -4395,6 +4403,12 @@ class CheckFunctionManager:
         self.guard_manager.cache_entry = None
         self.guard_manager.extra_state = None
         self.guard_manager.no_tensor_aliasing_sources = no_tensor_aliasing_names
+        # Store the static signature for this cache entry so future
+        # compilations can derive per-cache-entry exclusion guards.
+        if self.output_graph is not None:
+            self.guard_manager.static_signature = _build_static_signature(
+                self.output_graph
+            )
 
     def invalidate(self, obj_str: str) -> None:
         # Some tests reveal that CheckFunctionManager has no attribute
@@ -4801,6 +4815,74 @@ def update_diff_guard_managers_for_existing_cache_entries(
 
     # return the accumulated sources to set up the new cache line.
     return acc_diff_guard_sources
+
+
+def _build_static_signature(
+    output_graph: OutputGraphCommon,
+) -> dict[str, int | None]:
+    """Build a static signature from the current compilation.
+
+    Returns a dict mapping source_name -> int (static) | None (dynamic).
+    For tensor dims, source_name is TensorPropertySource(src, SIZE, i).name.
+    For scalars, source_name is the scalar source name.
+    """
+    from torch._dynamo.source import TensorProperty, TensorPropertySource
+
+    sig: dict[str, int | None] = {}
+
+    # Tensor dims: int = static, SymInt = dynamic.
+    for source, metadata in output_graph.input_source_to_sizes_strides.items():
+        sizes = metadata.get("size", ())
+        for i, sz in enumerate(sizes):
+            prop_name = TensorPropertySource(source, TensorProperty.SIZE, i).name
+            sig[prop_name] = sz if isinstance(sz, int) else None
+
+    # Scalars: use concrete values recorded during compilation.
+    # Static scalars (CONSTANT_MATCH) are in scalar_source_to_value but
+    # not in tracked_fakes. Dynamic scalars are in both.
+    scalar_values = getattr(output_graph, "scalar_source_to_value", {})
+    shape_env = output_graph.shape_env
+    if shape_env is not None and shape_env.tracked_fakes:
+        for tf in shape_env.tracked_fakes:
+            fake = tf.fake
+            if isinstance(fake, (torch.SymInt, int)):
+                src_name = tf.source.name
+                if src_name in sig:
+                    continue
+                if isinstance(fake, int) or (
+                    isinstance(fake, torch.SymInt)
+                    and fake.node.maybe_as_int() is not None
+                ):
+                    # Static scalar (backed by concrete int).
+                    sig[src_name] = (
+                        fake if isinstance(fake, int) else fake.node.maybe_as_int()
+                    )
+                else:
+                    # Dynamic scalar.
+                    sig[src_name] = None
+
+    # Add constant scalars that aren't in tracked_fakes.
+    for src_name, val in scalar_values.items():
+        if src_name not in sig:
+            sig[src_name] = val
+
+    return sig
+
+
+def extract_prior_static_signatures(
+    cache_entry: CacheEntry | None,
+) -> list[dict[str, int | None]]:
+    """Extract static signatures from each prior cache entry.
+
+    Each entry in the returned list corresponds to one prior compiled graph.
+    """
+    signatures: list[dict[str, int | None]] = []
+    while cache_entry is not None:
+        sig = cache_entry.guard_manager.static_signature
+        if sig:  # Skip empty signatures (e.g., from before this feature).
+            signatures.append(sig)
+        cache_entry = cache_entry.next  # type: ignore[assignment]
+    return signatures
 
 
 def guard_error_hook(

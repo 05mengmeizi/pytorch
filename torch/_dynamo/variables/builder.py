@@ -2634,6 +2634,9 @@ class VariableBuilder:
                 is_unspecialized_nn_module=self.source.guard_source.is_unspecialized_nn_module(),
             )
 
+            # Record concrete scalar value for per-cache-entry exclusion guards.
+            self.tx.output.scalar_source_to_value[self.source.name] = value
+
             # TODO: This should be dynamic, as we in general do not
             # know if bare integers are actually going to be sizevars
             # and it is inappropriate to eagerly duck size them with
@@ -3933,7 +3936,6 @@ def _automatic_dynamic(
         tensor_source=source,
         shape_env_to_source_to_symbol_cache=shape_env_to_source_to_symbol_cache,
         shape_ids=getattr(e, "_dynamo_shape_ids", None),
-        excluded_sizes=frame_state_entry.excluded_sizes,
     )
 
 

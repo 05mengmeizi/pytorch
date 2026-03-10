@@ -561,6 +561,71 @@ class TestGuardExclusion(TestCase):
         self.assertEqual(tracker.frame_count, 5, "Should not recompile")
         self.assertEqual(tracker.call_log[-1], 4, "All-new values should use Graph 4")
 
+    @torch._dynamo.config.patch(
+        automatic_dynamic_shapes=True, assume_static_by_default=True
+    )
+    def test_data_dependent_branch_exclusion(self):
+        """
+        Data-dependent branch: if x.size(0) > 5 creates separate graphs
+        per branch. When a later recompilation creates a dynamic graph for
+        one branch, the exclusion guard must still reject inputs that match
+        an older static graph — even though no dim transitioned.
+
+        1. foo(x=[3,4])  -> Graph 0: x+1 (else branch, static size(0)==3)
+        2. foo(x=[8,4])  -> Graph 1: x*2 (if branch, dynamic size(0),
+                            guard size(0)>5, exclusion Ne(s0,3))
+        3. foo(x=[4,4])  -> Graph 1 rejects (4>5 is False), Graph 0
+                            rejects (4!=3). Recompile:
+                            Graph 2: x+1 (else branch, dynamic size(0),
+                            guard size(0)<=5, exclusion Ne(s0,3) from
+                            Graph 0's static signature)
+        4. foo(x=[3,4])  -> Graph 2 should reject (exclusion Ne(s0,3))
+                            -> falls to Graph 0
+        """
+
+        def foo(x):
+            if x.size(0) > 5:
+                return x * 2
+            return x + 1
+
+        tracker = GraphTracker()
+        opt = torch.compile(foo, backend=tracker)
+
+        # Graph 0: else branch, static
+        opt(torch.randn(3, 4))
+        self.assertEqual(tracker.frame_count, 1)
+        self.assertEqual(tracker.call_log[-1], 0)
+
+        # Graph 1: if branch, dim0 becomes dynamic
+        opt(torch.randn(8, 4))
+        self.assertEqual(tracker.frame_count, 2)
+        self.assertEqual(tracker.call_log[-1], 1)
+
+        # Graph 2: else branch, dynamic (4 <= 5, no graph matches)
+        opt(torch.randn(4, 4))
+        self.assertEqual(tracker.frame_count, 3)
+        self.assertEqual(tracker.call_log[-1], 2)
+
+        # Key: (3, 4) should use Graph 0, not Graph 2
+        opt(torch.randn(3, 4))
+        self.assertEqual(
+            tracker.call_log[-1],
+            0,
+            "Input [3,4] should use Graph 0 (static), not Graph 2 (dynamic else branch)",
+        )
+
+        # Other else-branch inputs use Graph 2
+        opt(torch.randn(4, 4))
+        self.assertEqual(tracker.call_log[-1], 2)
+        opt(torch.randn(5, 4))
+        self.assertEqual(tracker.call_log[-1], 2)
+
+        # If-branch inputs use Graph 1
+        opt(torch.randn(8, 4))
+        self.assertEqual(tracker.call_log[-1], 1)
+
+        self.assertEqual(tracker.frame_count, 3, "No additional recompilations")
+
 
 if __name__ == "__main__":
     run_tests()

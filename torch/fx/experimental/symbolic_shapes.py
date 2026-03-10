@@ -2286,7 +2286,6 @@ class StatefulSymbolicContext(StatelessSymbolicContext):
     shape_env_to_source_to_symbol_cache: dict[int, dict[str, sympy.Expr]] = field(
         default_factory=dict
     )
-    excluded_sizes: tuple[int | None, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3904,11 +3903,11 @@ class ShapeEnv:
         self.unbacked_renamings: dict[sympy.Symbol, sympy.Symbol] = {}
         # Set holds a % b expressions that evaluate to 0.
         self.divisible: set[sympy.Expr] = set()
-        # Exclusion constraints from automatic_dynamic transitions.
-        # Each (symbol, excluded_value) pair represents one dim/scalar that
-        # transitioned static → dynamic. All pairs are combined into a single
-        # Or(Ne(...), ...) guard in produce_guards_verbose.
-        self.exclusion_constraints: list[tuple[sympy.Symbol, int]] = []
+        # Prior cache entry static signatures for per-cache-entry exclusion
+        # guards. Each element is a dict mapping source_name -> int|None
+        # where int means static, None means dynamic.
+        # Populated from prior cache entries before produce_guards_verbose.
+        self.prior_static_signatures: list[dict[str, int | None]] = []
         # Set that holds "size-like" symbols.  When we perform
         # "size-oblivious" tests, these can be assumed to be >= 2.
         self.size_like: set[sympy.Symbol] = set()
@@ -4170,6 +4169,9 @@ class ShapeEnv:
             "_resimplify_floor_div_axioms",
             "_expr_sym_node_id",
             "specialization_stacks",
+            # Populated externally before produce_guards_verbose, not
+            # through recorded shape_env events.
+            "prior_static_signatures",
         )
 
         # Mapping of the value of each to-be-compared field into the values that
@@ -4790,27 +4792,6 @@ class ShapeEnv:
         size: list[sympy.Expr] = self._produce_dyn_sizes_from_int_tuple(
             ex_size, source, symbolic_context, hint_overrides=hint_overrides
         )
-        # Record tensor exclusion constraints for stable graph selection.
-        # The ndim check guards against stale excluded_sizes from graph
-        # breaks where the resumed tensor may have different dimensionality.
-        # Skip dims with hint overrides: the overridden hint in
-        # backed_var_to_val would mismatch the excluded value, causing the
-        # not-all check in produce_guards_verbose to emit a guard that
-        # immediately fails.
-        excluded_sizes = getattr(symbolic_context, "excluded_sizes", None)
-        if (
-            excluded_sizes
-            and len(excluded_sizes) == dim
-            and any(v is not None for v in excluded_sizes)
-        ):
-            for i in range(dim):
-                ev = excluded_sizes[i]
-                if (
-                    ev is not None
-                    and isinstance(size[i], sympy.Symbol)
-                    and i not in (hint_overrides or {})
-                ):
-                    self._record_exclusion_constraint(size[i], ev)
         stride = self._compute_symbolic_stride(
             source,
             size,
@@ -5016,16 +4997,11 @@ class ShapeEnv:
         return out
 
     @record_shapeenv_event()
-    def _record_exclusion_constraint(self, sym: sympy.Symbol, val: int) -> None:
-        self.exclusion_constraints.append((sym, val))
-
-    @record_shapeenv_event()
     def create_unspecified_symint_and_symbol(
         self,
         value: int,
         source: Source,
         dynamic_dim: DimDynamic,
-        excluded_value: int | None = None,
     ) -> IntLikeType:
         """Create a SymInt wrapping a new unspecified symbol"""
         sym = self.create_unspecified_symbol(
@@ -5033,8 +5009,6 @@ class ShapeEnv:
             source=source,
             dynamic_dim=dynamic_dim,
         )
-        if excluded_value is not None:
-            self._record_exclusion_constraint(sym, excluded_value)
         return self.create_symintnode(
             sym,
             hint=value,
@@ -5549,6 +5523,62 @@ class ShapeEnv:
         (no verbose guards produced.)
         """
         return self.produce_guards_verbose(*args, **kwargs, langs=("python",))[0].exprs
+
+    def _emit_per_cache_entry_exclusion_guards(
+        self,
+        symbol_to_source: dict[sympy.Symbol, list[Source]],
+        all_exprs: list[list[str]],
+        printers: list[_ShapeGuardPrinter],
+        langs: tuple[str, ...],
+    ) -> None:
+        """Emit one exclusion guard per prior cache entry.
+
+        For each prior compiled graph, compare its static signature against the
+        current graph. For each source_name that is static (int) in the prior
+        graph but backed by a symbol in the current graph, create Ne(sym, val).
+        Combine all such pairs for one prior graph into a single Or expression.
+        """
+        # Build reverse map: source_name -> symbol for the current graph.
+        source_name_to_symbol: dict[str, sympy.Symbol] = {}
+        for sym, srcs in symbol_to_source.items():
+            for src in srcs:
+                source_name_to_symbol[src.name] = sym
+
+        for prior_sig in self.prior_static_signatures:
+            pairs: list[tuple[sympy.Symbol, int]] = []
+            for source_name, val in prior_sig.items():
+                if val is None:
+                    # Dynamic in the prior graph, no exclusion needed.
+                    continue
+                if not isinstance(val, int):
+                    continue
+                # val is static (int) in the prior graph. Check if it's
+                # backed by a symbol in the current graph (i.e., dynamic).
+                sym = source_name_to_symbol.get(source_name)
+                if sym is not None:
+                    pairs.append((sym, val))
+
+            if not pairs:
+                continue
+
+            # Skip if current concrete values match ALL excluded values
+            # (the guard would fail on creation).
+            if all(self.backed_var_to_val.get(sym) == val for sym, val in pairs):
+                continue
+
+            if len(pairs) == 1:
+                excl_expr = sympy.Ne(pairs[0][0], pairs[0][1], evaluate=False)
+            else:
+                excl_expr = sympy.Or(
+                    *[sympy.Ne(sym, val, evaluate=False) for sym, val in pairs]
+                )
+            for exprs, printer, lang in zip(all_exprs, printers, langs):
+                guard_expr = printer.doprint(excl_expr)
+                if lang == "verbose_python":
+                    guard_expr = (
+                        f"{guard_expr}  # exclusion guard for automatic dynamic"
+                    )
+                exprs.append(guard_expr)
 
     def produce_guards_verbose(
         self,
@@ -6289,64 +6319,34 @@ class ShapeEnv:
                     else:
                         raise NotImplementedError(f"Unimplemented for lang: {lang}")
 
-        # Exclusion guard for stable graph selection with automatic dynamic.
+        # Per-cache-entry exclusion guards for stable graph selection.
         #
-        # When automatic_dynamic promotes a static dim to dynamic, the new
-        # (more general) graph is inserted *before* the old (specialized) graph
-        # in the guard cache.  Without an exclusion guard, inputs that exactly
-        # match the old graph's static sizes would be captured by the new
-        # dynamic graph instead, violating the invariant "once an input is
-        # served by graph X it is always served by graph X".
+        # When automatic_dynamic promotes static dims to dynamic, the new
+        # (more general) graph is inserted *before* older (specialized) graphs
+        # in the guard cache.  Without exclusion guards, inputs that exactly
+        # match an older graph's static sizes would be captured by the new
+        # dynamic graph instead of falling through to the correct prior graph.
         #
-        # Soundness argument (cache-flip / LIFO order):
-        #   Graph_new sits before Graph_old in the cache.  Graph_old accepts
-        #   only inputs whose sizes match its static constraints exactly.
-        #   Graph_new must therefore reject exactly that set of inputs so they
-        #   fall through to Graph_old.  The excluded values are the static
-        #   sizes from Graph_old, so the guard
-        #       Or(Ne(s0, v0), Ne(s1, v1), ...)
-        #   passes iff at least one dim differs from the old sizes — i.e. the
-        #   input does NOT fully match Graph_old.  Conversely, when every dim
-        #   matches the old sizes the guard fails and the input falls through
-        #   to Graph_old, which is guaranteed to accept it.
+        # We derive exclusions directly from prior cache entries' static
+        # signatures.  For each prior graph, we generate one Or(Ne(...), ...)
+        # guard covering the dims/scalars that are static in the prior graph
+        # but dynamic in the current graph.  Each prior graph gets its own
+        # guard expression (AND-ed implicitly since they're separate guards).
         #
-        # All exclusion pairs across all tensors and scalars are flattened
-        # into a single list — each pair is just (symbol, excluded_int),
-        # and the multi-tensor case is the same logic as multi-dim within
-        # one tensor.  The combined Or rejects only when ALL pairs match
-        # simultaneously, which is the exact condition for Graph_old to
-        # accept.  If the current concrete values already match every
-        # excluded value the guard is skipped (it would fail on creation).
+        # The guard Or(Ne(s0, v0), Ne(s1, v1), ...) for a prior graph passes
+        # iff at least one dim differs from that prior graph's static sizes.
+        # When ALL dims match, the guard fails and the input falls through
+        # to the prior graph.
         import torch._dynamo.config as dynamo_config
 
         if (
             dynamo_config.automatic_dynamic_exclusion_guard
             and not dynamo_config.enable_compiler_collectives
-            and self.exclusion_constraints
+            and self.prior_static_signatures
         ):
-            all_pairs = [
-                (sym, val)
-                for sym, val in self.exclusion_constraints
-                if symbol_to_source.get(sym)
-            ]
-            if all_pairs and not all(
-                self.backed_var_to_val.get(sym) == val for sym, val in all_pairs
-            ):
-                if len(all_pairs) == 1:
-                    excl_expr = sympy.Ne(
-                        all_pairs[0][0], all_pairs[0][1], evaluate=False
-                    )
-                else:
-                    excl_expr = sympy.Or(
-                        *[sympy.Ne(sym, val, evaluate=False) for sym, val in all_pairs]
-                    )
-                for exprs, printer, lang in zip(all_exprs, printers, langs):
-                    guard_expr = printer.doprint(excl_expr)
-                    if lang == "verbose_python":
-                        guard_expr = (
-                            f"{guard_expr}  # exclusion guard for automatic dynamic"
-                        )
-                    exprs.append(guard_expr)
+            self._emit_per_cache_entry_exclusion_guards(
+                symbol_to_source, all_exprs, printers, langs
+            )
 
         if constraint_violations:
             warn_msgs: list[str] = []
