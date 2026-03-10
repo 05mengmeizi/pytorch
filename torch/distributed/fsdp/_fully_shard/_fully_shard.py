@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import functools
 from contextlib import contextmanager
-from typing import Any, cast, NoReturn, overload, TYPE_CHECKING
+from typing import Any, cast, Literal, NoReturn, overload, TYPE_CHECKING
 from typing_extensions import deprecated
 
 import torch
@@ -13,6 +13,7 @@ import torch.nn as nn
 from torch.distributed._composable import contract
 
 from ._fsdp_api import AllGather, MixedPrecisionPolicy, OffloadPolicy, ReduceScatter
+from ._fsdp_collectives import SymmMemAllGather
 from ._fsdp_common import FSDPMeshInfo, ShardPlacementFnResult
 from ._fsdp_init import (
     _apply_to_module,
@@ -470,7 +471,7 @@ class FSDPModule:
             module._get_fsdp_state() for module in modules
         ]
 
-    def set_custom_all_gather(self, comm: AllGather) -> None:
+    def set_custom_all_gather(self, comm: AllGather, *, recursive: bool = True) -> None:
         """
         Overrides the default ``all_gather`` communication behavior,
         to have better control over the communication and memory usage.
@@ -478,16 +479,22 @@ class FSDPModule:
 
         Args:
             comm (AllGather): Custom all-gather communication.
+            recursive (bool): Whether to set for all FSDP submodules or just
+                the passed-in module.
         """
-        state = self._get_fsdp_state()
-        if len(state._fsdp_param_groups) > 1:
-            raise ValueError(
-                "set_custom_all_gather is not supported with multiple param "
-                "groups (from per-param mesh via shard_placement_fn). "
-                "The custom comm would be ambiguous across groups with different meshes."
-            )
-        for fsdp_param_group in state._fsdp_param_groups:
-            fsdp_param_group._all_gather_comm = comm
+        self_module = cast(nn.Module, self)
+        modules = list(self_module.modules()) if recursive else [self_module]
+        for module in modules:
+            if isinstance(module, FSDPModule):
+                state = module._get_fsdp_state()
+                if len(state._fsdp_param_groups) > 1:
+                    raise ValueError(
+                        "set_custom_all_gather is not supported with multiple param "
+                        "groups (from per-param mesh via shard_placement_fn). "
+                        "The custom comm would be ambiguous across groups with different meshes."
+                    )
+                for fsdp_param_group in state._fsdp_param_groups:
+                    fsdp_param_group._all_gather_comm = comm
 
     def set_custom_reduce_scatter(self, comm: ReduceScatter) -> None:
         """
@@ -607,6 +614,46 @@ class FSDPModule:
         state = self._get_fsdp_state()
         for fsdp_param_group in state._fsdp_param_groups:
             fsdp_param_group.unshard_in_backward = unshard_in_backward
+
+    def set_symm_mem_for_comm(self, backend: Literal["NCCL"] = "NCCL") -> None:
+        """
+        Sets the symmetric memory (``symm_mem``) backend for allocating the
+        staging buffers used in all-gather collectives. This allows NCCL to use
+        optimized all-gather implementations via symmetric memory. Such
+        optimization may depend on the topology of the system. For single node,
+        Copy Engine All-Gather may be used. For multi-node, Symmetric Kernel
+        All-Gather may be used.
+
+        To enable Copy Engine All-Gather, you need to set the NCCL process group
+        with the zero-CTA policy.
+
+        .. code-block:: python
+
+            opts = dist.ProcessGroupNCCL.Options()
+            opts.config.cta_policy = dist.ProcessGroupNCCL.NCCL_CTA_POLICY_ZERO
+            dist.init_process_group(backend="nccl", pg_options=opts, device_id=device)
+
+        Alternatively, you can set the environment variable ``NCCL_CTA_POLICY`` to 2.
+
+        .. code-block:: bash
+
+            export NCCL_CTA_POLICY=2
+
+        For more details, see `Copy Engine
+        Collectives <https://docs.pytorch.org/docs/2.11/symmetric_memory.html#copy-engine-collectives>`_.
+
+        This cannot be used together with :meth:`set_custom_all_gather` or
+        :meth:`set_custom_reduce_scatter`.
+
+        Args:
+            backend (str): The symmetric memory backend to use. Defaults to
+                ``"NCCL"``. Currently, only ``"NCCL"`` is supported.
+        """
+        state = self._get_fsdp_state()
+        if not state._fsdp_param_groups:
+            return
+        group = state._fsdp_param_groups[0]._all_gather_process_group
+        self.set_custom_all_gather(SymmMemAllGather(group, backend))
 
     def set_allocate_memory_from_process_group_for_comm(self, enable: bool) -> None:
         """
