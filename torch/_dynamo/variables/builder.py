@@ -63,6 +63,7 @@ from torch._library.opaque_object import (
     is_opaque_value_type,
     should_hoist,
 )
+from torch._opaque_base import OpaqueBase
 from torch._ops import HigherOrderOperator, OpOverload, OpOverloadPacket
 from torch._subclasses.fake_tensor import (
     FakeTensor,
@@ -203,7 +204,7 @@ from .dicts import (
     OrderedSetVariable,
     SetVariable,
 )
-from .distributed import DeviceMeshVariable, WorldMetaClassVariable
+from .distributed import WorldMetaClassVariable
 from .functions import (
     BuiltinMethodVariable,
     CollectionsNamedTupleFunction,
@@ -1228,10 +1229,6 @@ class VariableBuilder:
             return DispatchKeySetVariable(value)
         elif WorldMetaClassVariable.is_group_member_type(value):
             return WorldMetaClassVariable(value, source=self.source)
-        elif DeviceMeshVariable.is_device_mesh(value):
-            # TODO: see if we need to add custom guard instead of a simple ID_MATCH
-            self.install_guards(GuardBuilder.EQUALS_MATCH)
-            return DeviceMeshVariable(value, source=self.source)
         elif value is OrderedSet:
             self.install_guards(GuardBuilder.ID_MATCH)
             return OrderedSetClassVariable()
@@ -1524,6 +1521,12 @@ class VariableBuilder:
                 ScriptObjectQualifiedNameSource,
             )
 
+            # Unwrap FakeScriptObject to the underlying real object so the
+            # rest of this branch (guards, graph inputs, etc.) operates on
+            # the real opaque object type.
+            if isinstance(value, torch._library.fake_class_registry.FakeScriptObject):
+                value = value.real_obj
+
             # type: ignore[arg-type]
             if torch._library.fake_class_registry.tracing_with_real(value):
                 proxy = self.tx.output.root_tracer.create_graph_input(
@@ -1586,6 +1589,16 @@ class VariableBuilder:
             )
             if is_opaque_value_type(type(value)) and not should_hoist(type(value)):
                 proxy = value
+
+            elif config.install_free_tensors and (
+                is_from_global_source(self.source)
+                or is_from_nonlocal_source(self.source)
+                or is_from_unspecialized_nn_module_source(self.source)
+            ):
+                return self.tx.output.register_attr_or_module(
+                    value, self.name, source=self.source
+                )
+
             else:
                 proxy = self.tx.output.root_tracer.create_graph_input(
                     re.sub(r"[^a-zA-Z0-9]+", "_", self.name),
@@ -2494,6 +2507,15 @@ class VariableBuilder:
             attrs, _ = value.__tensor_flatten__()
             for attr in attrs:
                 inner_value = getattr(value, attr)
+                if not isinstance(
+                    inner_value, torch.Tensor
+                ) and not is_opaque_reference_type(type(inner_value)):
+                    raise RuntimeError(
+                        f"{type(inner_value).__name__!r} found in tensor attrs of "
+                        f"{type(value).__name__}.__tensor_flatten__(). "
+                        "Only tensors and reference-type opaques are allowed "
+                        "in tensor attrs."
+                    )
                 inner_source = AttrSource(self.source, attr)
                 LazyVariableTracker.realize_all(
                     VariableBuilder(self.tx, inner_source)(inner_value)
@@ -3697,11 +3719,18 @@ def _automatic_dynamic(
         inner_contexts = {}  # mapping from attr -> symbolic context
         attrs, _ = type(e).__tensor_flatten__(e)
         for attr in attrs:
-            inner_tensor = getattr(e, attr)
-            inner_source = AttrSource(source, attr)
-            inner_contexts[attr] = _automatic_dynamic(
-                inner_tensor, tx, inner_source, static_shapes
-            )
+            match getattr(e, attr):
+                case torch.Tensor() as inner_value:
+                    inner_source = AttrSource(source, attr)
+                    inner_contexts[attr] = _automatic_dynamic(
+                        inner_value, tx, inner_source, static_shapes
+                    )
+                case OpaqueBase():
+                    pass
+                case unexpected:
+                    raise AssertionError(
+                        f"expected Tensor or OpaqueBase, got {type(unexpected)}"
+                    )
 
         return SubclassSymbolicContext(
             dynamic_sizes=outer_context.dynamic_sizes,
@@ -3933,6 +3962,7 @@ def _automatic_dynamic(
         tensor_source=source,
         shape_env_to_source_to_symbol_cache=shape_env_to_source_to_symbol_cache,
         shape_ids=getattr(e, "_dynamo_shape_ids", None),
+        unbacked_bounds=getattr(e, "_dynamo_unbacked_bounds", None),
     )
 
 
@@ -4183,8 +4213,6 @@ class SourcelessBuilder:
             return SourcelessGraphModuleVariable(value)
         elif isinstance(value, torch.utils._pytree.TreeSpec):
             return UserDefinedObjectVariable(value)
-        elif DeviceMeshVariable.is_device_mesh(value):
-            return DeviceMeshVariable(value)
         elif isinstance(value, re.Pattern):
             return ConstantLikeVariable(value)
         elif isinstance(value, torch._dynamo.variables.lazy.LazySymNodeFormatString):
