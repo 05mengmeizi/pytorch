@@ -471,7 +471,6 @@ class BaseUserFunctionVariable(VariableTracker):
                 name,
                 lambda: variables.ConstDictVariable(
                     {},
-                    # source=self.source and AttrSource(self.source, "__annotations__"),
                     mutation_type=ValueMutationNew(),
                 ),
             )
@@ -480,7 +479,7 @@ class BaseUserFunctionVariable(VariableTracker):
                 name,
                 lambda: variables.TupleVariable(
                     [],
-                    source=self.source and AttrSource(self.source, "__type_params__"),
+                    mutation_type=ValueMutationNew(),
                 ),
             )
         else:
@@ -676,7 +675,7 @@ class UserFunctionVariable(BaseUserFunctionVariable):
         return result
 
     def var_getattr(self, tx: "InstructionTranslator", name: str) -> VariableTracker:
-        if name in ("__dict__",):
+        if name == "__dict__":
             return super().var_getattr(tx, name)
         elif name in cmp_name_to_op_mapping:
             return variables.GetAttrVariable(self, name)
