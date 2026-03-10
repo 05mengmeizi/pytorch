@@ -358,6 +358,7 @@ class StatefulObject(OpaqueBase):
     def __init__(self, scale: float | torch.Tensor):
         self.scale = scale
 
+
 register_opaque_type(
     StatefulObject,
     typ="reference",
@@ -876,7 +877,9 @@ class TestOpaqueObject(TestCase):
         @torch.library.custom_op(
             "_TestOpaqueObject::scale_with_stateful_object", mutates_args=[]
         )
-        def scale_with_stateful_object(x: torch.Tensor, state: StatefulObject) -> torch.Tensor:
+        def scale_with_stateful_object(
+            x: torch.Tensor, state: StatefulObject
+        ) -> torch.Tensor:
             return x * state.scale
 
         @scale_with_stateful_object.register_fake

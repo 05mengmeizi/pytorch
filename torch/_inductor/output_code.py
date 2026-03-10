@@ -50,6 +50,7 @@ from torch._inductor.utils import (
     output_node,
     set_tracing_context_output_strides,
 )
+from torch._library.fake_class_registry import FakeScriptObject
 from torch.fx._graph_pickler import _node_metadata_key_filter_safe, _ops_filter_safe
 from torch.utils._ordered_set import OrderedSet
 from torch.utils._python_dispatch import is_in_torch_dispatch_mode
@@ -57,8 +58,6 @@ from torch.utils._python_dispatch import is_in_torch_dispatch_mode
 from . import config
 from .runtime.autotune_cache import AutotuneCacheBundler
 
-
-from torch._library.fake_class_registry import FakeScriptObject
 
 if TYPE_CHECKING:
     from collections import Counter
