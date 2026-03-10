@@ -495,7 +495,17 @@ def call_torch_function(
         VariableTracker.build(tx, tuple(args)),
         VariableTracker.build(tx, kwargs),
     ]
-    return torch_function_var.call_function(tx, tf_args, {})
+    # Mirror the C++ THPModule_disable_torch_function behavior: disable
+    # __torch_function__ subclass dispatch during the call to prevent
+    # re-entrant dispatch on operations inside __torch_function__.
+    tf_state = tx.symbolic_torch_function_state
+    old_subclass_enabled = tf_state.torch_function_subclass_enabled
+    if old_subclass_enabled:
+        tf_state.torch_function_subclass_enabled = False
+    try:
+        return torch_function_var.call_function(tx, tf_args, {})
+    finally:
+        tf_state.torch_function_subclass_enabled = old_subclass_enabled
 
 
 def get_torch_function_fn(
@@ -555,6 +565,7 @@ def dispatch_torch_function(
         )
 
         if not res.is_constant_match(NotImplemented):
+            tx.output.torch_function_subclass_inlined = True
             return res
 
     unimplemented(
