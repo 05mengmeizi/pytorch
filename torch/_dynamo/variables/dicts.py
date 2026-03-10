@@ -25,6 +25,7 @@ import types
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any, Literal, Optional, TYPE_CHECKING, Union
 
+import torch
 from torch.utils._ordered_set import OrderedSet
 from torch.utils._pytree import MappingKey
 
@@ -267,11 +268,24 @@ class ConstDictVariable(VariableTracker):
     def __contains__(self, vt: VariableTracker) -> bool:
         assert isinstance(vt, VariableTracker)
         Hashable = ConstDictVariable._HashableTracker
-        return (
-            vt.is_python_hashable()
-            and Hashable(vt) in self.items
-            and not isinstance(self.items[Hashable(vt)], variables.DeletedVariable)
-        )
+        if not vt.is_python_hashable():
+            return False
+        if Hashable(vt) in self.items and not isinstance(
+            self.items[Hashable(vt)], variables.DeletedVariable
+        ):
+            return True
+        if vt.is_python_constant():
+            try:
+                const_vt = VariableTracker.build(
+                    None, vt.as_python_constant()
+                )
+                if const_vt.is_python_hashable() and Hashable(const_vt) in self.items:
+                    return not isinstance(
+                        self.items[Hashable(const_vt)], variables.DeletedVariable
+                    )
+            except Exception:
+                pass
+        return False
 
     def call_tree_map_branch(
         self,
@@ -773,12 +787,35 @@ class ConstDictVariable(VariableTracker):
                     f"{len(args)} args and {len(kwargs)} kwargs",
                 )
 
-            arg_hashable = args and is_hashable(args[0])
-            if not arg_hashable:
-                raise_unhashable(args[0], tx)
+            from .lists import SizeVariable
+            from .tensor import TensorVariable
 
-            self.install_dict_contains_guard(tx, args)
-            contains = args[0] in self
+            key = args[0]
+            if isinstance(key, SizeVariable) and key not in self:
+                try:
+                    resolved_items = []
+                    for item in key.items:
+                        if item.is_python_constant():
+                            resolved_items.append(item.as_python_constant())
+                        elif isinstance(item, TensorVariable):
+                            example = item.as_proxy().node.meta.get("example_value", None)
+                            if example is not None:
+                                resolved_items.append(example.item())
+                            else:
+                                raise NotImplementedError
+                        else:
+                            raise NotImplementedError
+                    const_key = torch.Size(resolved_items)
+                    key = VariableTracker.build(tx, const_key)
+                except (NotImplementedError, RuntimeError):
+                    pass
+
+            arg_hashable = is_hashable(key)
+            if not arg_hashable:
+                raise_unhashable(key, tx)
+
+            self.install_dict_contains_guard(tx, [key])
+            contains = key in self
             return VariableTracker.build(tx, contains)
         elif name == "setdefault" and self.is_mutable():
             if len(args) not in (1, 2):
