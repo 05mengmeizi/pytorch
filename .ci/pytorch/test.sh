@@ -1159,6 +1159,18 @@ test_libtorch_profiler() {
   python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler
 }
 
+test_libtorch_profiler() {
+  export CPP_TESTS_DIR="${TORCH_BIN_DIR}"
+
+  # Run E2E test in its own process (needs clean Kineto state)
+  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler \
+    -- --gtest_filter=PrivateUse1ProfilerTest.EndToEndProfiling
+
+  # Run all other tests in a separate process (negative filter with '-')
+  python test/run_test.py --cpp --verbose -i cpp/test_privateuse1_profiler \
+    -- --gtest_filter=-PrivateUse1ProfilerTest.EndToEndProfiling
+}
+
 test_libtorch_api() {
   # Start background download
   MNIST_DIR="${PWD}/test/cpp/api/mnist"
