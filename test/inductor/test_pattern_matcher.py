@@ -1380,7 +1380,7 @@ class TestPatternMatcher(TestCase):
                 actual, (code) = run_and_get_code(opt_fn, args[0], args[1], args[2])
                 # pattern should match
                 self.assertEqual(counter, 1)
-                torch.testing.assert_close(actual, expected)
+                self.assertEqual(actual, expected)
                 # addmm should be replaced
                 FileCheck().check_not("extern_kernels.addmm(").run(code[0])
 
@@ -1428,7 +1428,7 @@ class TestPatternMatcher(TestCase):
             actual, (code) = run_and_get_code(opt_fn, args[0], args[1], args[2])
             # pattern should match
             self.assertEqual(counter, 1)
-            torch.testing.assert_close(actual, expected)
+            self.assertEqual(actual, expected)
             # addmm should be replaced
             FileCheck().check_not("extern_kernels.addmm(").run(code[0])
 
