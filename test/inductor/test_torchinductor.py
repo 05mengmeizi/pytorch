@@ -15944,9 +15944,7 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
             if not self.is_dtype_supported(dtype):
                 continue
             self.common(
-                lambda x: torch.nn.functional.pad(
-                    torch.nn.functional.gelu(x), [1, 0]
-                ),
+                lambda x: torch.nn.functional.pad(torch.nn.functional.gelu(x), [1, 0]),
                 (torch.randn(8, 16, dtype=dtype, device=self.device),),
                 check_lowp=False,
             )
