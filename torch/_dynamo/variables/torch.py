@@ -349,15 +349,15 @@ def get_overridable_functions() -> set[Callable[..., Any]]:
     from itertools import chain
 
     from torch.overrides import get_overridable_functions as get_overridable_functions_
+    from torch.utils._device import _device_constructors
 
     funcs = set(chain.from_iterable(get_overridable_functions_().values()))
+    funcs.update(_device_constructors())
     more: set[Callable[..., Any]] = {
-        torch.ones,
         torch.ones_like,
-        torch.zeros,
         torch.zeros_like,
-        torch.empty,
-        torch.full,
+        torch.empty_like,
+        torch.full_like,
     }
     funcs.update(more)
     return funcs
@@ -1415,8 +1415,26 @@ class TorchInGraphFunctionVariable(BaseTorchVariable):
                 )
             return None
 
-        @register(torch.fx.experimental.symbolic_shapes.size_hint)
-        def handle_size_hint(
+        @register(torch.fx.experimental.symbolic_shapes.guarding_hint_or_throw)
+        def handle_guarding_hint_or_throw(
+            self,
+            tx: "InstructionTranslator",
+            expr: VariableTracker,
+        ) -> VariableTracker | None:
+            if isinstance(expr, SymNodeVariable):
+                return VariableTracker.build(
+                    tx,
+                    torch.fx.experimental.symbolic_shapes.guarding_hint_or_throw(
+                        expr.sym_num
+                    ),
+                )
+            elif expr.is_python_constant():
+                return expr
+            else:
+                return None
+
+        @register(torch.fx.experimental.symbolic_shapes.optimization_hint)
+        def handle_optimization_hint(
             self,
             tx: "InstructionTranslator",
             expr: VariableTracker,
@@ -1426,7 +1444,7 @@ class TorchInGraphFunctionVariable(BaseTorchVariable):
             if isinstance(expr, SymNodeVariable):
                 return VariableTracker.build(
                     tx,
-                    torch.fx.experimental.symbolic_shapes.size_hint(
+                    torch.fx.experimental.symbolic_shapes.optimization_hint(
                         expr.sym_num, fallback_int
                     ),
                 )

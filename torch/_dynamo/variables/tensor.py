@@ -34,6 +34,7 @@ import torch.fx
 import torch.random
 from torch._dynamo import compiled_autograd
 from torch._library.opaque_object import is_opaque_reference_type
+from torch._opaque_base import OpaqueBase
 from torch._subclasses.meta_utils import is_sparse_any
 from torch.fx.experimental.symbolic_shapes import (
     guard_scalar,
@@ -333,8 +334,8 @@ class TensorVariable(VariableTracker):
             proxy = getattr(self.as_proxy(), name)
             example_value = getattr(fake_val, name)
             if name in attrs:
-                # attrs returned from tensor_flatten are always tensors
-                assert isinstance(example_value, torch.Tensor)
+                # attrs returned from tensor_flatten are always tensors or opaques
+                assert isinstance(example_value, (torch.Tensor, OpaqueBase))
                 from .builder import wrap_fx_proxy
 
                 return wrap_fx_proxy(tx=tx, proxy=proxy, example_value=example_value)
@@ -384,12 +385,14 @@ class TensorVariable(VariableTracker):
         try:
             real_value = getattr(_input_associated_real_value, name)
         except AttributeError:
+            error_message = VariableTracker.build(
+                tx,
+                f"'{type(_input_associated_real_value).__name__}' object has no attribute '{name}'",
+            )
             raise_observed_exception(
                 AttributeError,
                 tx,
-                args=[
-                    f"'{type(_input_associated_real_value).__name__}' object has no attribute '{name}'"
-                ],
+                args=[error_message],
             )
 
         attr_source = AttrSource(self.source, name)
