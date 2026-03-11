@@ -1104,6 +1104,10 @@ class aten_distributed_optimizations:
     # doesn't block compute/AG on the main stream.
     manual_bucketing_rs_stream: bool = False
 
+    # Run AG and RS on dedicated CUDA streams (like FSDP2) so neither
+    # blocks the compute stream.  Supersedes manual_bucketing_rs_stream.
+    manual_bucketing_comm_streams: bool = False
+
     # Prioritize bucketing during overlap scheduling by grouping candidates by bucket key
     prioritize_bucketing_during_scheduling: bool = True
 

@@ -31,18 +31,21 @@ C10_EXPORT std::vector<at::Tensor> all_gather_into_tensor_coalesced(
     std::vector<at::Tensor> inputs,
     int64_t group_size,
     // NOLINTNEXTLINE(performance-unnecessary-value-param)
-    std::string group_name);
+    std::string group_name,
+    bool async_op = true);
 
 C10_EXPORT at::Tensor all_gather_into_tensor(
     const at::Tensor& input,
     int64_t group_size,
-    std::string group_name);
+    std::string group_name,
+    bool async_op = true);
 
 C10_EXPORT at::Tensor& all_gather_into_tensor_out(
     at::Tensor& input,
     int64_t group_size,
     const std::string& group_name,
-    at::Tensor& output);
+    at::Tensor& output,
+    bool async_op = true);
 
 C10_EXPORT std::vector<at::Tensor> reduce_scatter_tensor_coalesced(
     std::vector<at::Tensor> inputs,
@@ -50,20 +53,23 @@ C10_EXPORT std::vector<at::Tensor> reduce_scatter_tensor_coalesced(
     std::string reduce_op,
     int64_t group_size,
     // NOLINTNEXTLINE(performance-unnecessary-value-param)
-    std::string group_name);
+    std::string group_name,
+    bool async_op = true);
 
 C10_EXPORT at::Tensor reduce_scatter_tensor(
     const at::Tensor& input,
     std::string reduce_op,
     int64_t group_size,
-    std::string group_name);
+    std::string group_name,
+    bool async_op = true);
 
 C10_EXPORT at::Tensor reduce_scatter_tensor_out(
     const at::Tensor& input,
     std::string reduce_op,
     int64_t group_size,
     std::string group_name,
-    at::Tensor& output);
+    at::Tensor& output,
+    bool async_op = true);
 
 C10_EXPORT at::Tensor all_to_all_single(
     const at::Tensor& input,

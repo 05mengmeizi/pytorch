@@ -135,7 +135,8 @@ std::vector<at::Tensor> all_gather_into_tensor_coalesced(
     std::vector<at::Tensor> inputs,
     int64_t group_size,
     // NOLINTNEXTLINE(performance-unnecessary-value-param)
-    std::string group_name) {
+    std::string group_name,
+    bool async_op) {
   std::vector<at::Tensor> outputs;
   outputs.reserve(inputs.size());
   for (const auto& tensor : inputs) {
@@ -143,8 +144,10 @@ std::vector<at::Tensor> all_gather_into_tensor_coalesced(
     outputs.push_back(allocate_all_gather_output(tensor, group_size));
   }
 
+  c10d::AllgatherOptions ag_opts;
+  ag_opts.asyncOp = async_op;
   auto group = c10d::resolve_process_group(group_name);
-  auto work = group->allgather_into_tensor_coalesced(outputs, inputs);
+  auto work = group->allgather_into_tensor_coalesced(outputs, inputs, ag_opts);
   for (const auto& tensor : outputs) {
     c10d::register_work(tensor, work);
   }
@@ -154,12 +157,13 @@ std::vector<at::Tensor> all_gather_into_tensor_coalesced(
 at::Tensor all_gather_into_tensor(
     const at::Tensor& input,
     int64_t group_size,
-    std::string group_name) {
+    std::string group_name,
+    bool async_op) {
   TORCH_CHECK(input.is_contiguous());
   auto real_input = input.is_complex() ? at::view_as_real(input) : input;
   std::vector<at::Tensor> inputs{real_input};
   auto output = all_gather_into_tensor_coalesced(
-      inputs, group_size, std::move(group_name))[0];
+      inputs, group_size, std::move(group_name), async_op)[0];
   return input.is_complex() ? at::view_as_complex(output) : output;
 }
 
@@ -167,9 +171,11 @@ at::Tensor& all_gather_into_tensor_out(
     at::Tensor& input,
     int64_t group_size,
     const std::string& group_name,
-    at::Tensor& output) {
+    at::Tensor& output,
+    bool async_op) {
   TORCH_CHECK(input.is_contiguous());
   c10d::AllgatherOptions opts;
+  opts.asyncOp = async_op;
 
   auto group = c10d::resolve_process_group(group_name);
   auto work = group->_allgather_base(output, input, opts);
@@ -183,9 +189,11 @@ std::vector<at::Tensor> reduce_scatter_tensor_coalesced(
     std::string reduce_op,
     int64_t group_size,
     // NOLINTNEXTLINE(performance-unnecessary-value-param)
-    std::string group_name) {
+    std::string group_name,
+    bool async_op) {
   c10d::ReduceScatterOptions opts;
   opts.reduceOp = to_reduce_op(reduce_op);
+  opts.asyncOp = async_op;
   std::vector<at::Tensor> outputs;
   outputs.reserve(inputs.size());
   for (const auto& tensor : inputs) {
@@ -208,9 +216,11 @@ static std::vector<at::Tensor> reduce_scatter_tensor_coalesced_out(
     int64_t group_size,
     // NOLINTNEXTLINE(performance-unnecessary-value-param)
     std::string group_name,
-    std::vector<at::Tensor>& outputs) {
+    std::vector<at::Tensor>& outputs,
+    bool async_op) {
   c10d::ReduceScatterOptions opts;
   opts.reduceOp = to_reduce_op(reduce_op);
+  opts.asyncOp = async_op;
 
   auto group = c10d::resolve_process_group(std::move(group_name));
   auto work = group->reduce_scatter_tensor_coalesced(outputs, inputs, opts);
@@ -224,17 +234,18 @@ at::Tensor reduce_scatter_tensor(
     const at::Tensor& input,
     std::string reduce_op,
     int64_t group_size,
-    std::string group_name) {
+    std::string group_name,
+    bool async_op) {
   TORCH_CHECK(input.is_contiguous());
   if (input.is_complex()) {
     auto real_input = at::view_as_real(input);
     std::vector<at::Tensor> inputs{real_input};
     return at::view_as_complex(reduce_scatter_tensor_coalesced(
-        inputs, std::move(reduce_op), group_size, std::move(group_name))[0]);
+        inputs, std::move(reduce_op), group_size, std::move(group_name), async_op)[0]);
   }
   std::vector<at::Tensor> inputs{input};
   return reduce_scatter_tensor_coalesced(
-      inputs, std::move(reduce_op), group_size, std::move(group_name))[0];
+      inputs, std::move(reduce_op), group_size, std::move(group_name), async_op)[0];
 }
 
 at::Tensor reduce_scatter_tensor_out(
@@ -242,7 +253,8 @@ at::Tensor reduce_scatter_tensor_out(
     std::string reduce_op,
     int64_t group_size,
     std::string group_name,
-    at::Tensor& output) {
+    at::Tensor& output,
+    bool async_op) {
   TORCH_CHECK(input.is_contiguous());
   if (input.is_complex()) {
     TORCH_CHECK(output.is_complex())
@@ -255,7 +267,8 @@ at::Tensor reduce_scatter_tensor_out(
         std::move(reduce_op),
         group_size,
         std::move(group_name),
-        outputs)[0]);
+        outputs,
+        async_op)[0]);
   }
   std::vector<at::Tensor> inputs{std::move(input)};
   std::vector<at::Tensor> outputs{std::move(output)};
@@ -264,7 +277,8 @@ at::Tensor reduce_scatter_tensor_out(
       std::move(reduce_op),
       group_size,
       std::move(group_name),
-      outputs)[0];
+      outputs,
+      async_op)[0];
 }
 
 at::Tensor all_to_all_single(
@@ -352,42 +366,42 @@ TORCH_LIBRARY(_c10d_functional, m) {
       {at::Tag::pt2_compliant_tag});
 
   m.def(
-      "all_gather_into_tensor_out(Tensor input, int group_size, str group_name, *, Tensor(a!) out) -> Tensor(a!)",
+      "all_gather_into_tensor_out(Tensor input, int group_size, str group_name, *, Tensor(a!) out, bool async_op=True) -> Tensor(a!)",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::all_gather_into_tensor_out),
       {at::Tag::pt2_compliant_tag, at::Tag::needs_contiguous_strides});
 
   m.def(
-      "all_gather_into_tensor(Tensor input, int group_size, str group_name) -> Tensor",
+      "all_gather_into_tensor(Tensor input, int group_size, str group_name, bool async_op=True) -> Tensor",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::all_gather_into_tensor),
       {at::Tag::pt2_compliant_tag, at::Tag::needs_contiguous_strides});
 
   m.def(
-      "all_gather_into_tensor_coalesced(Tensor[] inputs, int group_size, str group_name) -> Tensor[]",
+      "all_gather_into_tensor_coalesced(Tensor[] inputs, int group_size, str group_name, bool async_op=True) -> Tensor[]",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::all_gather_into_tensor_coalesced),
       {at::Tag::pt2_compliant_tag, at::Tag::needs_contiguous_strides});
 
   m.def(
-      "reduce_scatter_tensor(Tensor input, str reduce_op, int group_size, str group_name) -> Tensor",
+      "reduce_scatter_tensor(Tensor input, str reduce_op, int group_size, str group_name, bool async_op=True) -> Tensor",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::reduce_scatter_tensor),
       {at::Tag::pt2_compliant_tag, at::Tag::needs_contiguous_strides});
 
   m.def(
-      "reduce_scatter_tensor_out(Tensor input, str reduce_op, int group_size, str group_name, *, Tensor(a!) out) -> Tensor(a!)",
+      "reduce_scatter_tensor_out(Tensor input, str reduce_op, int group_size, str group_name, *, Tensor(a!) out, bool async_op=True) -> Tensor(a!)",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::reduce_scatter_tensor_out),
       {at::Tag::pt2_compliant_tag, at::Tag::needs_contiguous_strides});
 
   m.def(
-      "reduce_scatter_tensor_coalesced(Tensor[] inputs, str reduce_op, int group_size, str group_name) -> Tensor[]",
+      "reduce_scatter_tensor_coalesced(Tensor[] inputs, str reduce_op, int group_size, str group_name, bool async_op=True) -> Tensor[]",
       torch::dispatch(
           c10::DispatchKey::CompositeExplicitAutograd,
           c10d::reduce_scatter_tensor_coalesced),
@@ -500,7 +514,7 @@ class ReduceScatterTensor
     return c10::Dispatcher::singleton()
         .findSchemaOrThrow("_c10d_functional::reduce_scatter_tensor", "")
         .typed<decltype(c10d::reduce_scatter_tensor)>()
-        .call(input, reduce_op, group_size, group_name);
+        .call(input, reduce_op, group_size, group_name, /*async_op=*/true);
   }
 
   static torch::autograd::variable_list backward(
@@ -516,7 +530,7 @@ class ReduceScatterTensor
         c10::Dispatcher::singleton()
             .findSchemaOrThrow("_c10d_functional::all_gather_into_tensor", "")
             .typed<decltype(c10d::all_gather_into_tensor)>()
-            .call(grad_out, group_size, group_name);
+            .call(grad_out, group_size, group_name, /*async_op=*/true);
 
     // do an explicit wait to avoid cuda stream issues
     // TODO: track active cuda stream in wait
@@ -556,7 +570,7 @@ class AllGatherIntoTensor
     return c10::Dispatcher::singleton()
         .findSchemaOrThrow("_c10d_functional::all_gather_into_tensor", "")
         .typed<decltype(c10d::all_gather_into_tensor)>()
-        .call(input, group_size, group_name);
+        .call(input, group_size, group_name, /*async_op=*/true);
   }
 
   static torch::autograd::variable_list backward(
@@ -572,7 +586,7 @@ class AllGatherIntoTensor
         c10::Dispatcher::singleton()
             .findSchemaOrThrow("_c10d_functional::reduce_scatter_tensor", "")
             .typed<decltype(c10d::reduce_scatter_tensor)>()
-            .call(grad_out, "sum", group_size, group_name);
+            .call(grad_out, "sum", group_size, group_name, /*async_op=*/true);
 
     // do an explicit wait to avoid cuda stream issues
     // TODO: track active cuda stream in wait

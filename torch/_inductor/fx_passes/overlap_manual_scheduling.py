@@ -321,7 +321,18 @@ class ManualOverlapScheduler(OverlapScheduler):
         _stable_topological_sort(self.graph, overlap_deps)
         self.graph.lint()
 
-        if config.aten_distributed_optimizations.manual_bucketing_rs_stream:
+        if config.aten_distributed_optimizations.manual_bucketing_comm_streams:
+            _tag = {
+                "bucketed_all_gather": "ag",
+                "bucketed_all_gather_wait": "ag",
+                "bucketed_reduce_scatter": "rs",
+                "bucketed_reduce_scatter_wait": "rs",
+            }
+            for node in self.graph.nodes:
+                stream = _tag.get(node.meta.get("manual_bucket_node_type", ""))
+                if stream is not None:
+                    node.meta["use_comm_stream"] = stream
+        elif config.aten_distributed_optimizations.manual_bucketing_rs_stream:
             for node in self.graph.nodes:
                 if (
                     node.meta.get("manual_bucket_node_type")

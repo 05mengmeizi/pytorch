@@ -9749,11 +9749,42 @@ class GeneratorState(NonTensorObj):
 
 
 class _CollectiveKernel(FallbackKernel):
+    # Set by create_inplace/create_out_of_place when the FX node
+    # requests a dedicated comm stream ("ag" or "rs").
+    use_comm_stream: Optional[str] = None
+
     def should_allocate(self) -> bool:
         return False
 
     def has_side_effects(self) -> bool:
         return True
+
+    @staticmethod
+    def _maybe_set_comm_stream(packed: _CollectiveKernel) -> None:
+        origin = V.graph.current_node
+        if origin is not None:
+            stream = origin.meta.get("use_comm_stream")
+            if stream is not None:
+                packed.use_comm_stream = stream
+
+    def codegen(self, wrapper: PythonWrapperCodegen) -> None:
+        device_idx: int = -1
+        if self.use_comm_stream:
+            device = self.get_device()
+            assert device is not None
+            device_idx = device.index
+            wrapper.add_import_once(
+                "from torch._inductor.runtime.comm_streams import switch_to_comm_stream, restore_stream as restore_comm_stream"
+            )
+            wrapper.writeline(
+                f'switch_to_comm_stream("{self.use_comm_stream}", {device_idx})'
+            )
+            # Sync collective on comm stream: NCCL kernel runs on current
+            # (comm) stream instead of NCCL's internal stream.
+            self.kwargs["async_op"] = False
+        super().codegen(wrapper)
+        if self.use_comm_stream:
+            wrapper.writeline(f"restore_comm_stream({device_idx})")
 
     # This is identical to FallbackKernel.set_cpp_kernel(), minus the
     # part that checks against input aliasing and mutation.
@@ -9806,6 +9837,7 @@ class _CollectiveKernel(FallbackKernel):
             non_tensor_args,
             unflatten_args,
         )
+        cls._maybe_set_comm_stream(packed)
 
         inps = pytree.tree_leaves(inputs)
         packed.mutation_outputs.extend(
@@ -9874,6 +9906,7 @@ class _CollectiveKernel(FallbackKernel):
                 non_tensor_args,
                 unflatten_args,
             )
+            cls._maybe_set_comm_stream(packed)
             packed.outputs = [
                 MultiOutput(
                     cls.tensor_to_layout(tensor),
@@ -9896,6 +9929,7 @@ class _CollectiveKernel(FallbackKernel):
                 non_tensor_args,
                 unflatten_args,
             )
+            cls._maybe_set_comm_stream(packed)
             if config.assume_unaligned_fallback_output or not tensor_is_aligned(
                 example_output
             ):
@@ -9992,7 +10026,25 @@ class _WaitKernel(_CollectiveKernel):
 
     def codegen(self, wrapper: PythonWrapperCodegen) -> None:
         wrapper.include_extra_header("torch/csrc/inductor/aoti_torch/c/shim_cpu.h")
-        if self.use_rs_stream:
+        if self.use_comm_stream == "ag":
+            # With sync collectives on comm streams, ncclEndEvent_ is recorded
+            # on the AG stream.  wait_tensor on compute stream does
+            # ncclEndEvent_->block(computeStream) which is the sync we need.
+            wrapper.generate_extern_kernel_alloc(self)
+        elif self.use_comm_stream == "rs":
+            # RS output is consumed outside the compiled graph (optimizer).
+            # Run wait_tensor on RS stream to drain the Work registry.
+            device = self.get_device()
+            assert device is not None
+            device_idx = device.index
+            wrapper.add_import_once(
+                "from torch._inductor.runtime.comm_streams import "
+                "switch_to_comm_stream, restore_stream as restore_comm_stream"
+            )
+            wrapper.writeline(f'switch_to_comm_stream("rs", {device_idx})')
+            wrapper.generate_extern_kernel_alloc(self)
+            wrapper.writeline(f"restore_comm_stream({device_idx})")
+        elif self.use_rs_stream:
             device = self.get_device()
             assert device is not None
             device_idx = device.index
@@ -10000,9 +10052,10 @@ class _WaitKernel(_CollectiveKernel):
                 "from torch._inductor.runtime.rs_stream import get_rs_stream, restore_stream"
             )
             wrapper.writeline(f"get_rs_stream({device_idx})")
-        wrapper.generate_extern_kernel_alloc(self)
-        if self.use_rs_stream:
+            wrapper.generate_extern_kernel_alloc(self)
             wrapper.writeline(f"restore_stream({device_idx})")
+        else:
+            wrapper.generate_extern_kernel_alloc(self)
 
         if isinstance(self.layout, Layout):
             self.codegen_size_asserts(wrapper)
@@ -10050,6 +10103,7 @@ class _WaitKernel(_CollectiveKernel):
             non_tensor_args,
             unflatten_args,
         )
+        cls._maybe_set_comm_stream(packed)
         origin = V.graph.current_node
         if origin is not None and origin.meta.get("use_rs_stream", False):
             packed.use_rs_stream = True

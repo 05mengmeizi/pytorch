@@ -3857,7 +3857,9 @@ c10::intrusive_ptr<Work> ProcessGroupNCCL::collective(
     workEnqueue(work);
   }
 
-  return asyncOp ? work : nullptr;
+  // Always return work so functional collectives can register and wait on it.
+  // The ncclEndEvent_ recorded on ncclStream enables cross-stream sync.
+  return work;
 }
 
 template <typename Fn>
@@ -4035,11 +4037,8 @@ c10::intrusive_ptr<Work> ProcessGroupNCCL::collectiveCoalesced(
   if (capture_status == c10::cuda::CaptureStatus::None) {
     workEnqueue(work);
   }
-  // TODO(whc) if the work isn't enqueued, I don't feel great about returning
-  // it, since interactions with it by usercode won't behave normally - they
-  // won't observe work completion, for instance.  Will this lead to silent
-  // problems during capture?
-  return asyncOp ? work : nullptr;
+  // Always return work so functional collectives can register and wait on it.
+  return work;
 }
 
 template <typename Fn, typename PreProcess, typename PostProcess>
