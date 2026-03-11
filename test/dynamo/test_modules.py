@@ -3368,12 +3368,14 @@ class OptimizedModuleTest(torch._dynamo.test_case.TestCase):
         opt_model = torch.compile(model, backend=cnt, fullgraph=True)
 
         x = torch.randn(4, 4)
-        opt_model(x)
+        opt_model(x).sum().backward()
         self.assertEqual(cnt.frame_count, 1)
+        self.assertIsNone(model.linear.weight.grad)
 
         model.linear.weight.requires_grad_(True)
-        opt_model(x)
+        opt_model(x).sum().backward()
         self.assertEqual(cnt.frame_count, 2)
+        self.assertIsNotNone(model.linear.weight.grad)
 
     @torch._dynamo.config.patch("inline_inbuilt_nn_modules", True)
     def test_param_requires_grad_submodule(self):

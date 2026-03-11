@@ -3235,10 +3235,9 @@ class GuardManager {
         if (_dict_pointers.find(value) != _dict_pointers.end()) {
           // Check for fast path
           // if (is_weakref_valid(value) && check_dict_pointer_tags(value)) {
-          if (check_dict_pointer_tags(value)) {
-            if (!check_tensor_requires_grad_fast(value)) {
-              // requires_grad changed in-place, fall through to full check.
-            } else if (check_no_tensor_aliasing_guards_fast(value)) {
+          if (check_dict_pointer_tags(value) &&
+              check_tensor_requires_grad_fast(value)) {
+            if (check_no_tensor_aliasing_guards_fast(value)) {
               return true;
             } else {
               _disable_dict_tag_matching = true;
@@ -5017,7 +5016,15 @@ class FrameLocalsGuardAccessor : public GuardAccessor {
       FrameLocalsMapping* obj,
       bool matches_dict_tag = false) override { // borrowed ref
     if (matches_dict_tag && _is_immutable_object) {
-      if (!_is_tensor || !tensor_requires_grad_changed(obj->get(_framelocals_idx))) {
+      // Tensors are treated as immutable for the dict-tag optimization, but
+      // their metadata (e.g. requires_grad) can be mutated in-place without
+      // changing the parent dict's version tag. For now we only check
+      // requires_grad since it is the most common mutation; other metadata
+      // changes (dtype, device, etc.) are possible but rare in practice.
+      if (!_is_tensor) {
+        return true;
+      }
+      if (!tensor_requires_grad_changed(obj->get(_framelocals_idx))) {
         return true;
       }
     }
@@ -5042,8 +5049,16 @@ class FrameLocalsGuardAccessor : public GuardAccessor {
         "FrameLocalsGuardAccessor check expected dict() input");
 
     if (matches_dict_tag && _is_immutable_object) {
+      // Tensors are treated as immutable for the dict-tag optimization, but
+      // their metadata (e.g. requires_grad) can be mutated in-place without
+      // changing the parent dict's version tag. For now we only check
+      // requires_grad since it is the most common mutation; other metadata
+      // changes (dtype, device, etc.) are possible but rare in practice.
+      if (!_is_tensor) {
+        return true;
+      }
       PyObject* x = PyDict_GetItem(obj, _key); // borrowed ref
-      if (!_is_tensor || !tensor_requires_grad_changed(x)) {
+      if (!tensor_requires_grad_changed(x)) {
         return true;
       }
     }
@@ -5154,7 +5169,11 @@ class DictGetItemGuardAccessor : public GuardAccessor {
     if (matches_dict_tag && _is_immutable_object &&
         !is_recording_dict_pointers(get_guard_manager()->get_root()) &&
         _guard_manager->has_no_accessors()) {
-      // For tensors, verify requires_grad hasn't been mutated in-place.
+      // Tensors are treated as immutable for the dict-tag optimization, but
+      // their metadata (e.g. requires_grad) can be mutated in-place without
+      // changing the parent dict's version tag. For now we only check
+      // requires_grad since it is the most common mutation; other metadata
+      // changes (dtype, device, etc.) are possible but rare in practice.
       if (!_is_tensor) {
         return true;
       }
