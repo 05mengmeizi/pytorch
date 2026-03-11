@@ -922,6 +922,10 @@ combo_kernel_per_subkernel_blocks = False
 # When True, only pointwise kernels are eligible for combo kernel fusion.
 combo_kernels_pointwise_only = False
 
+# Replace _foreach_copy_ with cat(out=) in collective bucketing merge functions.
+# Reduces N individual Triton kernels to 1 for the param-packing step.
+_foreach_improv = os.environ.get("TORCHINDUCTOR_FOREACH_IMPROV", "0") == "1"
+
 # constant folding on the joint graph
 joint_graph_constant_folding = True
 

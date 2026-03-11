@@ -5,6 +5,7 @@ import torch
 import torch._dynamo
 import torch._dynamo.logging
 import torch._dynamo.test_case
+import torch._inductor.config
 import torch.distributed as dist
 import torch.fx as fx
 
@@ -1569,6 +1570,71 @@ class TestForeachGroupsUnit(InductorTestCase):
             ag_ins, 2, "default", torch.float32, out_dtype_ints, 0, None
         )
         self.assertTrue(torch.allclose(result_with, result_without))
+
+
+class TestForeachImprov(InductorTestCase):
+    """Unit tests for _foreach_improv config (cat+copy_ vs _foreach_copy_)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from torch.testing._internal.distributed.fake_pg import FakeStore
+
+        store = FakeStore()
+        dist.init_process_group(backend="fake", rank=0, world_size=2, store=store)
+        cls.device = "cuda"
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        dist.destroy_process_group()
+
+    @unittest.skipIf(not HAS_GPU, "Requires GPU")
+    def test_foreach_improv_uses_cat_copy(self):
+        """Test that _foreach_improv replaces _foreach_copy_ with cat+copy_."""
+        from torch._inductor.fx_passes.bucketing import all_gather_merge_fn_to_trace
+
+        with FakeTensorMode():
+            ag_ins = [
+                torch.randn(4, 4, device=self.device),
+                torch.randn(8, 4, device=self.device),
+            ]
+            with torch._inductor.config.patch(_foreach_improv=True):
+                traced = make_fx(all_gather_merge_fn_to_trace)(
+                    ag_ins,
+                    2,
+                    "0",
+                    torch.float32,
+                    [torch.float32, torch.float32],
+                    0,
+                )
+            graph_str = str(traced.graph)
+            # Should use cat + copy_, not _foreach_copy_
+            self.assertIn("cat", graph_str)
+            self.assertIn("copy_", graph_str)
+            self.assertNotIn("_foreach_copy_", graph_str)
+
+    @unittest.skipIf(not HAS_GPU, "Requires GPU")
+    def test_default_uses_foreach_copy(self):
+        """Test that default mode still uses _foreach_copy_."""
+        from torch._inductor.fx_passes.bucketing import all_gather_merge_fn_to_trace
+
+        with FakeTensorMode():
+            ag_ins = [
+                torch.randn(4, 4, device=self.device),
+                torch.randn(8, 4, device=self.device),
+            ]
+            with torch._inductor.config.patch(_foreach_improv=False):
+                traced = make_fx(all_gather_merge_fn_to_trace)(
+                    ag_ins,
+                    2,
+                    "0",
+                    torch.float32,
+                    [torch.float32, torch.float32],
+                    0,
+                )
+            graph_str = str(traced.graph)
+            self.assertIn("_foreach_copy_", graph_str)
 
 
 if __name__ == "__main__":
