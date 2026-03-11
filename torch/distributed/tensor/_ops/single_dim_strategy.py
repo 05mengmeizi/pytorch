@@ -15,6 +15,7 @@ from torch._ops import OpOverload
 from torch.distributed.tensor._collective_utils import (
     _compute_placement_transition_cost,
     MeshTopoInfo,
+    redistribute_cost,
 )
 from torch.distributed.tensor._dtensor_spec import DTensorSpec, TensorMeta
 from torch.distributed.tensor._op_schema import (
@@ -387,8 +388,13 @@ class _PreparedSingleDimStrategy:
             for placements, input_spec in zip(input_placements, input_specs)
         ]
         if not all(
-            is_tensor_shardable(spec.tensor_meta.shape, spec)
-            for spec in arg_specs
+            is_tensor_shardable(
+                spec.tensor_meta.shape,
+                spec,
+                allow_unbacked_sharding=self.allow_unbacked_sharding,
+            )
+            or (self.allow_uneven_sharding and input_spec.placements == spec.placements)
+            for spec, input_spec in zip(arg_specs, input_specs)
             if spec.tensor_meta is not None
         ):
             return None
@@ -888,15 +894,31 @@ def _dijkstra_expand_single_dim_strategy_to_mesh(
             mesh, candidate.placements, input_specs
         )
         if match_result is not None:
-            # Use pre-computed per-input costs from the PQ search instead of
-            # recomputing via generate_redistribute_costs -> _gen_transform_infos.
             match_spec = match_result.strategies[0]
             if match_spec.input_specs is None:
                 raise AssertionError
+
+            # Validate that the runtime redistribution planner can handle each
+            # input transition.  The PQ search decomposes transitions into
+            # single-step hops (e.g. S->R->P each with finite cost), but the
+            # runtime planner may emit a direct unsupported step (e.g. S->P).
+            # Use redistribute_cost as the source of truth; if any input gets
+            # infinity, skip this match and keep searching.
+            actual_costs: list[float] = []
+            feasible = True
+            for cur_spec, tgt_spec in zip(input_specs, match_spec.input_specs):
+                c = redistribute_cost(cur_spec, tgt_spec)
+                if c == float("inf"):
+                    feasible = False
+                    break
+                actual_costs.append(c)
+            if not feasible:
+                continue
+
             op_spec = OpSpec(
                 output_specs=match_spec.output_specs,
                 input_specs=list(match_spec.input_specs),
-                redistribute_cost=[[cost] for cost in candidate.per_input_costs],
+                redistribute_cost=[[cost] for cost in actual_costs],
             )
 
             exhaustive = len(prepared_strategy.expanded_strategies) ** mesh.ndim
@@ -933,8 +955,11 @@ def _dijkstra_expand_single_dim_strategy_to_mesh(
     if _collect_all_matches is not None and first_result is not None:
         return first_result
 
-    raise AssertionError(
-        f"No valid strategy found for op_schema {op_schema} "
-        f"on {mesh}. "
-        f"Explored {len(visited)} strategy combinations."
+    logger.warning(
+        "Dijkstra search exhausted without finding a valid strategy for "
+        "%s on %s (explored %d combinations); falling back to full expansion",
+        op_schema,
+        mesh,
+        len(visited),
     )
+    return None
