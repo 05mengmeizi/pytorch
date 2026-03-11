@@ -227,7 +227,6 @@ class TestTorchDeviceType(TestCase):
             torch.complex128, torch.quint8, torch.qint8, torch.qint32,
             torch.quint4x2)
     @slowTestIf(IS_WINDOWS)
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_storage_setitem(self, device, dtype):
         # Skip quantized dtypes for CUDA, since they're not supported
         if torch.device(device).type == 'cuda':
@@ -7161,7 +7160,6 @@ class TestTorch(TestCase):
                 t = torch.tensor([1., float('nan')], dtype=dtype)
                 self.assertFalse(torch.equal(t, t))
 
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_element_size(self):
         byte = torch.ByteStorage().element_size()
         char = torch.CharStorage().element_size()
@@ -7743,7 +7741,6 @@ class TestTorch(TestCase):
             with self.assertRaisesRegex(RuntimeError, r'Not available for CUDA storage'):
                 storage_class._new_shared_filename(0, 0, 0)
 
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_storage_casts(self):
         storage = torch.IntStorage([-1, 0, 1, 2, 3, 4])
         self.assertEqual(storage.size(), 6)
