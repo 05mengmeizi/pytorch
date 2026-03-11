@@ -30,6 +30,7 @@ from torch.testing._internal.common_utils import (  # type: ignore[attr-defined]
     TEST_WITH_TORCHDYNAMO,
     TestCase as TorchTestCase,
 )
+from torch.testing._internal.dynamo_test_failures import dynamo_expected_failures
 
 from . import config, reset, utils
 
@@ -186,7 +187,8 @@ class CPythonTestCase(TestCase):
         frame_skip_msg = f"WON'T CONVERT {self._testMethodName}"
         if frame_skip_msg in "\n".join(captured.output):
             expected_failures_dir = Path("test") / "dynamo_expected_failures"
-            skip_test_file = expected_failures_dir / self._dynamo_test_key()
+            key = self._dynamo_test_key()
+            skip_test_file = expected_failures_dir / key
             reason = (
                 f"Test method '{self._testMethodName}' was not compiled by Dynamo.\n\n"
                 f"Expected behavior: When PYTORCH_TEST_WITH_DYNAMO=1 is set, CPython test methods "
@@ -198,7 +200,7 @@ class CPythonTestCase(TestCase):
                 f"     'touch {skip_test_file}'\n\n"
                 f"For debugging, run with TORCH_LOGS=dynamo to see what prevented compilation."
             )
-            if skip_test_file.exists():
+            if key in dynamo_expected_failures:
                 raise unittest.SkipTest(reason) from None
             else:
                 self.fail(reason)
