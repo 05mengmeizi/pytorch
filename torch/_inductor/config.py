@@ -452,6 +452,11 @@ comms_pg_alloc_max_gb: float | None = (
 # Combine with comma: "only_all_gather,only_outputs"
 comms_use_pg_alloc_strategy: str | None = os.environ.get("USE_PG_ALLOC_STRATEGY", None)
 
+# Allow non-comm ops to borrow idle pg_alloc buffers. Reduces CUDA caching
+# allocator fragmentation by reusing NCCL-registered memory for compute when
+# the buffer won't be needed for comms. Requires comms_use_pg_alloc=True.
+comms_pg_alloc_allow_borrow: bool = os.environ.get("USE_PG_ALLOC_BORROW", "0") == "1"
+
 # runtime estimation function for ops
 # for built-in estimation function, pass in "default"; for user-defined estimation function, pass in the function handle
 estimate_op_runtime = "default"

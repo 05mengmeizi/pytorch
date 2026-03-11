@@ -93,6 +93,8 @@ pexpr = PythonPrinter().doprint
 
 ReuseKey = tuple[torch.device, torch.dtype, str, bool]
 CommBufferReuseKey = tuple[torch.device, torch.dtype, str, "ir.CommBufferType", str]
+# Key for matching regular buffers to comm buffers: (device, dtype, size_str)
+BorrowMatchKey = tuple[torch.device, torch.dtype, str]
 BufferLike = ir.Buffer | WorkspaceArg
 FxConversionFunc = Callable[["WrapperLine"], None]
 
@@ -419,6 +421,20 @@ class MemoryPlanningState:
         self.total_allocated_buffer_size: int = 0
         self.total_pg_alloc_bytes: int = 0
 
+        # Cross-pool borrowing state:
+        # Maps buffer name -> original CommBufferReuseKey for buffers that
+        # borrowed from the comm pool. When freed, they return to comm pool.
+        self.borrowed_comm_keys: dict[str, CommBufferReuseKey] = {}
+        # Index: BorrowMatchKey -> list of CommBufferReuseKeys in the comm pool
+        # Updated on comm_buffer_push/pop to enable fast cross-pool lookup.
+        self.comm_pool_by_match_key: dict[BorrowMatchKey, list[CommBufferReuseKey]] = (
+            collections.defaultdict(list)
+        )
+        # Pre-computed: comm demand schedule (comm_key -> sorted sni list)
+        self.comm_demand_schedule: dict[CommBufferReuseKey, list[int]] = {}
+        # Pre-computed: buffer free schedule (buffer_name -> sni of free)
+        self.buffer_free_sni: dict[str, int] = {}
+
     def __contains__(self, key: ReuseKey) -> bool:
         return bool(self.reuse_pool.get(key, None))
 
@@ -437,6 +453,11 @@ class MemoryPlanningState:
     def comm_buffer_pop(self, key: CommBufferReuseKey) -> FreeIfNotReusedLine:
         item = self.comm_buffer_reuse_pool[key].pop()
         assert not item.is_reused
+        # Update match key index
+        match_key = (key[0], key[1], key[2])
+        idx = self.comm_pool_by_match_key.get(match_key, [])
+        if key in idx:
+            idx.remove(key)
         return item
 
     def comm_buffer_push(
@@ -444,6 +465,9 @@ class MemoryPlanningState:
     ) -> None:
         assert not item.is_reused
         self.comm_buffer_reuse_pool[key].append(item)
+        # Update match key index
+        match_key = (key[0], key[1], key[2])
+        self.comm_pool_by_match_key[match_key].append(key)
 
 
 class WrapperLine:
@@ -828,6 +852,16 @@ class AllocateLine(MemoryPlanningLine):
                 state.push(key, free_line)
                 return self
 
+        # Try borrowing from pg_alloc comm pool if enabled
+        if (
+            config.comms_pg_alloc_allow_borrow
+            and config.allow_buffer_reuse
+            and not self.comm_buffer
+        ):
+            borrowed = self._try_borrow_from_comm_pool(state)
+            if borrowed is not None:
+                return borrowed
+
         if self.node.get_device_or_error().type == "cpu":
             static_shape = self.wrapper.static_shape_for_buffer_or_none(self.node)
             if static_shape is not None:
@@ -850,6 +884,71 @@ class AllocateLine(MemoryPlanningLine):
             state.total_pg_alloc_bytes + alloc_bytes > int(max_gb * (1024**3))
         )
         return exceeds, alloc_bytes
+
+    def _try_borrow_from_comm_pool(
+        self, state: MemoryPlanningState
+    ) -> MemoryPlanningLine | None:
+        """Try to borrow an idle pg_alloc buffer for a regular (non-comm) op.
+
+        Returns a ReuseLine if borrowing is safe, None otherwise.
+        Safety: the buffer must be freed before the next comm op needs it.
+        """
+        import bisect
+
+        buf_name = self.node.get_name()
+        free_sni = state.buffer_free_sni.get(buf_name)
+        if free_sni is None:
+            # Don't know when this buffer will be freed (e.g., graph output)
+            return None
+
+        # Build match key: (device, dtype, size_str) — ignoring alignment
+        storage_size = V.graph.get_allocation_storage_size(self.node)
+        match_key: BorrowMatchKey = (
+            self.node.get_device_or_error(),
+            self.node.get_dtype(),
+            sympy_str(V.graph.sizevars.simplify(storage_size)),
+        )
+
+        # Find matching comm buffers in the pool
+        comm_keys = state.comm_pool_by_match_key.get(match_key)
+        if not comm_keys:
+            return None
+
+        # Try each matching comm key
+        for comm_key in list(comm_keys):
+            if not state.comm_buffer_contains(comm_key):
+                continue
+
+            # Only borrow PG_ALLOC buffers (not SYMM_MEM)
+            if comm_key[3] != ir.CommBufferType.PG_ALLOC:
+                continue
+
+            # Lookahead: find next comm demand for this key
+            demand_snis = state.comm_demand_schedule.get(comm_key, [])
+            idx = bisect.bisect_right(demand_snis, self.scheduler_node_index)
+            next_comm_sni = demand_snis[idx] if idx < len(demand_snis) else None
+
+            # Safe to borrow if buffer is freed before next comm demand
+            if next_comm_sni is not None and free_sni >= next_comm_sni:
+                continue  # Not safe — buffer would still be held when comm needs it
+
+            # Borrow: pop from comm pool, track for return
+            free_line = state.comm_buffer_pop(comm_key)
+            free_line.is_reused = True
+            state.borrowed_comm_keys[buf_name] = comm_key
+
+            log.debug(
+                "pg_alloc borrow: %s borrows comm buffer %s (key=%s), "
+                "free_sni=%d, next_comm_sni=%s",
+                buf_name,
+                free_line.node.get_name(),
+                comm_key,
+                free_sni,
+                next_comm_sni,
+            )
+            return ReuseLine(self.wrapper, free_line.node, self.node)
+
+        return None
 
     def codegen(self, code: IndentedBuffer) -> None:
         assert self.node.get_name() not in V.graph.removed_buffers
@@ -931,8 +1030,17 @@ class FreeIfNotReusedLine(MemoryPlanningLine):
         if self.node.get_name() in V.graph.removed_buffers:
             return NullLine(self.wrapper)
         if config.allow_buffer_reuse:
-            layout = self.node.get_output_spec()
-            if isinstance(layout, ir.CommBufferLayout):
+            buf_name = self.node.get_name()
+            # Check if this buffer borrowed from comm pool — return it there
+            borrowed_key = state.borrowed_comm_keys.pop(buf_name, None)
+            if borrowed_key is not None:
+                state.comm_buffer_push(borrowed_key, self)
+                log.debug(
+                    "pg_alloc borrow return: %s -> comm pool (key=%s)",
+                    buf_name,
+                    borrowed_key,
+                )
+            elif isinstance(self.node.get_output_spec(), ir.CommBufferLayout):
                 key = comm_buffer_reuse_key(self.node)
                 state.comm_buffer_push(key, self)
             else:
@@ -2022,6 +2130,28 @@ class PythonWrapperCodegen(CodeGen):
 
         self.lines = MemoryPlanner(self).plan(self.lines)
 
+    def _prescan_borrow_schedules(self, state: MemoryPlanningState) -> None:
+        """Pre-scan lines to build comm demand schedule and buffer free schedule.
+
+        This enables the lookahead needed for safe cross-pool borrowing:
+        we need to know (a) when each regular buffer will be freed, and
+        (b) when the next comm allocation of a given key occurs.
+        """
+        for line in self.lines:
+            if isinstance(line, AllocateLine) and line.comm_buffer:
+                layout = line.node.get_output_spec()
+                if isinstance(layout, ir.CommBufferLayout):
+                    key = comm_buffer_reuse_key(line.node)
+                    state.comm_demand_schedule.setdefault(key, []).append(
+                        line.scheduler_node_index
+                    )
+            elif isinstance(line, FreeIfNotReusedLine) and not line.comm_buffer:
+                state.buffer_free_sni[line.node.get_name()] = line.scheduler_node_index
+
+        # Sort demand schedules for binary search
+        for key in state.comm_demand_schedule:
+            state.comm_demand_schedule[key].sort()
+
     def memory_plan_reuse(self):
         outputs = self.get_graph_outputs()
         out_names = V.graph._get_output_names(outputs)
@@ -2038,6 +2168,11 @@ class PythonWrapperCodegen(CodeGen):
         # codegen allocations in two passes
         planning_states = [MemoryPlanningState()]
         past_planning_states = []
+
+        # Pre-scan for cross-pool borrowing if enabled
+        if config.comms_pg_alloc_allow_borrow and config.comms_use_pg_alloc:
+            self._prescan_borrow_schedules(planning_states[-1])
+
         for i in range(len(self.lines)):
             line = self.lines[i]
             if isinstance(line, MemoryPlanningLine):
