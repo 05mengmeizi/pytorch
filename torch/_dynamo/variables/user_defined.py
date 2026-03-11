@@ -223,6 +223,11 @@ class UserDefinedClassVariable(UserDefinedVariable):
             torch.Size,
         }
 
+    def _is_device_mesh_class(self) -> bool:
+        from .distributed import DeviceMeshVariable
+
+        return DeviceMeshVariable.is_device_mesh_class(self.value)
+
     @staticmethod
     @functools.cache
     def _in_graph_classes() -> set[type[object]]:
@@ -545,6 +550,25 @@ class UserDefinedClassVariable(UserDefinedVariable):
                     *[x.as_python_constant() for x in args],
                     **{k: v.as_python_constant() for k, v in kwargs.items()},
                 ),
+            )
+        elif self._is_device_mesh_class():
+            # DeviceMesh.__init__ will inevitably graph break due to
+            # data-dependent operations (e.g. _rank_map.tolist()), so we
+            # graph break early to avoid partially tracing __init__ and
+            # leaving behind uninitialized backing objects.
+            # Also skip DeviceMesh.__init__ so Dynamo doesn't try to compile
+            # it as a separate frame after the graph break.
+            from torch._dynamo.eval_frame import skip_code
+
+            skip_code(self.value.__init__.__code__)
+            unimplemented(
+                gb_type="DeviceMesh construction",
+                context="DeviceMesh(...)",
+                explanation="DeviceMesh construction involves data-dependent "
+                "operations that cannot be traced. Move DeviceMesh creation "
+                "outside of torch.compile regions, or it will be automatically "
+                "handled via graph break.",
+                hints=[*graph_break_hints.SUPPORTABLE],
             )
         elif self.value is torch.nn.CrossEntropyLoss:
             return self._call_cross_entropy_loss(tx, args, kwargs)
@@ -1488,8 +1512,9 @@ class UserDefinedObjectVariable(UserDefinedVariable):
     def is_supported_random(self) -> bool:
         try:
             return self.value in self._supported_random_functions()
-        except TypeError:
+        except (TypeError, AttributeError):
             # TypeError: unhashable type
+            # AttributeError: backing object may not be fully initialized
             return False
 
     def call_function(

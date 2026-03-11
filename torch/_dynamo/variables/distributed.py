@@ -157,6 +157,15 @@ class DeviceMeshVariable(DistributedVariable):
 
         return istype(value, DeviceMesh)
 
+    @staticmethod
+    def is_device_mesh_class(value: type) -> bool:
+        if not DistributedVariable.is_available():
+            return False
+
+        from torch.distributed.device_mesh import DeviceMesh
+
+        return value is DeviceMesh
+
     def as_python_constant(self) -> Any:
         return self.value
 
