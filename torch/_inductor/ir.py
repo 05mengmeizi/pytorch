@@ -8851,9 +8851,7 @@ class MultiOutput(ExternKernel):
             assert len(rindex) == 0
             return ops.store(name, indexer(index), "fake")
 
-        write_rw = dependencies.extract_read_writes(
-            dummy, self.get_size(), ()
-        )
+        write_rw = dependencies.extract_read_writes(dummy, self.get_size(), ())
         return dependencies.ReadWrites(
             reads=reads,
             writes=write_rw.writes,

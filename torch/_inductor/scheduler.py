@@ -6128,9 +6128,13 @@ class Scheduler:
         # Fall back to name-based matching so that the fusion score reflects
         # the actual shared buffers.
         if (
-            isinstance(node1.node, ir.UserDefinedTritonKernel)
-            and node1.node.can_fuse_epilogue()
-        ) or node1.is_template() or node2.is_template():
+            (
+                isinstance(node1.node, ir.UserDefinedTritonKernel)
+                and node1.node.can_fuse_epilogue()
+            )
+            or node1.is_template()
+            or node2.is_template()
+        ):
             node1_deps = node1.read_writes.reads | node1.read_writes.writes
             node2_deps = node2.read_writes.reads | node2.read_writes.writes
 
