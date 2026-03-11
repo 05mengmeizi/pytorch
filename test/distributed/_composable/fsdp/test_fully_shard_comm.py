@@ -47,11 +47,13 @@ from torch.distributed.fsdp._fully_shard._fsdp_param_group import FSDPParamGroup
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.debug import CommDebugMode
 from torch.distributed.tensor.experimental import implicit_replication
+from torch.testing._internal.common_cuda import SM90OrLater, TEST_MULTIGPU
 from torch.testing._internal.common_distributed import (
     MultiProcContinuousTest,
     PLATFORM_SUPPORTS_SYMM_MEM,
     skip_if_lt_x_gpu,
 )
+from torch.testing._internal.inductor_utils import skipCUDAIf
 from torch.testing._internal.common_fsdp import (
     check_sharded_parity,
     DoubleLinear,
@@ -63,7 +65,9 @@ from torch.testing._internal.common_fsdp import (
     patch_unshard,
 )
 from torch.testing._internal.common_utils import (
+    requires_cuda_p2p_access,
     run_tests,
+    skip_but_pass_in_sandcastle_if,
     TEST_WITH_ROCM,
     TEST_XPU,
     xfailIf,
@@ -1698,10 +1702,8 @@ class TestFullyShardAllocFromPG(FSDPTest):
             model.set_allocate_memory_from_process_group_for_comm(True)
 
 
+@requires_cuda_p2p_access()
 class TestFullyShardSymmMem(MultiProcContinuousTest):
-    # Flip this to True to profile the test
-    PROFILE = False
-
     @classmethod
     def backend_str(cls) -> Optional[str]:
         return "nccl"
@@ -1717,23 +1719,13 @@ class TestFullyShardSymmMem(MultiProcContinuousTest):
     def device(self) -> torch.device:
         return torch.device("cuda", self.rank)
 
-    def get_profiler(self):
-        # Prepare a profiler
-        prof = torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-            record_shapes=True,
-            with_stack=True,
-            with_modules=True,
-        )
-        return prof
-
-    @skip_if_lt_x_gpu(2)
+    @skip_but_pass_in_sandcastle_if(
+        not TEST_MULTIGPU, "Not enough GPUs to run the test"
+    )
     @unittest.skipIf(
         not PLATFORM_SUPPORTS_SYMM_MEM, "SymmMem is not supported on this platform"
     )
+    @skipCUDAIf(not SM90OrLater or TEST_WITH_ROCM, "requires NVIDIA sm90+")
     def test_fully_shard_symm_mem(self):
         torch.manual_seed(42 + self.rank)
         device = torch.device("cuda", self.rank)
@@ -1759,16 +1751,6 @@ class TestFullyShardSymmMem(MultiProcContinuousTest):
 
         run()
         torch.cuda.synchronize(device)
-
-        if self.PROFILE:
-            prof = self.get_profiler()
-            with prof:
-                for _ in range(5):
-                    run()
-                    prof.step()
-            torch.cuda.synchronize(device)
-            if self.rank == 0:
-                prof.export_chrome_trace(f"fsdp_symm_mem_trace_rank{self.rank}.json")
 
 
 class TestFullyShardForceSumReduction(FSDPTest):
