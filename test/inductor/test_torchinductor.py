@@ -8932,6 +8932,31 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         self.common(fn, (a, idx))
         assertGeneratedKernelCountEqual(self, 2)
 
+    @skip_if_halide
+    @skip_if_pallas
+    def test_index_put_duplicate_indices_no_accumulate(self):
+        # https://github.com/pytorch/pytorch/issues/174074
+        def fn(x):
+            x[[0, 0]] += x[[0, 0]]
+            return x
+
+        # ncols=2048 forces multiple Triton blocks on GPU, exposing the
+        # inter-block race that small tensors mask.
+        x = torch.randn(1, 2048, dtype=torch.float32)
+        self.common(fn, (x,))
+
+    @skip_if_pallas
+    def test_index_put_duplicate_indices_accumulate(self):
+        # accumulate=True is well-defined with duplicate indices.
+        def fn(x):
+            idx = torch.tensor([0, 0], device=x.device)
+            vals = x[[0, 0]] * 2
+            x.index_put_((idx,), vals, accumulate=True)
+            return x
+
+        x = torch.randn(1, 2048, dtype=torch.float32)
+        self.common(fn, (x,))
+
     def test_adding_tensor_offsets(self):
         @torch.compile(fullgraph=True)
         def fn(x):
@@ -11835,7 +11860,6 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         self.assertEqual(x[0], -1)
         self.assertEqual(cnts.frame_count, frame_count + 1)
 
-    @config.patch({"triton.autotune_at_compile_time": False})
     @config.patch(profiler_mark_wrapper_call=True)
     def test_profiler_mark_wrapper_call(self):
         from torch.profiler import profile
@@ -15089,7 +15113,6 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         inputs = (torch.randn(4, device=self.device),)
         self.common(Model(), inputs)
 
-    @skip_if_cpp_wrapper("skip cpp wrapper")
     @requires_gpu_and_triton
     def test_triton_kernel_bool_tensor_arg(self):
         if self.device != GPU_TYPE or self.device == "mps":
@@ -15914,6 +15937,34 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
         expected = fn(x_base.clone()[:, 2:, :], index, source)
         result = torch.compile(fn)(x_base.clone()[:, 2:, :], index, source)
         self.assertEqual(result, expected)
+
+    def test_bfloat_constant(self):
+        if not self.is_dtype_supported(torch.bfloat16):
+            raise unittest.SkipTest("bfloat16 not supported")
+        self.common(
+            lambda x: x + 1.0,
+            (make_tensor(1024, dtype=torch.bfloat16, device=self.device),),
+        )
+
+    @parametrize("dtype", [torch.float16, torch.bfloat16])
+    def test_lowp_reduction(self, dtype):
+        if not self.is_dtype_supported(dtype):
+            raise unittest.SkipTest(f"{dtype} not supported")
+        self.common(
+            lambda x: x.sum(),
+            (make_tensor(1024, dtype=dtype, device=self.device),),
+            check_lowp=False,
+        )
+
+    @parametrize("dtype", [torch.float16, torch.bfloat16])
+    def test_lowp_where(self, dtype):
+        if not self.is_dtype_supported(dtype):
+            raise unittest.SkipTest(f"{dtype} not supported")
+        self.common(
+            lambda x: torch.where(x > 0.5, x, x.new_zeros(())),
+            (make_tensor(1024, dtype=dtype, device=self.device),),
+            check_lowp=False,
+        )
 
     # end of class CommonTemplate - add new tests here
 
@@ -16827,6 +16878,41 @@ if RUN_GPU:
             else:
                 self.assertTrue("ymask = yindex < ynumel" in code)
                 self.assertTrue("xmask = xindex < xnumel" in code)
+
+        @parametrize(
+            "rnumel",
+            [16, 32],
+        )
+        @config.patch("triton.persistent_reductions", True)
+        def test_has_constant_mask_small_persistent_reduction(self, rnumel):
+            from torch._inductor.runtime.hints import DeviceProperties
+
+            def fn(x):
+                return x.sum(dim=-1)
+
+            x = torch.randn(1024, rnumel, device=GPU_TYPE)
+            opt_fn = torch.compile(fn)
+            code = run_and_get_triton_code(opt_fn, x)
+
+            device = torch.device(GPU_TYPE, 0)
+            warp_size = DeviceProperties.create(device).warp_size or 32
+
+            rblock = 1
+            while rblock < rnumel:
+                rblock *= 2
+
+            if rblock < warp_size:
+                self.assertTrue(
+                    "r0_index < r0_numel" in code or "rindex < rnumel" in code,
+                    f"Expected dynamic reduction mask for RBLOCK={rblock} < warp_size={warp_size}",
+                )
+            else:
+                self.assertTrue(
+                    "r0_mask = tl.full" in code or "rmask = tl.full" in code,
+                    f"Expected constant reduction mask for RBLOCK={rblock} >= warp_size={warp_size}",
+                )
+
+            self.assertEqual(fn(x), opt_fn(x))
 
         @config.patch("triton.native_matmul", False)
         def test_kernel_names_descriptive(self):
