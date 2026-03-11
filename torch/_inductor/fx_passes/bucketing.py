@@ -566,7 +566,7 @@ def _pre_bucket_reduce_scatter(
     rs_ins_flattened = [x.view(group_size, -1) for x in rs_ins]
     x = rs_ins[0]
     size = sum(t.numel() for t in rs_ins)
-    if torch._inductor.config.comms_use_pg_alloc:
+    if _should_pg_alloc("reduce_scatter", "input"):
         pg = _resolve_process_group(group_name)  # type: ignore[arg-type]
         backend = pg._get_backend(x.device)
         out = backend.allocate_tensor(size, dtype=x.dtype, device=x.device)
@@ -603,7 +603,7 @@ def reduce_scatter_merge_fn_to_trace_custom_ops(
         rs_ins, group_size, group_name
     )
 
-    if torch._inductor.config.comms_use_pg_alloc:
+    if _should_pg_alloc("reduce_scatter", "output"):
         pg = _resolve_process_group(group_name)  # type: ignore[arg-type]
         backend = pg._get_backend(new_rs_in.device)
         size = list(new_rs_in.shape)
@@ -721,7 +721,7 @@ def _pre_bucket_all_gather(
     ]
     ag_input_numel = sum(ins_split_sizes)
     device = ag_ins[0].device
-    if torch._inductor.config.comms_use_pg_alloc:
+    if _should_pg_alloc("all_gather", "output"):
         pg = _resolve_process_group(group_name)  # type: ignore[arg-type]
         backend = pg._get_backend(device)
         size = ag_input_numel * group_size
@@ -1103,16 +1103,40 @@ def process_collective_bucket(
     return new_nodes, replacements
 
 
+def _should_pg_alloc(collective_type: str, buffer_role: str) -> bool:
+    """Check if pg_alloc should be used for this collective/buffer combination."""
+    if not torch._inductor.config.comms_use_pg_alloc:
+        return False
+    strategy = torch._inductor.config.comms_use_pg_alloc_strategy
+    if strategy is None:
+        return True
+    if "only_all_gather" in strategy and collective_type != "all_gather":
+        return False
+    if "only_reduce" in strategy and collective_type not in (
+        "reduce_scatter",
+        "all_reduce",
+    ):
+        return False
+    if "only_inputs" in strategy and buffer_role != "input":
+        return False
+    if "only_outputs" in strategy and buffer_role != "output":
+        return False
+    return True
+
+
 def _annotate_pg_alloc(
     new_nodes: list[torch.fx.Node],
     group_name: str,
 ) -> None:
     """Tag collective nodes with pg_alloc_group_name for PG-based allocation."""
-    if torch._inductor.config.comms_use_pg_alloc:
-        for node in new_nodes:
-            if is_wait_tensor(node):
-                coll_node = node.args[0]
-                assert isinstance(coll_node, torch.fx.Node)
+    for node in new_nodes:
+        if is_wait_tensor(node):
+            coll_node = node.args[0]
+            assert isinstance(coll_node, torch.fx.Node)
+            coll_type = get_collective_type(coll_node)
+            if _should_pg_alloc(coll_type, "input") or _should_pg_alloc(
+                coll_type, "output"
+            ):
                 coll_node.meta["pg_alloc_group_name"] = group_name
 
 
