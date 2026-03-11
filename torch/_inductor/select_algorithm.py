@@ -220,7 +220,7 @@ class PartialRender:
         """
         idx = self._code.find(hook_key)
         if idx < 0:
-            return self._code.replace(hook_key, result)
+            return self._code
 
         line_start = self._code.rfind("\n", 0, idx) + 1
         line_end = self._code.find("\n", idx)
