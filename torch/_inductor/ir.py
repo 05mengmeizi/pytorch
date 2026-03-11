@@ -4376,6 +4376,7 @@ class NonOwningLayout(Layout):
 
 class CommBufferType(Enum):
     SYMM_MEM = "symm_mem"
+    PG_ALLOC = "pg_alloc"
 
 
 class CommBufferLayout(FixedLayout):
