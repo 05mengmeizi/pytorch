@@ -1,6 +1,6 @@
 # PR Review
 
-When asked to review a PR, always use the /pr-review skill.
+When asked to review a PR, always use the /pr-review skill
 
 # Environment
 
