@@ -2258,10 +2258,26 @@ class ConvertFrameProtocol(typing.Protocol):
 
 
 class CatchErrorsWrapper:
-    def __init__(self, callback: ConvertFrameProtocol, hooks: Hooks) -> None:
+    def __init__(
+        self,
+        callback: ConvertFrameProtocol,
+        hooks: Hooks,
+        one_graph: bool = False,
+    ) -> None:
         functools.wraps(callback)(self)
         self._torchdynamo_orig_backend = callback
         self.hooks = hooks
+        self._one_graph = one_graph
+
+    def _raise_if_fullgraph_no_graph(
+        self, result: ConvertFrameReturn, frame: DynamoFrameType, reason: str
+    ) -> None:
+        if self._one_graph and result.guarded_code is None:
+            raise RuntimeError(
+                f"torch.compile with fullgraph=True skipped compiling "
+                f"{frame.f_code.co_name} ({frame.f_code.co_filename}): "
+                f"{reason}"
+            )
 
     def __call__(
         self,
@@ -2299,23 +2315,26 @@ class CatchErrorsWrapper:
                 and not getattr(self._torchdynamo_orig_backend, "_export", False)
             )
         ):
-            if log.isEnabledFor(logging.DEBUG):
-                if has_started_execution:
-                    skip_reason = "traced frame already"
-                elif trace_rules.check(frame.f_code, frame=frame):
-                    skip_reason = "in skipfiles"
-                elif should_skip_for_dispatch_mode:
-                    skip_reason = "non-infra torch dispatch mode present, this is not supported today in torch.compile"
-                else:
-                    skip_reason = "dynamo tracing is disabled"
+            if has_started_execution:
+                skip_reason = "traced frame already"
+            elif is_skipfile:
+                skip_reason = "in skipfiles"
+            elif should_skip_for_dispatch_mode:
+                skip_reason = "non-infra torch dispatch mode present, this is not supported today in torch.compile"
+            else:
+                skip_reason = "dynamo tracing is disabled"
 
-                log.debug(
-                    "skipping: %s (reason: %s, file: %s)",
-                    frame.f_code.co_name,
-                    skip_reason,
-                    frame.f_code.co_filename,
-                )
-            return ConvertFrameReturn()
+            result = ConvertFrameReturn()
+            if not is_skipfile:
+                self._raise_if_fullgraph_no_graph(result, frame, skip_reason)
+
+            log.debug(
+                "skipping: %s (reason: %s, file: %s)",
+                frame.f_code.co_name,
+                skip_reason,
+                frame.f_code.co_filename,
+            )
+            return result
 
         if (
             frame.f_code.co_filename == "<string>" and frame.f_code.co_name == "__new__"
@@ -2354,10 +2373,13 @@ class CatchErrorsWrapper:
             result = self._torchdynamo_orig_backend(
                 frame, cache_entry, self.hooks, frame_state, skip=1
             )
+            self._raise_if_fullgraph_no_graph(result, frame, "no graph captured")
             return result
 
 
 def catch_errors_wrapper(
-    callback: ConvertFrameProtocol, hooks: Hooks
+    callback: ConvertFrameProtocol,
+    hooks: Hooks,
+    one_graph: bool = False,
 ) -> CatchErrorsWrapper:
-    return CatchErrorsWrapper(callback, hooks)
+    return CatchErrorsWrapper(callback, hooks, one_graph=one_graph)

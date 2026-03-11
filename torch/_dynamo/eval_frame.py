@@ -1308,7 +1308,7 @@ def _optimize_catch_errors(
     package: CompilePackage | None = None,
 ) -> OptimizeContext:
     return OptimizeContext(
-        convert_frame.catch_errors_wrapper(compile_fn, hooks),
+        convert_frame.catch_errors_wrapper(compile_fn, hooks, one_graph=fullgraph),
         backend_ctx_ctor=backend_ctx_ctor,
         first_ctx=True,
         fullgraph=fullgraph,
