@@ -420,8 +420,8 @@ struct ExpandableSegment {
       return map(range);
     }
 
-    while (end > handles_.size()) {
-      handles_.emplace_back(std::nullopt);
+    if (end > handles_.size()) {
+      handles_.resize(end);
     }
     for (auto i : c10::irange(begin, end)) {
       TORCH_INTERNAL_ASSERT(!handles_.at(i));
@@ -729,9 +729,11 @@ struct ExpandableSegment {
     trimHandles();
   }
   void trimHandles() {
-    while (!handles_.empty() && !handles_.back()) {
-      handles_.pop_back();
-    }
+    auto it = std::find_if(
+        handles_.rbegin(),
+        handles_.rend(),
+        [](const std::optional<Handle>& opt) { return opt.has_value(); });
+    handles_.erase(it.base(), handles_.end());
   }
   void forEachAllocatedRange(const std::function<void(size_t, size_t)>& fn) {
     size_t start = 0;
@@ -1314,21 +1316,8 @@ class DeviceCachingAllocator {
     // Convert string list to action enum set
     skip_actions_list.clear();
     for (const auto& action_str : skip_actions) {
-      if (action_str == "alloc") {
-        skip_actions_list.insert(TraceEntry::Action::ALLOC);
-      } else if (action_str == "free_requested") {
-        skip_actions_list.insert(TraceEntry::Action::FREE_REQUESTED);
-      } else if (action_str == "free_completed") {
-        skip_actions_list.insert(TraceEntry::Action::FREE_COMPLETED);
-      } else if (action_str == "segment_alloc") {
-        skip_actions_list.insert(TraceEntry::Action::SEGMENT_ALLOC);
-      } else if (action_str == "segment_free") {
-        skip_actions_list.insert(TraceEntry::Action::SEGMENT_FREE);
-      } else if (action_str == "oom") {
-        skip_actions_list.insert(TraceEntry::Action::OOM);
-      } else if (action_str == "snapshot") {
-        skip_actions_list.insert(TraceEntry::Action::SNAPSHOT);
-      }
+      auto action = parseTraceEntryAction(action_str);
+      skip_actions_list.insert(action);
     }
 
     context_recorder_.store(record_history ? context_recorder : nullptr);
@@ -1607,9 +1596,9 @@ class DeviceCachingAllocator {
               reserved_bytes - allocated_bytes - allocated_in_private_pools),
           " is reserved by PyTorch but unallocated.",
           " If reserved but unallocated memory is large try setting",
-          " PYTORCH_ALLOC_CONF=expandable_segments:True to avoid"
+          " PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid"
           " fragmentation.  See documentation for Memory Management "
-          " (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)");
+          " (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)");
     }
 
     bool split_remainder = should_split(
@@ -2287,15 +2276,29 @@ class DeviceCachingAllocator {
     BlockPool& pool = *block->pool;
     const auto segment_len = segment.blocks.size();
 
+    auto is_unmapped_tail = [](Block* b) {
+      return b->next == nullptr && !b->mapped && !b->allocated;
+    };
+
     // allocate all blocks in the segment
     for (size_t i = 0; i < segment_len; ++i) {
-      // The last block in every expandable segment is the remaining amount of
-      // available unmapped virtual address space. We shouldn't change it but
-      // instead check it is correctly formed then skip over allocating it.
+      // Note [Last block when restoring checkpoint state]
+      // The last block in expandable segment is one of the following cases:
+      // - case 1: a unmapped tail containing the remaining amount of available
+      //      unmapped virtual address space.
+      // - case 2: segment has grown larger since we record the checkpoint.
+      //      After we allocate all blocks in checkpoint, there should still
+      //      be 1 block for extra mapped memory followed by another block
+      //      for the unmapped tail.
       if (i == segment_len - 1 && curr_block->expandable_segment_) {
-        TORCH_CHECK(curr_block->next == nullptr);
-        TORCH_CHECK(!curr_block->mapped);
-        TORCH_CHECK(curr_block->allocated == false);
+        bool valid_structure =
+            /* case 1*/ is_unmapped_tail(curr_block) ||
+            /* case 2*/
+            (curr_block->mapped && !curr_block->allocated && curr_block->next &&
+             is_unmapped_tail(curr_block->next));
+        TORCH_CHECK(
+            valid_structure,
+            "Invalid expandable segment structure during checkpoint restore");
         continue;
       }
 
@@ -2341,9 +2344,15 @@ class DeviceCachingAllocator {
 
     for (size_t i = 0; i < segment_len; ++i, curr_block = curr_block->next) {
       if (i == segment_len - 1 && curr_block->expandable_segment_) {
-        TORCH_CHECK(curr_block->next == nullptr);
-        TORCH_CHECK(!curr_block->mapped);
-        TORCH_CHECK(curr_block->allocated == false);
+        // See Note [Last block when restoring checkpoint state]
+        bool valid_structure =
+            /* case 1*/ is_unmapped_tail(curr_block) ||
+            /* case 2*/
+            (curr_block->mapped && !curr_block->allocated && curr_block->next &&
+             is_unmapped_tail(curr_block->next));
+        TORCH_CHECK(
+            valid_structure,
+            "Invalid expandable segment structure during checkpoint restore");
         continue;
       }
 
@@ -2359,7 +2368,15 @@ class DeviceCachingAllocator {
 
       TORCH_CHECK(curr_block->ptr == block_state.ptr);
       TORCH_CHECK(curr_block->allocated == block_state.allocated);
-      TORCH_CHECK(curr_block->size == block_state.size);
+
+      // See Note [Last block when restoring checkpoint state]
+      // The last mapped block (i == segment_len - 2) may merge with extra
+      // mapped memory from segment growth, making it larger than checkpoint
+      bool is_last_mapped =
+          (i == segment_len - 2) && curr_block->expandable_segment_;
+      TORCH_CHECK(
+          curr_block->size == block_state.size ||
+          (is_last_mapped && curr_block->size >= block_state.size));
     }
   }
 
@@ -2494,7 +2511,7 @@ class DeviceCachingAllocator {
       SegmentInfo& segment_info = result.back();
       segment_info.device = head_block->device;
       segment_info.address = reinterpret_cast<size_t>(head_block->ptr);
-      segment_info.stream = head_block->stream;
+      segment_info.stream = reinterpret_cast<void*>(head_block->stream);
       segment_info.is_large = (!head_block->pool->is_small);
       segment_info.is_expandable = head_block->expandable_segment_;
       segment_info.context_when_allocated =
@@ -2641,18 +2658,62 @@ class DeviceCachingAllocator {
   void endAllocateToPool(MempoolId_t mempool_id) {
     std::lock_guard<std::recursive_mutex> lock(mutex);
 
-    if (CUDAAllocatorConfig::graph_capture_record_stream_reuse() &&
-        !graph_reuse_context.empty()) {
-      auto capture_id = mempool_to_capture_id[mempool_id];
-      auto graph_context = graph_reuse_context[capture_id];
-      for (auto& [stream, _] : graph_context.visited) {
-        TORCH_INTERNAL_ASSERT(
-            stream_get_capture_info(stream).status ==
-                cudaStreamCaptureStatusNone,
-            "This stream should not be capturing when the capture is ended");
+    if (CUDAAllocatorConfig::graph_capture_record_stream_reuse()) {
+      // Remove stream reuse context and mapping for this capture, if present.
+      if (!graph_reuse_context.empty()) {
+        auto capture_id = mempool_to_capture_id[mempool_id];
+        auto graph_context = graph_reuse_context[capture_id];
+        for (auto& [stream, _] : graph_context.visited) {
+          TORCH_INTERNAL_ASSERT(
+              stream_get_capture_info(stream).status ==
+                  cudaStreamCaptureStatusNone,
+              "This stream should not be capturing when the capture is ended");
+        }
+        graph_reuse_context.erase(capture_id);
+        mempool_to_capture_id.erase(mempool_id);
       }
-      graph_reuse_context.erase(capture_id);
-      mempool_to_capture_id.erase(mempool_id);
+
+      // Free deferred blocks associated with the ended pool, if any.
+      // cudaStreamEndCapture would have failed if any stream used during
+      // capture hadn't been joined back, so all stream uses on these
+      // blocks are known to be complete and we can safely clear them.
+      if (!deferred_blocks.empty()) {
+        auto pool_it = graph_pools.find(mempool_id);
+        if (pool_it != graph_pools.end()) {
+          auto* private_pool = pool_it->second.get();
+          auto context = maybeGatherContext(RecordContext::ALL);
+          std::vector<Block*> blocks_to_erase;
+          for (auto& [block, markers] : deferred_blocks) {
+            if (block->pool->owner_PrivatePool == private_pool) {
+              // At capture end, handle blocks associated with non-capturing
+              // streams. Remove only stream uses introduced during capture
+              // (guaranteed complete), and for any leftover pre-capture uses,
+              // insert events to track their completion. This aligns with
+              // insert_events_deferred_until_no_capture semantics.
+              remove_cudagraph_stream_uses(block);
+              if (block->stream_uses.empty()) {
+                free_block(block, context);
+              } else {
+                // Pre-capture stream uses remain; record events so
+                // process_events can free the block once they complete.
+                insert_events(block);
+                // block->event_count should likely be non-zero here since
+                // block->stream_uses is not empty. Defensive: still free if
+                // event_count is zero, but this should be rare.
+                if (block->event_count == 0) {
+                  free_block(block, context);
+                }
+              }
+              // Must erase from deferred_blocks regardless of which branch we
+              // took.
+              blocks_to_erase.push_back(block);
+            }
+          }
+          for (auto* b : blocks_to_erase) {
+            deferred_blocks.erase(b);
+          }
+        }
+      }
     }
 
     for (auto it = captures_underway.begin(); it != captures_underway.end();
@@ -2829,7 +2890,9 @@ class DeviceCachingAllocator {
         return c;
       }
     }
-    auto segment_size = pool->is_small ? kSmallBuffer : kLargeBuffer;
+    auto segment_size = pool->is_small
+        ? kSmallBuffer
+        : AcceleratorAllocatorConfig::large_segment_size();
     expandable_segments_.emplace_back(new ExpandableSegment(
         device, stream, segment_size, devices_with_peer_access_));
 
@@ -3114,7 +3177,7 @@ class DeviceCachingAllocator {
     if (size <= kSmallSize) {
       return kSmallBuffer;
     } else if (size < kMinLargeAlloc) {
-      return kLargeBuffer;
+      return AcceleratorAllocatorConfig::large_segment_size();
     } else {
       return kRoundLarge * ((size + kRoundLarge - 1) / kRoundLarge);
     }
@@ -3806,7 +3869,7 @@ class DeviceCachingAllocator {
         device,
         addr,
         size,
-        stream,
+        reinterpret_cast<void*>(stream),
         mempool_id,
         getApproximateTime(),
         record_context_ >= RecordContext::ALLOC ? std::move(context) : nullptr,
@@ -4078,6 +4141,15 @@ class NativeCachingAllocator : public CUDAAllocator {
     return device_allocator[device]->isHistoryEnabled();
   }
 
+  std::shared_ptr<GatheredContext> getContextForPointer(
+      const void* ptr) override {
+    Block* block = get_allocated_block(const_cast<void*>(ptr));
+    if (!block) {
+      return nullptr;
+    }
+    return block->context_when_allocated;
+  }
+
   bool checkPoolLiveAllocations(
       c10::DeviceIndex device,
       MempoolId_t mempool_id,
@@ -4148,26 +4220,34 @@ class NativeCachingAllocator : public CUDAAllocator {
     device_allocator[block->device]->recordStream(block, stream);
   }
 
-  SnapshotInfo snapshot(MempoolId_t mempool_id) override {
-    // Set-up converter to convert timestamps from tsc to microseconds.
-    auto tsc_to_ns = clock_converter.makeConverter();
-    auto tsc_to_us = [=](approx_time_t t_approx) {
-      return tsc_to_ns(t_approx) / 1000;
-    };
-
+  SnapshotInfo snapshot(MempoolId_t mempool_id, bool include_traces) override {
     SnapshotInfo result;
 
-    // Get AnnotationEntry list and convert the timestamps.
-    annotation_buffer.getEntries(result.external_annotations);
-    for (auto& ae : result.external_annotations) {
-      ae.time_.t_ = tsc_to_us(ae.time_.approx_t_);
-    }
+    if (include_traces) {
+      // Set-up converter to convert timestamps from tsc to microseconds.
+      auto tsc_to_ns = clock_converter.makeConverter();
+      auto tsc_to_us = [=](approx_time_t t_approx) {
+        return tsc_to_ns(t_approx) / 1000;
+      };
 
-    // Get the device_traces' TraceEntry lists.
-    for (auto& da : device_allocator) {
-      result.device_traces.emplace_back(da->trace(tsc_to_us));
-      auto snap = da->snapshot(mempool_id);
-      result.segments.insert(result.segments.end(), snap.begin(), snap.end());
+      // Get AnnotationEntry list and convert the timestamps.
+      annotation_buffer.getEntries(result.external_annotations);
+      for (auto& ae : result.external_annotations) {
+        ae.time_.t_ = tsc_to_us(ae.time_.approx_t_);
+      }
+
+      // Get the device_traces' TraceEntry lists.
+      for (auto& da : device_allocator) {
+        result.device_traces.emplace_back(da->trace(tsc_to_us));
+        auto snap = da->snapshot(mempool_id);
+        result.segments.insert(result.segments.end(), snap.begin(), snap.end());
+      }
+    } else {
+      // Fast path: skip traces and annotations entirely
+      for (auto& da : device_allocator) {
+        auto snap = da->snapshot(mempool_id);
+        result.segments.insert(result.segments.end(), snap.begin(), snap.end());
+      }
     }
 
     auto& md = result.config_metadata;
@@ -4630,7 +4710,7 @@ struct BackendStaticInitializer {
 // initialization, and doing so there may introduce static initialization
 // order (SIOF) issues.
 #define HIP_MASQUERADING_AS_CUDA "cuda"
-    at::SetAllocator(c10::Device(HIP_MASQUERADING_AS_CUDA).type(), r, 0);
+    at::SetAllocator(c10::Device(HIP_MASQUERADING_AS_CUDA).type(), r, 1);
     allocator.store(r);
 #undef HIP_MASQUERADING_AS_CUDA
   }

@@ -2249,7 +2249,7 @@ std::tuple<Tensor, Tensor, Tensor, std::vector<Tensor>> _cudnn_rnn_backward(
         reserve);
   }
   return std::tuple<Tensor, Tensor, Tensor, std::vector<Tensor>>{
-      dx, dhx, dcx, dw};
+      std::move(dx), std::move(dhx), std::move(dcx), std::move(dw)};
 }
 
 // TODO: I am not sure if we actually need the 'dropout' and 'train' parameters
@@ -2594,6 +2594,10 @@ std::pair<Tensor, hidden_type> _cudnn_impl(
       bidirectional);
 
   TORCH_CHECK(_batch_sizes.dim() == 1, "batch_sizes tensor should be 1D");
+  TORCH_CHECK(
+      _batch_sizes.device().is_cpu(),
+      "batch_sizes tensor should be on CPU, but got ",
+      _batch_sizes.device());
   IntArrayRef batch_sizes{
       _batch_sizes.data_ptr<int64_t>(),
       static_cast<size_t>(_batch_sizes.size(0))};

@@ -4,15 +4,13 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/Exception.h>
 #include <torch/csrc/distributed/c10d/symm_mem/nccl_dev_cap.hpp>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
 #ifdef NCCL_HAS_SYMMEM_DEVICE_SUPPORT
 
 namespace c10d::symmetric_memory {
-// Maximum number of memory barriers for NCCL device communicator.
-// Each CTA will need a separate memory barrier.
-constexpr int NCCL_LSA_BARRIER_COUNT = 32;
 
 // Manage all the NCCL device communicator business. Singleton.
 class NCCLDevCommManager {
@@ -31,6 +29,7 @@ class NCCLDevCommManager {
 
   // Get an NCCL device communicator for a group.
   ncclDevComm& get_devcomm(const std::string& group_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = group_to_comms_.find(group_name);
     if (it == group_to_comms_.end()) {
       TORCH_CHECK(
@@ -44,6 +43,7 @@ class NCCLDevCommManager {
 
   // Get a host-side communicator for a group.
   ncclComm_t get_comm(const std::string& group_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = group_to_comms_.find(group_name);
     if (it == group_to_comms_.end()) {
       TORCH_CHECK(
@@ -56,20 +56,33 @@ class NCCLDevCommManager {
   }
 
   // Create device communicator if it doesn't exist. Skip if it already exists.
-  void try_emplace_devcomm(const std::string& group_name, ncclComm_t comm) {
+  void try_emplace_devcomm(
+      const std::string& group_name,
+      ncclComm_t comm,
+      int lsa_barrier_count,
+      int gin_barrier_count) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = group_to_comms_.find(group_name);
     if (it != group_to_comms_.end()) {
       return;
     }
     c10::cuda::CUDAGuard guard(device_);
     ncclDevComm devComm;
+
+    // Initializer available from NCCL 2.29
+#ifdef NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER
+    ncclDevCommRequirements reqs = NCCL_DEV_COMM_REQUIREMENTS_INITIALIZER;
+#else
+    // In 2.28, we can set it to zero
     ncclDevCommRequirements reqs;
-    // See example in
-    // https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/usage/deviceapi.html#simple-lsa-kernel
     memset(&reqs, 0, sizeof(ncclDevCommRequirements));
-    // Specifies the number of memory barriers to allocate.
-    reqs.lsaBarrierCount = NCCL_LSA_BARRIER_COUNT;
-    // TODO (kwen2501): Add network barrier count.
+#endif
+
+    // Specifies the number of barriers to allocate, LSA for NVLink domain, GIN
+    // for network.
+    reqs.lsaBarrierCount = lsa_barrier_count;
+    reqs.railGinBarrierCount = gin_barrier_count;
+
     C10D_NCCL_CHECK(
         ncclDevCommCreate(comm, &reqs, &devComm), "ncclDevCommCreate failed");
     // Cache the device communicator for future reuse
@@ -99,6 +112,7 @@ class NCCLDevCommManager {
  private:
   // Device where the NCCL device communicator manager is created
   const c10::Device device_;
+  std::mutex mutex_;
   // A map from group name to NCCL device communicator for that group.
   std::unordered_map<std::string, std::pair<ncclComm_t, ncclDevComm>>
       group_to_comms_;

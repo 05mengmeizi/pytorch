@@ -17,6 +17,15 @@ log = logging.getLogger(__name__)
 __all__ = ["varlen_attn", "AuxRequest"]
 
 
+def _normalize_window_size(window_size: list[int] | None) -> list[int]:
+    if window_size is None:
+        window_size = [-1, -1]
+
+    if len(window_size) != 2:
+        raise ValueError(f"window_size must have length 2, got {len(window_size)}")
+    return window_size
+
+
 @lru_cache(maxsize=8)
 def _should_use_cudnn(device_index: int) -> bool:
     """Cache device capability check to avoid repeated CUDA calls."""
@@ -44,17 +53,29 @@ def _varlen_attn(
     max_k: int,
     is_causal: bool = False,
     scale: float | None = None,
+    window_size: list[int] | None = None,
+    seqused_k: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Private custom op for variable-length attention.
 
     This is the internal implementation. Users should use the public varlen_attn function instead.
     """
+    window_size = _normalize_window_size(window_size)
 
     use_cudnn = query.is_cuda and _should_use_cudnn(query.device.index)
 
     if use_cudnn:
         log.info("Using cuDNN backend for varlen_attn")
+
+        if window_size[0] != -1 or window_size[1] != -1:
+            raise RuntimeError(
+                "cuDNN backend does not support window attention. Please use Flash Attention backend."
+            )
+        if seqused_k is not None:
+            # TODO: cuDNN supports per-sequence KV lengths via SEQ_LEN_KV + padding_mask,
+            # but _cudnn_attention_forward doesn't expose it yet.
+            raise RuntimeError("seqused_k is not yet supported with the cuDNN backend.")
         result = torch.ops.aten._cudnn_attention_forward(
             query,
             key,
@@ -86,6 +107,9 @@ def _varlen_attn(
             is_causal,
             return_debug_mask=False,
             scale=scale,
+            window_size_left=window_size[0],
+            window_size_right=window_size[1],
+            seqused_k=seqused_k,
         )
 
     rng_state_ = torch.zeros(
@@ -105,6 +129,8 @@ def _varlen_attn_fake(
     max_k: int,
     is_causal: bool = False,
     scale: float | None = None,
+    window_size: list[int] | None = None,
+    seqused_k: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Fake implementation for meta tensor computation and tracing.
@@ -113,6 +139,8 @@ def _varlen_attn_fake(
     - query shape: (total, num_heads, head_dim)
     - logsumexp shape: (num_heads, total_q)
     """
+    window_size = _normalize_window_size(window_size)
+
     # Output has same shape as query
     output = torch.empty_like(query)
 
@@ -143,12 +171,14 @@ def varlen_attn(
     cu_seq_k: torch.Tensor,
     max_q: int,
     max_k: int,
-    is_causal: bool = False,
+    *,
     return_aux: AuxRequest | None = None,
     scale: float | None = None,
+    window_size: tuple[int, int] = (-1, -1),
+    seqused_k: torch.Tensor | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-    """
-    Compute variable-length attention using Flash Attention.
+    r"""Compute variable-length attention using Flash Attention.
+
     This function is similar to scaled_dot_product_attention but optimized for
     variable-length sequences using cumulative sequence position tensors.
 
@@ -160,9 +190,15 @@ def varlen_attn(
         cu_seq_k (Tensor): Cumulative sequence positions for keys/values; shape :math:`(N+1,)`
         max_q (int): Maximum query sequence length in the batch.
         max_k (int): Maximum key/value sequence length in the batch.
-        is_causal (bool, optional): If set to True, applies causal masking (default: False).
         return_aux (Optional[AuxRequest]): If not None and ``return_aux.lse`` is True, also returns the logsumexp tensor.
         scale (float, optional): Scaling factor for attention scores
+        window_size (tuple[int, int], optional): Window size for sliding window attention as (left, right).
+            Use (-1, -1) for full attention (default), (-1, 0) for causal attention,
+            or (W, 0) for causal attention with sliding window of size W.
+        seqused_k (Tensor, optional): Number of valid KV tokens per batch element; shape :math:`(N,)`.
+            When set, only the first ``seqused_k[i]`` tokens in the key/value sequence for batch
+            element *i* participate in attention. Useful for KV-cache decoding where the cache slot
+            is larger than the actual sequence. Inference-only (not supported in backward).
 
     Returns:
         output (Tensor): Output tensor from attention computation; shape :math:`(T_q, H, D)`.
@@ -207,11 +243,22 @@ def varlen_attn(
         >>>
         >>> # Call varlen_attn
         >>> output = varlen_attn(
-        ...     query, key, value, cu_seq, cu_seq, max_len, max_len, is_causal=False
+        ...     query, key, value, cu_seq, cu_seq, max_len, max_len
         ... )
     """
+    is_causal = window_size == (-1, 0)
     out, lse, _ = torch.ops.torch_attn._varlen_attn(
-        query, key, value, cu_seq_q, cu_seq_k, max_q, max_k, is_causal, scale
+        query,
+        key,
+        value,
+        cu_seq_q,
+        cu_seq_k,
+        max_q,
+        max_k,
+        is_causal,
+        scale,
+        list(window_size),
+        seqused_k,
     )
     if return_aux is not None and return_aux.lse:
         return out, lse
@@ -219,8 +266,23 @@ def varlen_attn(
 
 
 def _setup_context(ctx: Any, inputs: tuple[Any, ...], output: Any) -> None:
-    query, key, value, cu_seq_q, cu_seq_k, max_q, max_k, is_causal, scale = inputs
+    (
+        query,
+        key,
+        value,
+        cu_seq_q,
+        cu_seq_k,
+        max_q,
+        max_k,
+        is_causal,
+        scale,
+        window_size,
+        seqused_k,
+    ) = inputs
     out, lse, rng_state = output
+
+    if seqused_k is not None:
+        raise RuntimeError("seqused_k is an inference-only parameter.")
 
     ctx.save_for_backward(query, key, value, cu_seq_q, cu_seq_k, out, lse, rng_state)
 
@@ -228,6 +290,7 @@ def _setup_context(ctx: Any, inputs: tuple[Any, ...], output: Any) -> None:
     ctx.max_k = max_k
     ctx.is_causal = is_causal
     ctx.scale = scale
+    ctx.window_size = window_size
 
 
 @torch.library.custom_op("torch_attn::_varlen_attn_backward", mutates_args={})
@@ -245,12 +308,19 @@ def _varlen_attn_backward(
     is_causal: bool,
     rng_state: torch.Tensor,
     scale: float | None = None,
+    window_size: list[int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    window_size = _normalize_window_size(window_size)
+
     unused = torch.empty(0, device=query.device)
 
     use_cudnn = query.is_cuda and _should_use_cudnn(query.device.index)
     if use_cudnn:
         log.info("Using cuDNN backend for varlen_attn")
+        if window_size[0] != -1 or window_size[1] != -1:
+            raise RuntimeError(
+                "cuDNN backend does not support window attention. Please use Flash Attention backend."
+            )
         dq, dk, dv = torch.ops.aten._cudnn_attention_backward(
             grad_out,
             query,
@@ -286,6 +356,8 @@ def _varlen_attn_backward(
             rng_state,
             unused,
             scale=scale,
+            window_size_left=window_size[0],
+            window_size_right=window_size[1],
         )
     return dq, dk, dv
 
@@ -305,10 +377,12 @@ def _varlen_attn_backward_fake(
     is_causal: bool,
     rng_state: torch.Tensor,
     scale: float | None = None,
+    window_size: list[int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Fake implementation for meta tensor computation and tracing.
     """
+    window_size = _normalize_window_size(window_size)
 
     grad_query = torch.empty_like(query)
     grad_key = torch.empty_like(key)
@@ -326,6 +400,7 @@ def _backward(
     max_k = ctx.max_k
     is_causal = ctx.is_causal
     scale = ctx.scale
+    window_size = ctx.window_size
 
     dq, dk, dv = torch.ops.torch_attn._varlen_attn_backward(
         grad_out,
@@ -341,8 +416,12 @@ def _backward(
         is_causal,
         rng_state,
         scale,
+        window_size,
     )
-    return dq, dk, dv, None, None, None, None, None, None
+    num_params = (
+        8  # cu_seq_q, cu_seq_k, max_q, max_k, is_causal, scale, window_size, seqused_k
+    )
+    return (dq, dk, dv, *((None,) * num_params))
 
 
 _varlen_attn.register_autograd(_backward, setup_context=_setup_context)
