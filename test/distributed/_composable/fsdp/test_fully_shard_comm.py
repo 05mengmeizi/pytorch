@@ -1709,7 +1709,9 @@ class TestFullyShardSymmMem(MultiProcContinuousTest):
         return "nccl"
 
     @classmethod
-    def opts(cls) -> Optional[dist.ProcessGroupNCCL.Options]:
+    def opts(cls):
+        if not dist.is_nccl_available():
+            return None
         # Enable Zero-CTA policy for CE collectives
         opts = dist.ProcessGroupNCCL.Options()
         opts.config.cta_policy = dist.ProcessGroupNCCL.NCCL_CTA_POLICY_ZERO
