@@ -5288,6 +5288,10 @@ test_contexts = {
     "test_index_backward_does_not_save_tensor": config.patch(
         capture_dynamic_output_shape_ops=True
     ),
+    "test_dtensor_basic": config.patch(nested_graph_breaks=False),
+    "test_dtensor_contiguous_dtensor_noncontiguous_local_as_tangent": config.patch(
+        nested_graph_breaks=False
+    ),
 }
 
 # These groups of tests aren't supported yet
