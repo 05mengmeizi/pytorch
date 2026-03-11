@@ -1502,6 +1502,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
     @skipIfRocmArch(MI350_ARCH)  # regression in ROCm 7.2
     @unittest.skipIf(not HAS_GPU, "Inductor+gpu needs triton and recent GPU arch")
     @patch.object(config, "optimize_ddp", False)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_ddp_baseline_inductor(self):
         from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -1512,6 +1513,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertTrue(same(correct_outputs, outputs))
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_graph_split(self):
         if not config.optimize_ddp:
             raise AssertionError("Expected config.optimize_ddp to be True")
@@ -1543,6 +1545,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertTrue(all("DDPOptimizer" in r.reason for r in break_reasons))
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_graph_split_ctx_manager(self):
         """
         Ensures that we get the right number of splits and that the respective
@@ -1596,6 +1599,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
 
     @skipIfXpu  # XPU device doesn't support flex_attention yet.
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_compiled_flex_attention_full_model_ddp(self):
         class Model(torch.nn.Module):
             def __init__(self, S, H, D):
@@ -1652,6 +1656,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
 
     @skipIfXpu  # XPU device doesn't support flex_attention yet.
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_compiled_flex_attention_local_ddp(self):
         class Model(torch.nn.Module):
             def __init__(self, S, H, D):
@@ -1709,6 +1714,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
     @skipIfRocmArch(MI350_ARCH)  # regression in ROCm 7.2
     @patch.object(config, "optimize_ddp", True)
     @unittest.skipIf(not HAS_GPU, "Inductor+gpu needs triton and recent GPU arch")
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_graph_split_inductor(self):
         if not config.optimize_ddp:
             raise AssertionError("Expected config.optimize_ddp to be True")
@@ -1787,11 +1793,13 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         )
 
     @unittest.skipIf(not HAS_GPU, "Inductor+gpu needs triton and recent GPU arch")
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_graph_split_inductor_layout_optimizations_inference(self):
         self._test_graph_split_inductor_layout_optimizations_impl(torch.no_grad)
 
     @patch.object(config, "optimize_ddp", True)
     @unittest.skipIf(not HAS_GPU, "Inductor+gpu needs triton and recent GPU arch")
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_graph_split_inductor_transpose(self):
         if not config.optimize_ddp:
             raise AssertionError("Expected config.optimize_ddp to be True")
@@ -1827,6 +1835,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertTrue(same(mod(x_2), ddp_compiled_mod(x_2)))
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_no_split(self):
         """
         Ensures the DDPOptimizer returns a correct, compiled module without
@@ -1846,6 +1855,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertEqual(check_splits_compiler.compiler_called, 1)
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_aot_autograd(self):
         """
         Explicitly check AotAutograd family of compilers work,
@@ -1863,6 +1873,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertTrue(same(correct_outputs, opt_outputs))
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_custom_layer(self):
         """
         Just ensures that the appropriate number of splits happen (based on
@@ -1898,6 +1909,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertEqual(res, 1)
 
     @patch.object(config, "optimize_ddp", False)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_ignored_parameters(self):
         """
         Verifies ddp graph-split logic ignores parameters marked to ignore on DDP module.
@@ -1929,6 +1941,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
                 self.assertFalse(p_id in parameter_ids_to_ignore)
 
     @patch.object(config, "optimize_ddp", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_higher_order_op(self):
         from torch.utils.checkpoint import checkpoint
 
@@ -2130,6 +2143,7 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         self.assertEqual(local_out, fsdp_out)
 
     @patch.object(config, "guard_nn_modules", True)
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_fsdp_dup_tensors_diff_source(self):
         """
         Tests that FSDP-managed modules' parameters and buffers with different
