@@ -12835,6 +12835,7 @@ op_db: list[OpInfo] = [
            sample_inputs_func=sample_inputs_mv),
     OpInfo('addr',
            dtypes=all_types_and_complex_and(torch.bool, torch.bfloat16, torch.float16),
+           backward_dtypesIfXPU=complex_types_and(torch.bool, torch.int, torch.float32, torch.float16, torch.bfloat16),
            # Reference: https://github.com/pytorch/pytorch/issues/50747
            supports_forward_ad=True,
            supports_fwgrad_bwgrad=True,
@@ -21204,6 +21205,8 @@ op_db: list[OpInfo] = [
     OpInfo('logsumexp',
            aliases=('special.logsumexp',),
            dtypes=all_types_and_complex_and(torch.bool, torch.half, torch.bfloat16),
+           backward_dtypesIfXPU=custom_types(torch.float32, torch.float64, torch.half, torch.bfloat16,
+                                             torch.complex64, torch.float16, torch.bfloat16),
            assert_autodiffed=True,
            supports_forward_ad=True,
            supports_fwgrad_bwgrad=True,
@@ -22245,6 +22248,7 @@ op_db: list[OpInfo] = [
         op=lambda input, *args, **kwargs:
             wrapper_set_seed(torch.nn.functional.multi_head_attention_forward, input, *args, **kwargs),
         dtypes=floating_types_and(torch.bfloat16, torch.float16),
+        backward_dtypesIfXPU=(torch.float32, torch.float16, torch.bfloat16),
         sample_inputs_func=sample_inputs_multi_head_attention_forward,
         skips=(
             # Tensor-likes are not close
