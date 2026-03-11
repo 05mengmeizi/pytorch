@@ -6,7 +6,7 @@ import logging
 import operator
 import struct
 import sys
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import torch
 
@@ -1004,8 +1004,8 @@ class _NnapiSerializer:
             )
         output = node.outputsAt(0)
         ctype = output.type()
-        const_vals: list | None = []
-        tensors: list | None = []
+        const_vals: Optional[list] = []
+        tensors: Optional[list] = []
         for inp in node.inputs():
             if const_vals is not None and inp in self.constants:
                 _, val = self.get_constant_value(inp)

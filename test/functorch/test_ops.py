@@ -135,8 +135,7 @@ def normalize_op_input_output2(
         for i, arg in enumerate(flat_args)
         if diff_arg(arg, requires_grad=requires_grad)
     )
-    if len(diff_argnums) == 0:
-        raise AssertionError("Expected at least one differentiable argument")
+    assert len(diff_argnums) > 0
     primals = tuple(flat_args[i] for i in diff_argnums)
 
     @functools.wraps(f)
@@ -150,8 +149,7 @@ def normalize_op_input_output2(
             result = output_process_fn_grad(result)
         if isinstance(result, tuple):
             result = tuple(r for r in result if torch.is_floating_point(r))
-            if len(result) == 0:
-                raise AssertionError("Expected at least one floating point result")
+            assert len(result) > 0
         return result
 
     return wrapped, primals
@@ -168,8 +166,7 @@ def normalize_op_input_output3(
         for i, (arg, sample) in enumerate(zip(flat_args, flat_sample_args))
         if diff_arg(sample, requires_grad=True)
     )
-    if len(diff_argnums) == 0:
-        raise AssertionError("Expected at least one differentiable argument")
+    assert len(diff_argnums) > 0
     primals = tuple(flat_args[i] for i in diff_argnums)
 
     @functools.wraps(f)
@@ -183,8 +180,7 @@ def normalize_op_input_output3(
             result = output_process_fn_grad(result)
         if isinstance(result, tuple):
             result = tuple(r for r in result if torch.is_floating_point(r))
-            if len(result) == 0:
-                raise AssertionError("Expected at least one floating point result")
+            assert len(result) > 0
         return result
 
     return wrapped, primals
@@ -240,10 +236,7 @@ def get_vjp_fn_and_args_with_cotangents(f, sample, cotangents):
 
     @functools.wraps(f)
     def wrapped(*args):
-        if len(args) != len(flat_args) + len(flat_cotangents):
-            raise AssertionError(
-                f"Expected {len(flat_args) + len(flat_cotangents)} args, got {len(args)}"
-            )
+        assert len(args) == len(flat_args) + len(flat_cotangents)
         actual_args = args[: len(flat_args)]
         cotangents = args[len(flat_args) :]
         actual_args = tree_unflatten(actual_args, args_spec)
@@ -284,8 +277,7 @@ def _get_vjpfull_variant(fn, primals):
         cotangents = args[num_primals:]
         result, vjp_fn = vjp(fn, *primals)
         if isinstance(result, torch.Tensor):
-            if len(cotangents) != 1:
-                raise AssertionError(f"Expected 1 cotangent, got {len(cotangents)}")
+            assert len(cotangents) == 1
             cotangents = cotangents[0]
         return vjp_fn(cotangents)
 
@@ -545,8 +537,7 @@ class TestOperators(TestCase):
                 noncontig_kwargs = noncontig_sample.kwargs
 
             diff_argnums = tuple(i for i, arg in enumerate(args) if diff_arg(arg))
-            if len(diff_argnums) == 0:
-                raise AssertionError("Expected at least one differentiable argument")
+            assert len(diff_argnums) > 0
             diff_args = tuple(args[i] for i in diff_argnums)
 
             def wrapped_fn(*args, **kwargs):
@@ -1887,10 +1878,7 @@ class TestOperators(TestCase):
             def tree_map2(fn, first, second):
                 flat_first, spec_first = tree_flatten(first)
                 flat_second, spec_second = tree_flatten(second)
-                if spec_first != spec_second:
-                    raise AssertionError(
-                        f"Tree specs mismatch: {spec_first} != {spec_second}"
-                    )
+                assert spec_first == spec_second
                 flat_result = [fn(f, s) for f, s in zip(flat_first, flat_second)]
                 return tree_unflatten(flat_result, spec_first)
 
@@ -2510,8 +2498,7 @@ class TestOperators(TestCase):
 
     def test_vmapvmapjvp_linalg_solve(self):
         ops = [op for op in op_db if op.name == "linalg.solve"]
-        if len(ops) == 0:
-            raise AssertionError("Expected at least one linalg.solve op")
+        assert len(ops) > 0
 
         # this specializes a lot of code from the get_fallback_and_vmap_exhaustive test. If we need this more
         # generally, this could go for a refactor
@@ -2560,8 +2547,7 @@ class TestOperators(TestCase):
                         (torch.randn_like(without_grad),),
                     )
             else:
-                if grad_op != "vjp":
-                    raise AssertionError(f"Expected 'vjp', got {grad_op!r}")
+                assert grad_op == "vjp"
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "During a grad .* attempted to call in-place operation",
@@ -2597,8 +2583,7 @@ class TestOperators(TestCase):
                         (torch.randn_like(without_grad),),
                     )
                 else:
-                    if grad_op != "vjp":
-                        raise AssertionError(f"Expected 'vjp', got {grad_op!r}")
+                    assert grad_op == "vjp"
                     vjp(f, torch.randn_like(without_grad))
 
     @parametrize("grad_op", ["jvp", "vjp"])
@@ -2631,8 +2616,7 @@ class TestOperators(TestCase):
                         (torch.randn_like(without_grad),),
                     )
             else:
-                if grad_op != "vjp":
-                    raise AssertionError(f"Expected 'vjp', got {grad_op!r}")
+                assert grad_op == "vjp"
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "During a grad .* attempted to call in-place operation",

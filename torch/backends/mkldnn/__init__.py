@@ -134,6 +134,5 @@ if TYPE_CHECKING:
     enabled: ContextProp
     deterministic: ContextProp
     allow_tf32: ContextProp
-    fp32_precision: str
 
 sys.modules[__name__] = MkldnnModule(sys.modules[__name__], __name__)

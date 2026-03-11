@@ -7,7 +7,7 @@ aten = torch.ops.aten
 import inspect
 import warnings
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Optional, TypeVar
 from typing_extensions import ParamSpec
 
 from torch.types import Number
@@ -24,13 +24,13 @@ def check_decomposition_has_type_annotations(f) -> None:
     inspect_empty = inspect._empty  # type: ignore[attr-defined]
     sig = inspect.signature(f)
     for param in sig.parameters.values():
-        if param.annotation == inspect_empty:
-            raise AssertionError(
-                f"No signature on param {param.name} for function {f.name}"
-            )
+        assert param.annotation != inspect_empty, (
+            f"No signature on param {param.name} for function {f.name}"
+        )
 
-    if sig.return_annotation == inspect_empty:
-        raise AssertionError(f"No return annotation for function {f.name}")
+    assert sig.return_annotation != inspect_empty, (
+        f"No return annotation for function {f.name}"
+    )
 
 
 def signatures_match(decomposition_sig, torch_op_sig):
@@ -68,21 +68,19 @@ def signatures_match(decomposition_sig, torch_op_sig):
 
 def register_decomposition(
     aten_op: torch._ops.OpOverload,
-    registry: dict[str, torch.jit.ScriptFunction] | None = None,
+    registry: Optional[dict[str, torch.jit.ScriptFunction]] = None,
 ) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
     def decomposition_decorator(f: Callable[_P, _T]) -> Callable[_P, _T]:
         nonlocal registry
         if registry is None:
             registry = decomposition_table
 
-        if not isinstance(aten_op, torch._ops.OpOverload):
-            raise AssertionError(
-                f"Expected aten_op to be OpOverload, got {type(aten_op)}"
-            )
+        assert isinstance(aten_op, torch._ops.OpOverload)
 
         # Need unique name for jit function serialization
-        if f.__name__ in function_name_set:
-            raise AssertionError(f"Duplicated function name {f.__name__}")
+        assert f.__name__ not in function_name_set, (
+            f"Duplicated function name {f.__name__}"
+        )
         function_name_set.add(f.__name__)
 
         scripted_func = torch.jit.script(f)
@@ -104,8 +102,8 @@ def register_decomposition(
 @register_decomposition(aten.var.correction)
 def var_decomposition(
     input: Tensor,
-    dim: list[int] | None = None,
-    correction: Number | None = None,
+    dim: Optional[list[int]] = None,
+    correction: Optional[Number] = None,
     keepdim: bool = False,
 ) -> Tensor:
     if dim is None:

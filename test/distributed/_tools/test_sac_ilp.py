@@ -16,7 +16,6 @@ from torch.distributed._tools.sac_estimator import SACEstimator, SACStats
 from torch.testing._internal.common_cuda import TEST_CUDA
 from torch.testing._internal.common_utils import (
     MI300_ARCH,
-    MI350_ARCH,
     run_tests,
     skipIfRocmArch,
     TestCase,
@@ -85,8 +84,7 @@ class TestSACILP(TestCase):
                 optimizer.zero_grad()
                 if iter_idx == 0:
                     mt.reset_mod_stats()
-        if last_snapshot is None:
-            raise AssertionError("Expected last_snapshot to not be None")
+        assert last_snapshot is not None
         for mod_stats in mem_tracker.memory_tracking.values():
             # postprocessing due to the fact that for ModTracker, the post backward hook
             # is not being called for modules whose inputs don't require gradients
@@ -147,7 +145,7 @@ class TestSACILP(TestCase):
 
     @unittest.skipIf(not TEST_CUDA, "CUDA not available")
     @unittest.skipIf(not HAS_PULP, "pulp package not installed")
-    @skipIfRocmArch(MI300_ARCH + MI350_ARCH)
+    @skipIfRocmArch(MI300_ARCH)
     def test_sac_ilp_case1(self):
         """
         This is a case where the memory budget is either binding or too tight,

@@ -21,16 +21,6 @@ CodeGen::CodeGen(
   allocIntermediateBufs();
 }
 
-CodeGen::CodeGen(const CodeGen& rhs) = default;
-
-CodeGen::CodeGen(CodeGen&& rhs) = default;
-
-CodeGen::~CodeGen() = default;
-
-CodeGen& CodeGen::operator=(const CodeGen& rhs) = default;
-
-CodeGen& CodeGen::operator=(CodeGen&& rhs) = default;
-
 RegisterCodeGenList& RegisterCodeGenList::GetInstance() {
   static RegisterCodeGenList codegen_list;
   return codegen_list;

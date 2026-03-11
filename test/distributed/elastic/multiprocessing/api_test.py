@@ -17,6 +17,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from itertools import product
+from typing import Union
 from unittest import mock
 
 import torch
@@ -194,7 +195,7 @@ def wait_fn(wait_time: int = 300) -> None:
 
 def start_processes_zombie_test(
     idx: int,
-    entrypoint: str | Callable,
+    entrypoint: Union[str, Callable],
     mp_queue: mp.Queue,
     log_dir: str,
     nproc: int = 2,
@@ -262,7 +263,7 @@ class _StartProcessesTest(TestCase):
                 os.kill(pid, 0)
 
     def _test_zombie_workflow(
-        self, entrypoint: str | Callable, signal_to_send: signal.Signals
+        self, entrypoint: Union[str, Callable], signal_to_send: signal.Signals
     ) -> None:
         mp_queue = mp.get_context("spawn").Queue()
         child_nproc = 2

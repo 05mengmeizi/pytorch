@@ -109,9 +109,6 @@ inline torch::List<std::optional<Tensor>> toListOfOptionalTensors(ArrayRef<IValu
   auto isDefined = [](const Tensor & tensor){ return tensor.defined(); };
   auto isNull = [](const Tensor & tensor){ return !tensor.defined(); };
   auto start = std::find_if(tl.begin(), tl.end(), isDefined);
-  if (start == tl.end()) {
-    return true;
-  }
   auto stop = std::find_if(tl.rbegin(), tl.rend(), isDefined);
   auto it = std::find_if(start, stop.base(), isNull);
   return it == stop.base();

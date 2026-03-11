@@ -2,7 +2,7 @@
 AC rematerialize pass: Duplicates checkpointed nodes for backward, then DCE removes unused forward versions.
 """
 
-from typing import Any, overload
+import warnings
 
 import torch
 import torch.fx as fx
@@ -19,7 +19,7 @@ from torch._functorch.partitioners import (
 )
 
 
-def is_impure_node_for_dce(node: fx.Node) -> bool:
+def is_impure_node_for_dce(node):
     # Check for special collectives that should be treated as pure
     if not is_not_collective(node):
         # It's a collective (wait_tensor, all_gather_into_tensor, etc.)
@@ -57,6 +57,11 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
             bwd_start = idx
 
     if bwd_start is None:
+        warnings.warn(
+            "remat_using_tags_for_fwd_loss_bwd_graph: Graph has recomputable ops but no backward region. "
+            "This may indicate a forward-only graph (e.g., from nested compilation) or missing backward annotations. "
+            "Returning graph unchanged."
+        )
         return gm
 
     if has_recomputable_rng_ops(gm):
@@ -82,18 +87,13 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
     for node in list(gm.graph.nodes)[:bwd_start]:
         env[node] = new_graph.node_copy(node, lambda x: env[x])
 
-    @overload
-    def remat_input(x: fx.Node) -> fx.Node: ...
-    @overload
-    def remat_input(x: Any) -> Any: ...
-
-    def remat_input(x: object) -> object:
+    def remat_input(x):
         # fx.Node can have args that are primitive types (e.g. int, float, bool)
         if not isinstance(x, fx.Node):
             return x
         return recomputed_nodes.get(x, env[x])
 
-    def gather_checkpointed_deps(node: fx.Node, visited: set[fx.Node]) -> None:
+    def gather_checkpointed_deps(node: fx.Node, visited: set) -> None:
         if node in visited or node in recomputed_nodes:
             return
         visited.add(node)
@@ -113,11 +113,7 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
         # This is not as inefficient as it looks, because we only add fresh dependencies
         # when they are not yet processed as recomputed nodes.
         for dep in sorted(deps, key=lambda n: order[n]):
-            if dep in recomputed_nodes:
-                raise AssertionError(
-                    f"We shouldn't have recomputed {dep} before, "
-                    f"but found it in recomputed_nodes"
-                )
+            assert dep not in recomputed_nodes, "We shouldn't have recomputed it before"
             dup = new_graph.node_copy(dep, remat_input)
             dup.name = dep.name + "_recomputed"
             recomputed_nodes[dep] = dup

@@ -937,25 +937,6 @@ static PyObject* THPModule_userEnabledFlashSDP(
   else
     Py_RETURN_FALSE;
 }
-static PyObject* THPModule_setSDPUseFA3(PyObject* _unused, PyObject* arg) {
-  HANDLE_TH_ERRORS
-  TORCH_CHECK(
-      PyBool_Check(arg),
-      "set_sdp_use_fa3 expects a bool, "
-      "but got ",
-      THPUtils_typename(arg));
-  at::globalContext().setSDPUseFA3(arg == Py_True);
-  Py_RETURN_NONE;
-  END_HANDLE_TH_ERRORS
-}
-static PyObject* THPModule_userEnabledFA3SDP(
-    PyObject* _unused,
-    PyObject* noargs) {
-  if (at::globalContext().userEnabledFA3SDP())
-    Py_RETURN_TRUE;
-  else
-    Py_RETURN_FALSE;
-}
 static PyObject* THPModule_setSDPUseMemEfficient(
     PyObject* _unused,
     PyObject* arg) {
@@ -1570,16 +1551,12 @@ static PyObject* THPModule_setCheckSparseTensorInvariants(
     PyObject* _unused,
     PyObject* arg) {
   HANDLE_TH_ERRORS
-  if (arg == Py_None) {
-    at::globalContext().setCheckSparseTensorInvariants(std::nullopt);
-  } else {
-    TORCH_CHECK(
-        PyBool_Check(arg),
-        "set_check_sparse_tensor_invariants expects a bool or None, "
-        "but got ",
-        THPUtils_typename(arg));
-    at::globalContext().setCheckSparseTensorInvariants(arg == Py_True);
-  }
+  TORCH_CHECK(
+      PyBool_Check(arg),
+      "set_check_sparse_tensor_invariants expects a bool, "
+      "but got ",
+      THPUtils_typename(arg));
+  at::globalContext().setCheckSparseTensorInvariants(arg == Py_True);
   Py_RETURN_NONE;
   END_HANDLE_TH_ERRORS
 }
@@ -1587,7 +1564,7 @@ static PyObject* THPModule_setCheckSparseTensorInvariants(
 static PyObject* THPModule_checkSparseTensorInvariants(
     PyObject* _unused,
     PyObject* noargs) {
-  if (at::globalContext().checkSparseTensorInvariants().value_or(false))
+  if (at::globalContext().checkSparseTensorInvariants())
     Py_RETURN_TRUE;
   else
     Py_RETURN_FALSE;
@@ -1841,8 +1818,6 @@ static std::initializer_list<PyMethodDef> TorchMethods = {
      METH_NOARGS,
      nullptr},
     {"_set_sdp_use_flash", THPModule_setSDPUseFlash, METH_O, nullptr},
-    {"_get_fa3_sdp_enabled", THPModule_userEnabledFA3SDP, METH_NOARGS, nullptr},
-    {"_set_sdp_use_fa3", THPModule_setSDPUseFA3, METH_O, nullptr},
     {"_get_mem_efficient_sdp_enabled",
      userEnabledMemEfficientSDP,
      METH_NOARGS,
@@ -2112,8 +2087,6 @@ void initModule(PyObject* module);
 PyMethodDef* THXPModule_methods();
 void THXPStream_init(PyObject* module);
 void THXPEvent_init(PyObject* module);
-void THXPMemPool_init(PyObject* module);
-void THXPGraph_init(PyObject* module);
 namespace torch::xpu {
 void initModule(PyObject* module);
 } // namespace torch::xpu
@@ -2339,8 +2312,6 @@ PyObject* initModule() {
 #ifdef USE_XPU
   THXPStream_init(module);
   THXPEvent_init(module);
-  THXPMemPool_init(module);
-  THXPGraph_init(module);
 #endif
 
   torch::distributed::initPlacementBindings(module);

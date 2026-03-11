@@ -3,6 +3,7 @@
 
 import torch
 import math
+from typing import Union
 from torch.ao.quantization import (
     FakeQuantize,
     MovingAverageMinMaxObserver,
@@ -181,8 +182,8 @@ def _fake_quantize_learnable_per_channel_affine_grad_reference(
 
 def _get_tensor_min_max(
         X: torch.Tensor,
-        running_min: float | torch.Tensor = float("inf"),
-        running_max: float | torch.Tensor = float("-inf"),
+        running_min: Union[float, torch.Tensor] = float("inf"),
+        running_max: Union[float, torch.Tensor] = float("-inf"),
         averaging_const: float = 0.01,
         dtype: torch.dtype = torch.float32) -> tuple[float, float]:
     min_val_tensor = X.min().to(dtype=dtype)
@@ -566,10 +567,8 @@ class TestFakeQuantizeOps(TestCase):
         X.requires_grad_()
         fq_module = torch.ao.quantization.default_fake_quant().to(device)
         Y_prime = fq_module(X)
-        if fq_module.scale is None:
-            raise AssertionError("fq_module.scale should not be None")
-        if fq_module.zero_point is None:
-            raise AssertionError("fq_module.zero_point should not be None")
+        assert fq_module.scale is not None
+        assert fq_module.zero_point is not None
         Y = _fake_quantize_per_tensor_affine_reference(X, fq_module.scale, fq_module.zero_point, quant_min, quant_max)
         np.testing.assert_allclose(Y.cpu().detach().numpy(), Y_prime.cpu().detach().numpy(), rtol=tolerance, atol=tolerance)
 
@@ -920,10 +919,7 @@ class TestFakeQuantizeOps(TestCase):
             Y_prime.backward(dout)
             np.testing.assert_allclose(
                 dX.cpu().detach().numpy(), X.grad.cpu().detach().numpy(), rtol=tolerance, atol=tolerance)
-            if X.grad.dtype != float_type:
-                raise AssertionError(
-                    f"Expected X.grad.dtype to be {float_type}, got {X.grad.dtype}"
-                )
+            assert X.grad.dtype == float_type
 
 
     def test_backward_per_channel_cachemask_cpu(self):

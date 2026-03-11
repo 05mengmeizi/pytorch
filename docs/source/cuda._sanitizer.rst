@@ -100,7 +100,3 @@ API Reference
 -------------
 
 .. autofunction:: enable_cuda_sanitizer
-
-.. autofunction:: zip_arguments
-
-.. autofunction:: zip_by_key

@@ -4,8 +4,7 @@ import torch
 
 
 so_files = list(Path(__file__).parent.glob("_C*.so"))
-if len(so_files) != 1:
-    raise AssertionError(f"Expected one _C*.so file, found {len(so_files)}")
+assert len(so_files) == 1, f"Expected one _C*.so file, found {len(so_files)}"
 torch.ops.load_library(so_files[0])
 
 from . import ops
@@ -28,8 +27,7 @@ inputs = [
     torch.tensor([-4.0, -5.0, -6.0], device=device),
 ]
 
-if not torch.equal(
+assert torch.equal(
     ops.ultra_norm(inputs),
     torch.norm(torch.tensor([1.0, 2.0, 3.0, -4.0, -5.0, -6.0], device=device)),
-):
-    raise AssertionError("ultra_norm op did not produce expected result")
+)

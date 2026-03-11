@@ -43,8 +43,7 @@ def lstm_backward_setup(lstm_outputs, seed=None):
 
 
 def simple_backward_setup(output, seed=None):
-    if not isinstance(output, torch.Tensor):
-        raise AssertionError(f"Expected output to be a Tensor, but got {type(output)}")
+    assert isinstance(output, torch.Tensor)
     if seed:
         torch.manual_seed(seed)
     grad_output = torch.randn_like(output)
@@ -79,8 +78,7 @@ def lstm_creator(script=True, **kwargs):
 
 
 def lnlstm_creator(script=True, decompose_layernorm=False, **kwargs):
-    if script is not True:
-        raise AssertionError("lnlstm_creator requires script=True")
+    assert script is True
     from .custom_lstms import script_lnlstm
 
     input_size = kwargs["inputSize"]
@@ -109,8 +107,7 @@ def lnlstm_creator(script=True, decompose_layernorm=False, **kwargs):
 
 
 def dropoutlstm_creator(script=True, **kwargs):
-    if script is not True:
-        raise AssertionError("dropoutlstm_creator requires script=True")
+    assert script is True
     from .custom_lstms import LSTMState, script_lstm
 
     input_size = kwargs["inputSize"]
@@ -363,12 +360,8 @@ def layernorm_pytorch_lstm_creator(**kwargs):
 # packed_weights[3] is b_hh with size (layer, 4*hiddenSize)
 def stack_weights(weights):
     def unzip_columns(mat):
-        if not isinstance(mat, list):
-            raise AssertionError(f"Expected mat to be a list, but got {type(mat)}")
-        if not isinstance(mat[0], list):
-            raise AssertionError(
-                f"Expected mat[0] to be a list, but got {type(mat[0])}"
-            )
+        assert isinstance(mat, list)
+        assert isinstance(mat[0], list)
         layers = len(mat)
         columns = len(mat[0])
         return [[mat[layer][col] for layer in range(layers)] for col in range(columns)]

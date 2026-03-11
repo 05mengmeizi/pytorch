@@ -1,6 +1,7 @@
 # mypy: allow-untyped-defs
 import logging
 import operator
+from typing import Optional, Union
 
 import torch
 import torch.export._trace
@@ -17,9 +18,9 @@ from torch.fx.graph_module import _assign_attr
 log = logging.getLogger(__name__)
 
 # Those values will need to be carried over multiple operators.
-_INPUT_Q_DTYPE: torch.dtype | torch.fx.Node | None = None
-_SCALE: float | torch.fx.Node | None = None
-_ZERO_POINT: float | torch.fx.Node | None = None
+_INPUT_Q_DTYPE: Optional[Union[torch.dtype, torch.fx.Node]] = None
+_SCALE: Optional[Union[float, torch.fx.Node]] = None
+_ZERO_POINT: Optional[Union[float, torch.fx.Node]] = None
 
 
 def int_to_valid_dtype(val: int) -> torch.dtype:
@@ -42,12 +43,12 @@ def fx_enum_to_dtype(gm: torch.fx.GraphModule, val: int) -> torch.fx.Node:
 def insert_quantized_node(
     gm: torch.fx.GraphModule,
     val_node: torch.fx.Node,
-    scale_node: float | torch.fx.Node,
-    zero_point_node: float | torch.fx.Node,
-    qmin_node: float | int | torch.fx.Node,
-    qmax_node: float | int | torch.fx.Node,
-    dtype_node: torch.dtype | torch.fx.Node,
-    qscheme: torch.qscheme | None,
+    scale_node: Union[float, torch.fx.Node],
+    zero_point_node: Union[float, torch.fx.Node],
+    qmin_node: Union[float, int, torch.fx.Node],
+    qmax_node: Union[float, int, torch.fx.Node],
+    dtype_node: Union[torch.dtype, torch.fx.Node],
+    qscheme: Optional[torch.qscheme],
 ) -> torch.fx.Node:
     return gm.graph.call_function(
         quantize_per_tensor,
@@ -64,13 +65,13 @@ def insert_quantized_node(
 
 def get_dequantized(
     val: torch.Tensor,
-    scale: float | torch.Tensor,
-    zero_point: float | torch.Tensor,
-    qmin: float | int,
-    qmax: float | int,
+    scale: Union[float, torch.Tensor],
+    zero_point: Union[float, torch.Tensor],
+    qmin: Union[float, int],
+    qmax: Union[float, int],
     dtype: torch.dtype,
-    axis: int | None,
-    qscheme: torch.qscheme | None,
+    axis: Optional[int],
+    qscheme: Optional[torch.qscheme],
 ) -> torch.Tensor:
     if qscheme is torch.per_tensor_affine:
         return dequantize_per_tensor(
@@ -98,13 +99,13 @@ def get_dequantized(
 def insert_dequantized_node(
     gm: torch.fx.GraphModule,
     val_node: torch.fx.Node,
-    scale_node: float | torch.fx.Node,
-    zero_point_node: float | torch.fx.Node,
-    qmin_node: float | int | torch.fx.Node,
-    qmax_node: float | int | torch.fx.Node,
-    dtype_node: torch.dtype | torch.fx.Node,
-    axis_node: int | torch.fx.Node | None,
-    qscheme: torch.qscheme | None,
+    scale_node: Union[float, torch.fx.Node],
+    zero_point_node: Union[float, torch.fx.Node],
+    qmin_node: Union[float, int, torch.fx.Node],
+    qmax_node: Union[float, int, torch.fx.Node],
+    dtype_node: Union[torch.dtype, torch.fx.Node],
+    axis_node: Optional[Union[int, torch.fx.Node]],
+    qscheme: Optional[torch.qscheme],
 ) -> torch.fx.Node:
     if qscheme is torch.per_tensor_affine:
         return gm.graph.call_function(
@@ -135,12 +136,12 @@ def insert_dequantized_node(
         raise RuntimeError(f"Unsupported dequantization scheme: {qscheme}")
 
 
-def get_qmin_qmax(dtype: torch.dtype) -> tuple[int | float, int | float]:
+def get_qmin_qmax(dtype: torch.dtype) -> tuple[Union[int, float], Union[int, float]]:
     return calculate_qmin_qmax(None, None, False, dtype, False)  # type: ignore[arg-type]
 
 
 def insert_qmin_qmax_node(
-    gm: torch.fx.GraphModule, dtype_node: torch.dtype | torch.fx.Node
+    gm: torch.fx.GraphModule, dtype_node: Union[torch.dtype, torch.fx.Node]
 ) -> tuple[torch.fx.Node, torch.fx.Node]:
     q_min_max_node = gm.graph.call_function(
         calculate_qmin_qmax, (None, None, False, dtype_node, False)
@@ -153,26 +154,22 @@ def insert_qmin_qmax_node(
 def get_script_object(
     gm: torch.nn.Module, node: torch.fx.Node
 ) -> torch._C.ScriptObject:
-    if not isinstance(node, torch.fx.Node):
-        raise AssertionError(f"expected fx.Node, got {type(node).__name__}")
-    if node.op != "get_attr":
-        raise AssertionError(f"expected get_attr op, got {node.op}")
+    assert isinstance(node, torch.fx.Node)
+    assert node.op == "get_attr"
     attr_name = node.target
-    if not isinstance(attr_name, str):
-        raise AssertionError(f"expected str target, got {type(attr_name).__name__}")
+    assert isinstance(attr_name, str)
 
     mod = gm
     for attr in attr_name.split("."):
         mod = getattr(mod, attr)
-    if not isinstance(mod, torch._C.ScriptObject):
-        raise AssertionError(f"expected ScriptObject, got {type(mod).__name__}")
+    assert isinstance(mod, torch._C.ScriptObject)
     return mod
 
 
 def insert_weight_and_bias_get_attr_node_from_get_attr_to_scriptobject(
     gm: torch.fx.GraphModule,
     param_node: torch.fx.Node,
-) -> tuple[torch.fx.Node, torch.fx.Node | None]:
+) -> tuple[torch.fx.Node, Optional[torch.fx.Node]]:
     """Directly inline tensor from a get_attr fx node."""
     mod = get_script_object(gm, param_node)
     w_qtensor, b_qtensor = mod.unpack()  # type: ignore[attr-defined]
@@ -188,20 +185,14 @@ def insert_weight_and_bias_get_attr_node_from_get_attr_to_scriptobject(
 def insert_weight_and_bias_get_attr_node_from_get_attr_to_qtensor(
     gm: torch.fx.GraphModule,
     get_attr_to_weight_node: torch.fx.Node,
-    get_attr_to_bias_node: torch.fx.Node | None,
-) -> tuple[torch.fx.Node, torch.fx.Node | None]:
-    if not isinstance(get_attr_to_weight_node.target, str):
-        raise AssertionError(
-            f"expected str target, got {type(get_attr_to_weight_node.target).__name__}"
-        )
+    get_attr_to_bias_node: Optional[torch.fx.Node],
+) -> tuple[torch.fx.Node, Optional[torch.fx.Node]]:
+    assert isinstance(get_attr_to_weight_node.target, str)
     w_qtensor = getattr(gm, get_attr_to_weight_node.target)
     w_attr_name = f"dequantized_{get_attr_to_weight_node.target}_w"
 
     if get_attr_to_bias_node is not None:
-        if not isinstance(get_attr_to_bias_node.target, str):
-            raise AssertionError(
-                f"expected str target, got {type(get_attr_to_bias_node.target).__name__}"
-            )
+        assert isinstance(get_attr_to_bias_node.target, str)
         b_qtensor = getattr(gm, get_attr_to_bias_node.target)
         b_attr_name = f"dequantized_{get_attr_to_bias_node.target}_b"
     else:
@@ -215,10 +206,10 @@ def insert_weight_and_bias_get_attr_node_from_get_attr_to_qtensor(
 def insert_weight_and_bias_get_attr_node(
     gm: torch.fx.GraphModule,
     w_qtensor: torch.Tensor,
-    b_qtensor: torch.Tensor | None,
+    b_qtensor: Optional[torch.Tensor],
     w_attr_name: str,
     b_attr_name: str,
-) -> tuple[torch.fx.Node, torch.fx.Node | None]:
+) -> tuple[torch.fx.Node, Optional[torch.fx.Node]]:
     w_tensor = get_tensor_from_qtensor(w_qtensor)
     _assign_attr(w_tensor, gm, w_attr_name)
     w_tensor_attr = gm.graph.get_attr(w_attr_name)
@@ -277,7 +268,7 @@ def insert_fused_activation_node(
 def _conv1d_op_with_squeeze(
     inp: torch.Tensor,
     weight: torch.Tensor,
-    bias: torch.Tensor | None,
+    bias: Optional[torch.Tensor],
     stride: list[int],
     padding: list[int],
     dilation: list[int],
@@ -302,8 +293,7 @@ def _conv1d_op_with_squeeze(
 
 def _transform_conv_with_packedparam(gm: torch.fx.GraphModule, node: torch.fx.Node):
     """Conv specific transformation function."""
-    if not isinstance(node.target, torch._ops.OpOverload):
-        raise AssertionError(f"expected OpOverload, got {type(node.target).__name__}")
+    assert isinstance(node.target, torch._ops.OpOverload)
     opname = node.target._opname
     scale_node, zero_point_node = node.args[2], node.args[3]
 
@@ -314,19 +304,15 @@ def _transform_conv_with_packedparam(gm: torch.fx.GraphModule, node: torch.fx.No
     )
 
     inp_node, param_node = node.args[0], node.args[1]
-    if not isinstance(inp_node, torch.fx.Node):
-        raise AssertionError(f"expected fx.Node for inp, got {type(inp_node)}")
-    if not isinstance(param_node, torch.fx.Node):
-        raise AssertionError(f"expected fx.Node for param, got {type(param_node)}")
+    assert isinstance(inp_node, torch.fx.Node)
+    assert isinstance(param_node, torch.fx.Node)
 
     if param_node.op == "call_function":
         # Using Conv2dPrepackParam from conv_prepack.
         # We directly skip the packing call and inline weights and bias.
         w_node, b_node = param_node.args[0], param_node.args[1]
-        if not isinstance(w_node, torch.fx.Node):
-            raise AssertionError(f"expected fx.Node for w, got {type(w_node)}")
-        if b_node is not None and not isinstance(b_node, torch.fx.Node):
-            raise AssertionError(f"expected fx.Node for b, got {type(b_node)}")
+        assert isinstance(w_node, torch.fx.Node)
+        assert b_node is None or isinstance(b_node, torch.fx.Node)
         (
             param_0,
             param_1,
@@ -365,19 +351,15 @@ def _transform_linear_with_packedparam(gm: torch.fx.GraphModule, node: torch.fx.
     scale_node, zero_point_node = node.args[2], node.args[3]
 
     inp_node, param_node = node.args[0], node.args[1]
-    if not isinstance(inp_node, torch.fx.Node):
-        raise AssertionError(f"expected fx.Node for inp, got {type(inp_node)}")
-    if not isinstance(param_node, torch.fx.Node):
-        raise AssertionError(f"expected fx.Node for param, got {type(param_node)}")
+    assert isinstance(inp_node, torch.fx.Node)
+    assert isinstance(param_node, torch.fx.Node)
 
     if param_node.op == "call_function":
         # Using LinearPrepackParam from linear_prepack.
         # We directly skip the packing call and inline weights and bias.
         w_node, b_node = param_node.args[0], param_node.args[1]
-        if not isinstance(w_node, torch.fx.Node):
-            raise AssertionError(f"expected fx.Node for w, got {type(w_node)}")
-        if b_node is not None and not isinstance(b_node, torch.fx.Node):
-            raise AssertionError(f"expected fx.Node for b, got {type(b_node)}")
+        assert isinstance(w_node, torch.fx.Node)
+        assert b_node is None or isinstance(b_node, torch.fx.Node)
         (
             param_0,
             param_1,
@@ -419,8 +401,7 @@ def _transform_op_where_last_two_arguments_are_scale_and_zero_point(
         "hardswish": torch.ops.aten.hardswish,
     }
 
-    if not isinstance(node.target, torch._ops.OpOverload):
-        raise AssertionError(f"expected OpOverload, got {type(node.target).__name__}")
+    assert isinstance(node.target, torch._ops.OpOverload)
     opname, args = node.target._opname, node.args
     scale_node, zero_point_node = args[-2], args[-1]
     op_res_node = gm.graph.call_function(to_standard_op[opname], tuple(args[:-2]))
@@ -433,8 +414,7 @@ def _transform_scalar_arithmetic(gm: torch.fx.GraphModule, node: torch.fx.Node):
         "mul": torch.ops.aten.mul.Scalar,
         "add": torch.ops.aten.add.Scalar,
     }
-    if not isinstance(node.target, torch._ops.OpOverload):
-        raise AssertionError(f"expected OpOverload, got {type(node.target).__name__}")
+    assert isinstance(node.target, torch._ops.OpOverload)
     opname, args = node.target._opname, node.args
     op_res_node = gm.graph.call_function(to_standard_op[opname], args)
     return op_res_node, _SCALE, _ZERO_POINT
@@ -445,8 +425,7 @@ def _transform_prepacked_op(gm: torch.fx.GraphModule, node: torch.fx.Node):
     Transformation for functions under prepacked namespace, where they share
     the same handling logic that [...]OpContext contains all parameters.
     """
-    if not isinstance(node.target, torch._ops.OpOverload):
-        raise AssertionError(f"expected OpOverload, got {type(node.target).__name__}")
+    assert isinstance(node.target, torch._ops.OpOverload)
     opname, args = node.target._opname, node.args
     op_f = None
     if opname == "conv2d_clamp_run":
@@ -456,8 +435,7 @@ def _transform_prepacked_op(gm: torch.fx.GraphModule, node: torch.fx.Node):
     else:
         raise RuntimeError(f"Invalid operator {opname}")
 
-    if not isinstance(args[1], torch.fx.Node):
-        raise AssertionError(f"expected fx.Node for args[1], got {type(args[1])}")
+    assert isinstance(args[1], torch.fx.Node)
     so = get_script_object(gm, args[1])
 
     func_args = []
@@ -485,8 +463,7 @@ def fx_transform_quantized_op_to_standard_op(
 ) -> torch.fx.Node:
     global _SCALE, _ZERO_POINT, _INPUT_Q_DTYPE
 
-    if not isinstance(node.target, torch._ops.OpOverload):
-        raise AssertionError(f"expected OpOverload, got {type(node.target).__name__}")
+    assert isinstance(node.target, torch._ops.OpOverload)
     opname, overload = node.target._opname, node.target._overloadname
 
     key = f"{opname}.{overload}"
@@ -522,8 +499,7 @@ def fx_transform_quantized_op_to_standard_op(
     op_res_node = insert_fused_activation_node(gm, opname, op_res_node)
     _SCALE, _ZERO_POINT = scale_node, zero_point_node
 
-    if _INPUT_Q_DTYPE is None:
-        raise AssertionError("_INPUT_Q_DTYPE should not be None")
+    assert _INPUT_Q_DTYPE is not None
     qmin_node, qmax_node = insert_qmin_qmax_node(gm, _INPUT_Q_DTYPE)
     q_fx_node = insert_quantized_node(
         gm,
@@ -638,8 +614,7 @@ def replace_quantized_ops_with_standard_ops(gm: torch.fx.GraphModule):
                     node.replace_all_uses_with(dq_fx_node)
                     last_quantized_node = dq_fx_node
                 elif namespace == "aten" and opname == "dequantize":
-                    if last_quantized_node is None:
-                        raise AssertionError("last_quantized_node should not be None")
+                    assert last_quantized_node is not None
                     node.replace_all_uses_with(last_quantized_node)
                 else:
                     last_quantized_node = node

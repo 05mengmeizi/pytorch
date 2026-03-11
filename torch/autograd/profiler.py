@@ -1,5 +1,4 @@
 # mypy: allow-untyped-defs
-import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
@@ -7,9 +6,6 @@ from dataclasses import dataclass
 from time import perf_counter_ns
 from typing import Any, Optional
 from warnings import warn
-
-
-log = logging.getLogger(__name__)
 
 import torch
 import torch.cuda
@@ -167,11 +163,6 @@ class profile:
 
         acc_events (bool): Enable the accumulation of FunctionEvents across multiple profiling cycles
 
-        post_processing_timeout_s (float): Optional timeout in seconds for post-processing profiler
-            results. In this context, post-processing happens after the profiling itself has finished.
-            If specified, event parsing will stop after this duration and return partial results. Useful
-            for handling large traces that may take too long to process.
-
 
     .. warning::
         Enabling memory profiling or source attribution incurs additional profiler
@@ -225,7 +216,6 @@ class profile:
         experimental_config=None,
         acc_events=False,
         custom_trace_id_callback=None,
-        post_processing_timeout_s: float | None = None,
     ):
         self.enabled: bool = enabled
         if not self.enabled:
@@ -238,12 +228,12 @@ class profile:
                 FutureWarning,
                 stacklevel=2,
             )
-            self.use_device: str | None = "cuda"
+            self.use_device: Optional[str] = "cuda"
         else:
             self.use_device = use_device
         # TODO Consider changing _function_events into data structure with size cap
-        self._function_events: EventList | None = None
-        self._old_function_events: EventList | None = None
+        self._function_events: Optional[EventList] = None
+        self._old_function_events: Optional[EventList] = None
         # Function event processing is done lazily
         self._needs_processing = False
         self.entered = False
@@ -258,12 +248,11 @@ class profile:
         if experimental_config is None:
             experimental_config = _ExperimentalConfig()
         self.experimental_config = experimental_config
-        self.kineto_results: _ProfilerResult | None = None
+        self.kineto_results: Optional[_ProfilerResult] = None
         self.profiling_start_time_ns = 0
         self.profiling_end_time_ns = 0
         self._stats = _ProfilerStats()
         self.custom_trace_id_callback = custom_trace_id_callback
-        self.post_processing_timeout_s = post_processing_timeout_s
         self.trace_id = ""
         if not self.use_cpu:
             if not use_kineto:
@@ -341,12 +330,6 @@ class profile:
 
         if len(self.kineto_activities) == 0:
             raise AssertionError("No activities specified for the profiler")
-
-        if (
-            self.post_processing_timeout_s is not None
-            and self.post_processing_timeout_s < 0
-        ):
-            raise ValueError("post_processing_timeout_s must be non-negative")
 
     def default_trace_id(self):
         # Generate a UUID
@@ -455,9 +438,7 @@ class profile:
         t0 = perf_counter_ns()
         parsed_results = []
         if self.kineto_results:
-            parsed_results = self._parse_kineto_results(
-                self.kineto_results, timeout_s=self.post_processing_timeout_s
-            )
+            parsed_results = self._parse_kineto_results(self.kineto_results)
         t1 = perf_counter_ns()
         self._stats.parse_kineto_call_duration_us = int((t1 - t0) / 1000)
 
@@ -575,25 +556,8 @@ class profile:
             raise AssertionError("Expected profiling results")
         return self._function_events.self_cpu_time_total
 
-    def _parse_kineto_results(
-        self, result: _ProfilerResult, timeout_s: float | None = None
-    ):
+    def _parse_kineto_results(self, result: _ProfilerResult):
         # result.events() has most of the events - PyTorch op-level and device-level events
-
-        timeout_ns = int(timeout_s * 1e9) if timeout_s is not None else None
-        if timeout_ns is not None and timeout_ns < 0:
-            raise ValueError("timeout_s must be non-negative")
-        start_time_ns = perf_counter_ns()
-        timed_out = False
-
-        def _check_timeout() -> bool:
-            """Check if timeout has been exceeded. Returns True if timed out."""
-            nonlocal timed_out
-            if timeout_ns is not None and not timed_out:
-                elapsed_ns = perf_counter_ns() - start_time_ns
-                if elapsed_ns >= timeout_ns:
-                    timed_out = True
-            return timed_out
 
         trace_start_ns = result.trace_start_ns()
         mem_records = [
@@ -635,9 +599,6 @@ class profile:
         device_corr_map: dict[int, list[FunctionEvent]] = {}
         max_evt_id = 0
         for kineto_event in result.events():
-            if _check_timeout():
-                break
-
             if (
                 _filter_name(kineto_event.name())
                 or getattr(kineto_event, "is_hidden_event", lambda: False)()
@@ -652,7 +613,7 @@ class profile:
             if kineto_event.device_type() == DeviceType.CPU:
                 # find the corresponding memory allocation events
                 for mem_record in mem_records_acc.in_interval(
-                    kineto_event.start_ns(), abs_end_ns
+                    kineto_event.start_ns() / 1000, abs_end_ns / 1000
                 ):
                     cpu_memory_usage += _cpu_memory_usage(mem_record[0])
                     device_memory_usage += _device_memory_usage(mem_record[0])
@@ -726,11 +687,10 @@ class profile:
                 and fe.id in device_corr_map
             ):
                 for f_evt in device_corr_map[fe.id]:
-                    if f_evt.device_type in [
-                        DeviceType.CUDA,
-                        DeviceType.PrivateUse1,
-                        DeviceType.XPU,
-                    ]:
+                    if (
+                        f_evt.device_type == DeviceType.CUDA
+                        or f_evt.device_type == DeviceType.PrivateUse1
+                    ):
                         fe.append_kernel(
                             f_evt.name,
                             f_evt.device_index,
@@ -768,29 +728,15 @@ class profile:
 
         # output top-level memory events
         for mem_record in mem_records:
-            if _check_timeout():
-                break
-
             if not mem_record[1]:
                 max_evt_id += 1
                 fe = createFunctionEventForMemoryEvents(mem_record[0])
                 all_function_events.append(fe)
 
         for oom_record in oom_records:
-            if _check_timeout():
-                break
-
             max_evt_id += 1
             fe = createFunctionEventForMemoryEvents(oom_record)
             all_function_events.append(fe)
-
-        if timed_out:
-            log.warning(
-                "Profiler _parse_kineto_results timed out after %.3f seconds, "
-                "returning partial results with %d events",
-                timeout_s,
-                len(all_function_events),
-            )
 
         all_function_events.sort(
             key=lambda evt: [evt.time_range.start, -evt.time_range.end]
@@ -838,9 +784,9 @@ class record_function(_ContextDecorator):
 
     """
 
-    def __init__(self, name: str, args: str | None = None):
+    def __init__(self, name: str, args: Optional[str] = None):
         self.name: str = name
-        self.args: str | None = args
+        self.args: Optional[str] = args
         # Whether or not we should run record function's end callbacks when exiting.
         self.run_callbacks_on_exit: bool = True
         # TODO: TorchScript ignores standard type annotation here

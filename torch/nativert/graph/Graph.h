@@ -28,7 +28,6 @@ class Type {
     None,
     Tensor,
     TensorList,
-    NestedTensorList,
     OptionalTensorList,
     SymInt,
     SymIntList,

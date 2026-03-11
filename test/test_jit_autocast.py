@@ -2,6 +2,7 @@
 
 import torch
 from torch.cuda.amp import autocast
+from typing import Optional
 
 import sys
 import unittest
@@ -187,7 +188,7 @@ class TestAutocast(JitTestCase):
     @unittest.skipIf(not TEST_CUDA, "No cuda")
     def test_fp32_set_opt_dtype_policy(self):
         @torch.jit.script
-        def fn(a, b, c, d, dtype: int | None):
+        def fn(a, b, c, d, dtype: Optional[int]):
             with autocast(enabled=True):
                 x = torch.softmax(a, 0)
                 y = torch.softmax(b, 0, None)
@@ -203,7 +204,7 @@ class TestAutocast(JitTestCase):
     @unittest.skipIf(not TEST_CUDA, "No cuda")
     def test_fp32_set_opt_dtype_policy_fp64(self):
         @torch.jit.script
-        def fn(a, b, c, d, dtype: int | None):
+        def fn(a, b, c, d, dtype: Optional[int]):
             with autocast(enabled=True):
                 x = torch.softmax(a, 0)
                 y = torch.softmax(b, 0, None)

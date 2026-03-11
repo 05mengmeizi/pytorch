@@ -27,8 +27,7 @@ def compute_speedups(args, models, example_inputs):
     expected = models[0](*example_inputs)
     for model in models[1:]:
         actual = model(*example_inputs)
-        if not same(actual, expected):
-            raise AssertionError(f"Output mismatch: diff={expected[0] - actual[0]}")
+        assert same(actual, expected), expected[0] - actual[0]
 
     timings = np.zeros((args.repeat, len(models)), np.float64)
     for rep in range(args.repeat):

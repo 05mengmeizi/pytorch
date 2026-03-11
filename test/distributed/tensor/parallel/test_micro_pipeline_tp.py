@@ -1,5 +1,6 @@
 # Owner(s): ["module: c10d"]
 import unittest
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -267,7 +268,7 @@ class MicroPipelineTPTest(TestCase):
             B: torch.Tensor,
             A_scale: torch.Tensor,
             B_scale: torch.Tensor,
-            out_dtype: torch.dtype | None,
+            out_dtype: Optional[torch.dtype],
         ) -> torch.Tensor:
             A = _fp8_all_gather(
                 A_shard, gather_dim=gather_dim, group_name=group.group_name
@@ -523,7 +524,6 @@ class MicroPipelineTP4GPUTest(TestCase):
 
     @unittest.skipIf(not HAS_GPU, "Inductor+gpu needs triton and recent GPU arch")
     @fresh_cache()
-    @torch._inductor.config.patch(shape_padding=False)
     def test_extra_collectives(self):
         device_mesh = DeviceMesh(
             "cuda",

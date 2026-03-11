@@ -15,8 +15,7 @@ from pathlib import Path
 #
 # This script is not very well written, feel free to rewrite it as necessary
 
-if len(sys.argv) != 2:
-    raise AssertionError(f"Expected 1 argument, but got {len(sys.argv) - 1}")
+assert len(sys.argv) == 2
 full_log = Path(sys.argv[1]).read_text()
 
 # If the log contains a gist URL, extract it so we can include it in the CSV

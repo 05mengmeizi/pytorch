@@ -55,10 +55,7 @@ class CustomShardedEBC(nn.Module):
         # create embedding bags base on the spec
         self.embedding_bags: nn.ModuleDict = nn.ModuleDict()
 
-        if not (self.split_idx < ebc.num_bags):
-            raise AssertionError(
-                f"Expected split_idx < num_bags, got {self.split_idx} vs {ebc.num_bags}"
-            )
+        assert self.split_idx < ebc.num_bags
         for i in range(ebc.num_bags):
             bag_key = f"embedding_bag_{i}"
             if i < self.split_idx:

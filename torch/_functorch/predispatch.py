@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 # Copyright (c) Facebook, Inc. and its affiliates.
 # All rights reserved.
 #
@@ -9,10 +11,6 @@ This module contains pre-dispatch wrappers for functorch operations
 that enable proper tracing in PT2 non-strict export/compile fx graph.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import torch
 from torch._C._functorch import (
     _add_batch_dim as _add_batch_dim_impl,
@@ -22,11 +20,7 @@ from torch._C._functorch import (
 )
 
 
-if TYPE_CHECKING:
-    import threading
-
-
-def _add_batch_dim(self: torch.Tensor, batch_dim: int, level: int) -> torch.Tensor:
+def _add_batch_dim(self, batch_dim, level):
     """
     Thin wrapper around torch._C._add_batch_dim that is used to proxy in
     PT2 export/compile fx graph
@@ -45,9 +39,7 @@ def _add_batch_dim(self: torch.Tensor, batch_dim: int, level: int) -> torch.Tens
     return res
 
 
-def _remove_batch_dim(
-    self: torch.Tensor, level: int, batch_size: int, out_dim: int
-) -> torch.Tensor:
+def _remove_batch_dim(self, level, batch_size, out_dim):
     """
     Thin wrapper around torch._C._remove_batch_dim that is used to proxy in
     PT2 export/compile fx graph
@@ -65,7 +57,7 @@ def _remove_batch_dim(
     return res
 
 
-def _vmap_increment_nesting(batch_size: int, randomness: str) -> int:
+def _vmap_increment_nesting(batch_size, randomness):
     """
     Thin wrapper around torch._C._vmap_increment_nesting that is used
     to proxy in export/compile graph
@@ -82,7 +74,7 @@ def _vmap_increment_nesting(batch_size: int, randomness: str) -> int:
     return res
 
 
-def _vmap_decrement_nesting() -> int:
+def _vmap_decrement_nesting():
     """
     Thin wrapper around torch._C._vmap_increment_nesting that is used
     to proxy in export/compile graph
@@ -100,12 +92,12 @@ def _vmap_decrement_nesting() -> int:
 
 
 # Global variables for lazy_load_decompositions
-DECOMPOSITIONS_LOADED: bool = False
-DECOMPOSITIONS_LOCK: threading.Lock | None = None
-VMAP_DECOMPOSITIONS_LIB: torch.library.Library | None = None
+DECOMPOSITIONS_LOADED = False
+DECOMPOSITIONS_LOCK = None  # Will be initialized when needed
+VMAP_DECOMPOSITIONS_LIB = None
 
 
-def lazy_load_decompositions() -> None:
+def lazy_load_decompositions():
     """
     Lazy loading of vmap decompositions with pre-dispatch support.
     """
@@ -147,9 +139,7 @@ def lazy_load_decompositions() -> None:
 
         from torch._decomp import decomposition_table
 
-        def _register_python_decomposition_vmap(decomp: torch._ops.OpOverload) -> None:
-            if VMAP_DECOMPOSITIONS_LIB is None:
-                raise AssertionError("VMAP_DECOMPOSITIONS_LIB must not be None")
+        def _register_python_decomposition_vmap(decomp):
             if decomp in decomposition_table:
                 VMAP_DECOMPOSITIONS_LIB.impl(decomp, decomposition_table[decomp])
             else:

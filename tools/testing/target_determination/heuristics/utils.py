@@ -92,30 +92,6 @@ def query_changed_files() -> list[str]:
     return lines
 
 
-# File extensions that are documentation-only and don't require running tests
-DOCS_ONLY_EXTENSIONS = frozenset({".rst", ".md"})
-
-
-def is_docs_only_change(changed_files: list[str]) -> bool:
-    """
-    Returns True if all changed files are documentation-only files
-    (e.g., .rst, .md files) that don't require running tests.
-    """
-    if not changed_files:
-        return False
-
-    for f in changed_files:
-        # Skip empty strings that might come from git diff output
-        if not f:
-            continue
-        # Check if the file extension is in the docs-only set
-        ext = os.path.splitext(f)[1].lower()
-        if ext not in DOCS_ONLY_EXTENSIONS:
-            return False
-
-    return True
-
-
 @cache
 def get_git_commit_info() -> str:
     """Gets the commit info since the last commit on the default branch."""
@@ -158,11 +134,9 @@ def normalize_ratings(
     if len(ratings) == 0:
         return ratings
     min_rating = min(ratings.values())
-    if min_rating <= 0:
-        raise AssertionError(f"min_rating must be > 0, got {min_rating}")
+    assert min_rating > 0
     max_rating = max(ratings.values())
-    if max_rating <= 0:
-        raise AssertionError(f"max_rating must be > 0, got {max_rating}")
+    assert max_rating > 0
     normalized_ratings = {}
     for tf, rank in ratings.items():
         normalized_ratings[tf] = rank / max_rating * (max_value - min_value) + min_value

@@ -2,6 +2,7 @@
 import sys
 from contextlib import nullcontext
 from enum import auto, Enum
+from typing import Optional
 from unittest.mock import patch
 
 import torch
@@ -18,7 +19,7 @@ from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_fsdp import (
     DEVICEInitMode,
     FSDPInitMode,
-    FSDPTestContinuous,
+    FSDPTest,
     get_devtype,
     MLP,
     NestedWrappedModule,
@@ -50,7 +51,7 @@ class PassType(Enum):
     BWD = auto()
 
 
-class TestCommunication(FSDPTestContinuous):
+class TestCommunication(FSDPTest):
     """Tests ``FullyShardedDataParallel``'s collective communication usage."""
 
     def _init_model(
@@ -104,7 +105,7 @@ class TestCommunication(FSDPTestContinuous):
     def _get_ref_num_all_gathers(
         self,
         num_fsdp: int,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
         is_first_iter: bool,
         is_last_iter_no_sync: bool,
     ) -> int:
@@ -124,7 +125,7 @@ class TestCommunication(FSDPTestContinuous):
     def _get_ref_num_all_gathers_in_pass(
         self,
         num_fsdp: int,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
         pass_type: PassType,
         is_first_iter: bool,
         is_last_iter_no_sync: bool,
@@ -161,7 +162,7 @@ class TestCommunication(FSDPTestContinuous):
             # forward pass
             num_all_gathers = 0
         else:
-            raise AssertionError(
+            assert 0, (
                 f"Unsupported: add a branch for pass_type={pass_type} "
                 f"is_first_iter={is_first_iter} "
                 f"is_last_iter_no_sync={is_last_iter_no_sync} "
@@ -210,7 +211,7 @@ class TestCommunication(FSDPTestContinuous):
         device,
         nested_model: bool,
         use_no_sync: bool,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         """
         Tests FSDP's communication cost in terms of calls to collective
@@ -289,7 +290,7 @@ class TestCommunication(FSDPTestContinuous):
                 self.assertEqual(num_reduce_scatters, ref_num_reduce_scatters)
 
 
-class TestExplicitUnshard(FSDPTestContinuous):
+class TestExplicitUnshard(FSDPTest):
     @property
     def world_size(self) -> int:
         return min(_get_device_module(self.device_type).device_count(), 2)

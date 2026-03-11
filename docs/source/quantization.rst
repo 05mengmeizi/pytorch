@@ -134,6 +134,8 @@ and supported quantized modules and functions.
 .. py:module:: torch.ao.quantization.qconfig
 .. py:module:: torch.ao.quantization.qconfig_mapping
 .. py:module:: torch.ao.quantization.quant_type
+.. py:module:: torch.ao.quantization.quantization_mappings
+.. py:module:: torch.ao.quantization.quantize_fx
 .. py:module:: torch.ao.quantization.quantize_jit
 .. py:module:: torch.ao.quantization.stubs
 .. py:module:: torch.nn.intrinsic.modules.fused

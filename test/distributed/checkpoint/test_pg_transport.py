@@ -3,6 +3,7 @@
 import logging
 import unittest
 from datetime import timedelta
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -210,7 +211,7 @@ class PgTransportCPU(MultiProcContinuousTest):
     timeout: timedelta = timedelta(seconds=20)
 
     @classmethod
-    def backend_str(cls) -> str | None:
+    def backend_str(cls) -> Optional[str]:
         return "gloo"
 
     @classmethod
@@ -236,7 +237,7 @@ class PgTransportGPU(MultiProcContinuousTest):
     timeout: timedelta = timedelta(seconds=20)
 
     @classmethod
-    def backend_str(cls) -> str | None:
+    def backend_str(cls) -> Optional[str]:
         return dist.get_default_backend_for_device(cls.device_type())
 
     @property

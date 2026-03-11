@@ -1,6 +1,6 @@
 # mypy: allow-untyped-defs
 import math
-from typing import Literal
+from typing import Literal, Optional
 from typing_extensions import deprecated
 
 import torch
@@ -64,7 +64,7 @@ class _ConvNd(Module):
         "out_channels",
         "kernel_size",
     ]
-    __annotations__ = {"bias": torch.Tensor | None}
+    __annotations__ = {"bias": Optional[torch.Tensor]}
 
     def _conv_forward(  # type: ignore[empty-body]
         self, input: Tensor, weight: Tensor, bias: Tensor | None
@@ -180,24 +180,14 @@ class _ConvNd(Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        # Use torch.no_grad() to allow in-place modification of weights/bias
-        with torch.no_grad():
-            # Check if the weight tensor is in channels_last_3d format to ensure numerical consistency
-            if not self.weight.is_contiguous():
-                # Use an empty contiguous buffer to optimize memory and ensure consistent initialization
-                temp_weight = torch.empty_like(
-                    self.weight, memory_format=torch.contiguous_format
-                )
-                init.kaiming_uniform_(temp_weight, a=math.sqrt(5))
-                # Copy the initialized values back to the original tensor
-                self.weight.copy_(temp_weight)
-            else:
-                # Standard initialization for default contiguous memory format
-                init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-            if self.bias is not None:
-                # Bias initialization remains independent of weight memory format
-                fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
-                bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+        # uniform(-1/sqrt(k), 1/sqrt(k)), where k = weight.size(1) * prod(*kernel_size)
+        # For more details see: https://github.com/pytorch/pytorch/issues/15314#issuecomment-477448573
+        init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            if fan_in != 0:
+                bound = 1 / math.sqrt(fan_in)
                 init.uniform_(self.bias, -bound, bound)
 
     def extra_repr(self):
@@ -1547,11 +1537,11 @@ class LazyConv1d(_LazyConvXdMixin, Conv1d):  # type: ignore[misc]
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:
@@ -1619,11 +1609,11 @@ class LazyConv2d(_LazyConvXdMixin, Conv2d):  # type: ignore[misc]
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:
@@ -1692,11 +1682,11 @@ class LazyConv3d(_LazyConvXdMixin, Conv3d):  # type: ignore[misc]
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:
@@ -1764,11 +1754,11 @@ class LazyConvTranspose1d(_LazyConvXdMixin, ConvTranspose1d):  # type: ignore[mi
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:
@@ -1836,11 +1826,11 @@ class LazyConvTranspose2d(_LazyConvXdMixin, ConvTranspose2d):  # type: ignore[mi
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:
@@ -1908,11 +1898,11 @@ class LazyConvTranspose3d(_LazyConvXdMixin, ConvTranspose3d):  # type: ignore[mi
             padding_mode,
             **factory_kwargs,
         )
-        # pyrefly: ignore [bad-override, unexpected-keyword]
+        # pyrefly: ignore [bad-override, bad-argument-type]
         self.weight = UninitializedParameter(**factory_kwargs)
         self.out_channels = out_channels
         if bias:
-            # pyrefly: ignore [bad-override, unexpected-keyword]
+            # pyrefly: ignore [bad-override, bad-argument-type]
             self.bias = UninitializedParameter(**factory_kwargs)
 
     def _get_num_spatial_dims(self) -> int:

@@ -15,6 +15,7 @@ using TensorConstantMap = std::unordered_map<std::string, at::Tensor*>;
 
 class TORCH_API AOTIModelContainerRunner {
  public:
+  AOTIModelContainerRunner() = delete;
   AOTIModelContainerRunner(const AOTIModelContainerRunner& other) = delete;
   AOTIModelContainerRunner(AOTIModelContainerRunner&& other) = delete;
   AOTIModelContainerRunner& operator=(const AOTIModelContainerRunner& other) =
@@ -66,10 +67,6 @@ class TORCH_API AOTIModelContainerRunner {
       const std::string& cubin_dir,
       const bool run_single_threaded);
 
-  // Default constructor for custom device implementations that don't
-  // use .so files. Derived classes must override run_impl().
-  AOTIModelContainerRunner();
-
   virtual std::vector<at::Tensor> run_impl(
       std::vector<AtenTensorHandle>& input_handles,
       void* stream_handle);
@@ -110,7 +107,7 @@ class TORCH_API AOTIModelContainerRunner {
 
   AOTInductorModelContainerHandle container_handle_ = nullptr;
 
-  AOTIProxyExecutorHandle proxy_executor_handle_ = nullptr;
+  AOTIProxyExecutorHandle proxy_executor_handle_;
 
  private:
   std::unique_ptr<torch::aot_inductor::ProxyExecutor> proxy_executor_;

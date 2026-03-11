@@ -1,6 +1,6 @@
 # mypy: allow-untyped-defs
 import os
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Optional
 
 import torch
 
@@ -135,7 +135,7 @@ class UnpackedDualTensor(NamedTuple):
     """
 
     primal: torch.Tensor
-    tangent: torch.Tensor | None
+    tangent: Optional[torch.Tensor]
 
 
 def unpack_dual(tensor, *, level=None):

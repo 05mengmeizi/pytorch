@@ -717,10 +717,9 @@ class ParsePerformanceLogs(Parser):
             for idx, (batch_a, batch_b) in enumerate(
                 zip(batch_sizes, frame_batch_sizes)
             ):
-                if not (batch_a == batch_b or batch_a == 0 or batch_b == 0):
-                    raise AssertionError(
-                        f"batch size mismatch: a={batch_a}, b={batch_b}"
-                    )
+                assert batch_a == batch_b or batch_a == 0 or batch_b == 0, (
+                    f"a={batch_a}, b={batch_b}"
+                )
                 batch_sizes[idx] = max(batch_a, batch_b)
         for frame in frames:
             frame["batch_size"] = batch_sizes
@@ -1072,8 +1071,7 @@ class SummaryStatDiffer:
     def __init__(self, args):
         self.args = args
         self.lookup_file = os.path.join(self.args.dashboard_archive_path, "lookup.csv")
-        if not os.path.exists(self.lookup_file):
-            raise AssertionError(f"lookup file not found: {self.lookup_file}")
+        assert os.path.exists(self.lookup_file)
 
     def generate_diff(self, last2, filename, caption):
         df_cur, df_prev = (pd.read_csv(os.path.join(path, filename)) for path in last2)
@@ -1138,8 +1136,7 @@ class RegressionDetector:
     def __init__(self, args):
         self.args = args
         self.lookup_file = os.path.join(self.args.dashboard_archive_path, "lookup.csv")
-        if not os.path.exists(self.lookup_file):
-            raise AssertionError(f"lookup file not found: {self.lookup_file}")
+        assert os.path.exists(self.lookup_file)
 
     def generate_comment(self):
         title = "## Recent Regressions ##\n"
@@ -1259,8 +1256,7 @@ class RegressionTracker:
         self.args = args
         self.suites = self.args.suites
         self.lookup_file = os.path.join(self.args.dashboard_archive_path, "lookup.csv")
-        if not os.path.exists(self.lookup_file):
-            raise AssertionError(f"lookup file not found: {self.lookup_file}")
+        assert os.path.exists(self.lookup_file)
         self.k = 10
 
     def find_last_k(self):
@@ -1275,10 +1271,7 @@ class RegressionTracker:
         for day, path in zip(df["day"], df["path"]):
             log_infos.append(LogInfo(day, path))
 
-        if len(log_infos) < self.k:
-            raise AssertionError(
-                f"expected at least {self.k} log entries, got {len(log_infos)}"
-            )
+        assert len(log_infos) >= self.k
         log_infos = log_infos[len(log_infos) - self.k :]
         return log_infos
 
@@ -1309,8 +1302,7 @@ class RegressionTracker:
                     dir_path = os.path.join(
                         self.args.dashboard_archive_path, log_info.dir_path
                     )
-                    if not os.path.exists(dir_path):
-                        raise AssertionError(f"directory not found: {dir_path}")
+                    assert os.path.exists(dir_path)
                     gmean_filename = os.path.join(dir_path, f"{metric}.csv")
                     if not os.path.exists(gmean_filename):
                         continue
@@ -1362,8 +1354,7 @@ class DashboardUpdater:
         self.args = args
         self.output_dir = args.output_dir
         self.lookup_file = os.path.join(self.args.dashboard_archive_path, "lookup.csv")
-        if not os.path.exists(self.lookup_file):
-            raise AssertionError(f"lookup file not found: {self.lookup_file}")
+        assert os.path.exists(self.lookup_file)
         try:
             if not self.args.update_dashboard_test and not self.args.no_update_archive:
                 self.update_lookup_file()
@@ -1497,8 +1488,7 @@ if __name__ == "__main__":
             else args.flag_compilers
         )
     else:
-        if not args.training:
-            raise AssertionError("expected args.training to be True")
+        assert args.training
         compilers = DEFAULTS["training"] if args.compilers is None else args.compilers
         flag_compilers = (
             DEFAULTS["flag_compilers"]["training"]

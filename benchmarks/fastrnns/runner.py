@@ -43,8 +43,7 @@ class AssertNoJIT:
         import os
 
         enabled = os.environ.get("PYTORCH_JIT", 1)
-        if enabled:
-            raise AssertionError("PYTORCH_JIT must be disabled")
+        assert not enabled
 
     def __exit__(self, *args, **kwargs):
         pass

@@ -39,7 +39,7 @@ import sys
 import tempfile
 import textwrap
 from importlib.abc import Loader
-from typing import Any
+from typing import Any, Union
 
 RUN_CUDA = torch.cuda.is_available()
 RUN_CUDA_MULTI_GPU = RUN_CUDA and torch.cuda.device_count() > 1
@@ -767,8 +767,7 @@ def _get_py3_code(code, fn_name):
         spec = importlib.util.spec_from_file_location(fn_name, script_path)
         module = importlib.util.module_from_spec(spec)
         loader = spec.loader
-        if not isinstance(loader, Loader):  # Assert type to meet MyPy requirement
-            raise AssertionError(f"Expected loader to be Loader, got {type(loader)}")
+        assert isinstance(loader, Loader)  # Assert type to meet MyPy requirement
         loader.exec_module(module)
         fn = getattr(module, fn_name)
         return fn
@@ -800,7 +799,7 @@ class TensorExprTestOptions:
         torch._C._jit_set_te_must_use_llvm_cpu(self.old_te_must_use_llvm_cpu)
 
 def clone_inputs(args):
-    inputs: list[torch.Tensor | list[torch.Tensor]] = []
+    inputs: list[Union[torch.Tensor, list[torch.Tensor]]] = []
 
     for arg in args:
         if isinstance(arg, torch.Tensor):

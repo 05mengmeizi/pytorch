@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 import torch
 
@@ -12,16 +12,15 @@ if TYPE_CHECKING:
 
 @dataclass
 class TensorInfo:
-    tensor: torch.Tensor | None
+    tensor: Optional[torch.Tensor]
     levels: list[DimEntry]
     has_device: bool
-    batchedtensor: torch.Tensor | None
+    batchedtensor: Optional[torch.Tensor]
 
     def __post_init__(self) -> None:
         from ._dim_entry import DimEntry
 
-        if not all(isinstance(l, DimEntry) for l in self.levels):
-            raise AssertionError("All levels must be DimEntry instances")
+        assert all(isinstance(l, DimEntry) for l in self.levels)
 
     def ndim(self) -> int:
         from ._dim_entry import ndim_of_levels

@@ -91,20 +91,10 @@ std::tuple<Tensor, Tensor, Tensor> _flash_attention_backward(
   auto contiguous_grad_out = grad_out.contiguous();
   auto contiguous_out = out.contiguous();
 
-#ifdef USE_ROCM  // ROCM backend accepts std::optional for window_size_left/right directly.
-#ifdef DISABLE_AOTRITON  // CK backend, Passing window_size as it is
-  const auto window_left = window_size_left;
-  const auto window_right = window_size_right;
-#else  // AOTriton implements "generalized" SWA and negative size means negative shifting.
-  // aotriton_adapter::parse_window_size tries to match the behavior of CUTLASS backend
-  using sdp::aotriton_adapter::parse_window_size;
-  const auto [window_left, window_right] = parse_window_size(window_size_left,
-                                                             window_size_right);
+#ifndef USE_ROCM  // ROCM backend accepts std::optional for window_size_left/right directly.
+  const int non_null_window_left = window_size_left.has_value() ? window_size_left.value() : -1;
+  const int non_null_window_right = window_size_right.has_value() ? window_size_right.value() : -1;
 #endif
-#else  // USE_ROCM
-  const int window_left = window_size_left.value_or(-1);
-  const int window_right = window_size_right.value_or(-1);
-#endif  // USE_ROCM
 
   std::optional<at::Tensor> dq{std::nullopt};
   std::optional<at::Tensor> dk{std::nullopt};
@@ -152,8 +142,13 @@ std::tuple<Tensor, Tensor, Tensor> _flash_attention_backward(
         softmax_scale,
         false /*zero_tensors*/,
         is_causal,
-        window_left,
-        window_right,
+#ifdef USE_ROCM
+        window_size_left,
+        window_size_right,
+#else
+        non_null_window_left,
+        non_null_window_right,
+#endif
         softcap,
         deterministic,
         philox_seed,
@@ -175,8 +170,13 @@ std::tuple<Tensor, Tensor, Tensor> _flash_attention_backward(
         dropout_p,
         softmax_scale,
         is_causal,
-        window_left,
-        window_right,
+#ifdef USE_ROCM
+        window_size_left,
+        window_size_right,
+#else
+        non_null_window_left,
+        non_null_window_right,
+#endif
         softcap,
         deterministic,
         philox_seed,
@@ -464,9 +464,6 @@ _efficient_attention_backward(
   }
 
   if (bias_requires_grad) {
-    TORCH_CHECK(
-        bias.has_value(),
-        "bias_requires_grad is true but no bias was provided");
     // force alignment for the last dim
     std::vector<int64_t> sz = bias->sizes().vec();
     int64_t lastDim = sz[sz.size() - 1];

@@ -2,9 +2,8 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from unittest import mock
 
 import torch
@@ -15,26 +14,6 @@ from .runtime.runtime_utils import cache_dir
 
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class AOTICompileBackend:
-    compile_fn: Callable[..., str]
-    load_fn: Callable[[str, str, str], list[dict[str, Any] | None]]
-
-
-_aoti_compile_backends: dict[str, AOTICompileBackend] = {}
-
-
-def register_aoti_compile_backend(
-    device_type: str,
-    compile_fn: Callable[..., str],
-    load_fn: Callable[[str, str, str], list[dict[str, Any] | None]],
-) -> None:
-    _aoti_compile_backends[device_type] = AOTICompileBackend(
-        compile_fn=compile_fn,
-        load_fn=load_fn,
-    )
 
 
 def aoti_eager_cache_dir(namespace: str, device: str) -> Path:
@@ -53,11 +32,7 @@ def aoti_eager_op_conf_lock(op_func_name_with_overload: str) -> Any:
 
 def load_aoti_eager_cache(
     ns: str, op_func_name_with_overload: str, device_type: str
-) -> list[dict[str, Any] | None]:
-    backend = _aoti_compile_backends.get(device_type)
-    if backend:
-        return backend.load_fn(ns, op_func_name_with_overload, device_type)
-
+) -> list[Optional[dict[str, Any]]]:
     device_kernel_cache = aoti_eager_cache_dir(ns, device_type)
     op_conf = device_kernel_cache / f"{op_func_name_with_overload}.json"
     if not op_conf.exists():
@@ -199,30 +174,14 @@ def aoti_compile_with_persistent_cache(
     args: tuple[Any],
     kwargs: dict[str, Any],
     *,
-    dynamic_shapes: dict[str, Any] | None = None,
-    options: dict[str, Any] | None = None,
+    dynamic_shapes: Optional[dict[str, Any]] = None,
+    options: Optional[dict[str, Any]] = None,
     remove_runtime_assertions: bool = False,
     disable_constraint_solver: bool = False,
 ) -> str:
     """
     Compile the given function with persistent cache for AOTI eager mode.
     """
-    backend = _aoti_compile_backends.get(device_type)
-    if backend:
-        return backend.compile_fn(
-            ns,
-            op_func_name_with_overload,
-            device_type,
-            dynamic,
-            f,
-            args,
-            kwargs,
-            dynamic_shapes=dynamic_shapes,
-            options=options,
-            remove_runtime_assertions=remove_runtime_assertions,
-            disable_constraint_solver=disable_constraint_solver,
-        )
-
     assert not dynamic, "Only support static shape for now"
     flattened_inputs = list(args) + list(kwargs.values())
     if not all(

@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -35,13 +35,12 @@ BACKEND = torch.distributed.get_default_backend_for_device(device_type)
 
 
 def with_temp_dir(
-    func: Callable | None = None,
-) -> Callable | None:
+    func: Optional[Callable] = None,
+) -> Optional[Callable]:
     """
     Wrapper to initialize temp directory for distributed checkpoint.
     """
-    if func is None:
-        raise AssertionError("Expected func to not be None")
+    assert func is not None
 
     @wraps(func)
     def wrapper(self, *args: tuple[object], **kwargs: dict[str, Any]) -> None:

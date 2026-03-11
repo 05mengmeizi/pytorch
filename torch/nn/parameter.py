@@ -144,7 +144,7 @@ class UninitializedTensorMixin:
         if dtype is None:
             dtype = self.data.dtype
         self.data = torch.empty(shape, device=device, dtype=dtype)
-        # pyrefly: ignore [missing-attribute]
+        # pyrefly: ignore [bad-override, missing-attribute]
         self.__class__ = self.cls_to_become
 
     @property

@@ -18,14 +18,7 @@ import torch.library
 from torch._inductor.compile_fx import _InProcessFxCompile, FxCompile, FxCompileMode
 from torch._inductor.graph import GraphLowering
 from torch._inductor.test_case import TestCase
-from torch.testing._internal.common_utils import (
-    IS_CI,
-    IS_WINDOWS,
-    isRocmArchAnyOf,
-    MI350_ARCH,
-    TEST_WITH_ASAN,
-    TEST_WITH_ROCM,
-)
+from torch.testing._internal.common_utils import IS_CI, IS_WINDOWS, TEST_WITH_ASAN
 from torch.testing._internal.inductor_utils import (
     GPU_TYPE,
     IS_BIG_GPU,
@@ -64,10 +57,7 @@ importlib.import_module("filelock")
 test_failures = {
     # TypeError: cannot pickle 'generator' object
     "test_layer_norm": TestFailure(("cpu", "cuda"), is_skip=True),
-    "test_remove_noop_slice": TestFailure(
-        ("xpu", "cuda"),
-        is_skip=(TEST_WITH_ROCM and isRocmArchAnyOf(MI350_ARCH)) or not TEST_WITH_ROCM,
-    ),
+    "test_remove_noop_slice": TestFailure(("xpu"), is_skip=True),
     "test_remove_noop_slice1": TestFailure(("xpu"), is_skip=True),
     "test_remove_noop_slice_scatter": TestFailure(("xpu"), is_skip=True),
     "test_remove_noop_view_default": TestFailure(("xpu"), is_skip=True),
@@ -132,8 +122,7 @@ class TestSubprocess(TestCase):
 
         with contextlib.ExitStack() as stack:
             # When this bug is fixed, remove the cache disabling below
-            if not torch._inductor.compile_fx_async.BUG_CACHES_DONT_WORK_WITH_ASYNC:
-                raise AssertionError
+            assert torch._inductor.compile_fx_async.BUG_CACHES_DONT_WORK_WITH_ASYNC
             stack.enter_context(
                 torch._inductor.config.patch(
                     autotune_local_cache=False, fx_graph_cache=False
@@ -202,8 +191,7 @@ class TestSubprocess(TestCase):
         _AsyncFxCompile._reset_stats()
 
         with contextlib.ExitStack() as stack:
-            if not torch._inductor.compile_fx_async.BUG_CACHES_DONT_WORK_WITH_ASYNC:
-                raise AssertionError
+            assert torch._inductor.compile_fx_async.BUG_CACHES_DONT_WORK_WITH_ASYNC
             stack.enter_context(
                 torch._inductor.config.patch(
                     autotune_local_cache=False, fx_graph_cache=False

@@ -1,10 +1,9 @@
 # mypy: allow-untyped-defs
 """Provide an API for writing protocol buffers to event files to be consumed by TensorBoard for visualization."""
-from __future__ import annotations
 
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 import torch
 
@@ -167,6 +166,7 @@ class FileWriter:
         The events will go into a new events file.
         Does nothing if the EventFileWriter was not closed.
         """
+        # pyrefly: ignore [missing-attribute]
         self.event_writer.reopen()
 
 
@@ -255,7 +255,9 @@ class SummaryWriter:
         buckets = []
         neg_buckets = []
         while v < 1e20:
+            # pyrefly: ignore [bad-argument-type]
             buckets.append(v)
+            # pyrefly: ignore [bad-argument-type]
             neg_buckets.append(-v)
             v *= 1.1
         self.default_bins = neg_buckets[::-1] + [0] + buckets
@@ -279,6 +281,7 @@ class SummaryWriter:
                 self.file_writer.add_event(
                     Event(
                         step=most_recent_step,
+                        # pyrefly: ignore [missing-attribute]
                         session_log=SessionLog(status=SessionLog.START),
                     )
                 )
@@ -729,7 +732,7 @@ class SummaryWriter:
     def add_figure(
         self,
         tag: str,
-        figure: Figure | list[Figure],
+        figure: Union["Figure", list["Figure"]],
         global_step: int | None = None,
         close: bool = True,
         walltime: float | None = None,

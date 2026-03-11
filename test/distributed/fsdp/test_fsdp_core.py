@@ -5,7 +5,7 @@ import itertools
 import sys
 import unittest
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Optional
 from unittest import mock
 
 import torch
@@ -109,7 +109,7 @@ class TestParityWithDDP(FSDPTest):
     def test_nested_wrapped_model(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         self.run_subtests(
             self._get_subtest_config(cpu_offload),
@@ -125,7 +125,7 @@ class TestParityWithDDP(FSDPTest):
     def test_nested_wrapped_model_single_iteration_mixed_precision(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         mixed_precision = MixedPrecision(
             param_dtype=torch.float16,
@@ -148,7 +148,7 @@ class TestParityWithDDP(FSDPTest):
     def test_nested_always_wrap_model(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         self.run_subtests(
             self._get_subtest_config(cpu_offload),
@@ -164,7 +164,7 @@ class TestParityWithDDP(FSDPTest):
     def test_transformer(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         self.run_subtests(
             self._get_subtest_config(cpu_offload),
@@ -180,7 +180,7 @@ class TestParityWithDDP(FSDPTest):
     def test_delayed_optim_step(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         """Tests the FSDP forward, backward, and optimizer step runtime by
         using a model with a long CUDA delay after the loss computation/before
@@ -202,7 +202,7 @@ class TestParityWithDDP(FSDPTest):
     def test_delayed_reduce_scatter(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         """Tests the FSDP forward, backward, and optimizer step runtime by
         using a model with a long CUDA delay before the gradient reduce-scatter
@@ -228,7 +228,7 @@ class TestParityWithDDP(FSDPTest):
     def test_mixture_of_experts(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         fsdp_kwargs = {"device_id": device_type.type}
         self.run_subtests(
@@ -250,7 +250,7 @@ class TestParityWithDDP(FSDPTest):
     def test_mixture_of_experts_with_delay_before_free(
         self,
         cpu_offload: CPUOffload,
-        sharding_strategy: ShardingStrategy | None,
+        sharding_strategy: Optional[ShardingStrategy],
     ):
         fsdp_kwargs = {"device_id": device_type.type}
         self.run_subtests(
@@ -471,7 +471,7 @@ class TestAutograd(FSDPTest):
         sharding_strategy: ShardingStrategy,
         use_orig_params: bool,
         forward_prefetch: bool,
-        backward_prefetch: BackwardPrefetch | None,
+        backward_prefetch: Optional[BackwardPrefetch],
     ):
         orig_use_unsharded_views = FlatParamHandle._use_unsharded_views
 

@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Callable, Generator, Iterable
 from dataclasses import asdict, dataclass, field
 from itertools import chain
-from typing import Any, cast, no_type_check
+from typing import Any, cast, no_type_check, Union
 
 import torch
 import torch.distributed as dist
@@ -66,10 +66,10 @@ _PARAMS = "params"
 _STATE = "state"
 
 FQNS_T = set[str]
-PrimitiveType = DTensor | ShardedTensor | torch.Tensor | int | float | str
-ValueType = (
-    PrimitiveType | list[PrimitiveType] | tuple[PrimitiveType] | dict[str, "ValueType"]
-)
+PrimitiveType = Union[DTensor, ShardedTensor, torch.Tensor, int, float, str]
+ValueType = Union[
+    PrimitiveType, list[PrimitiveType], tuple[PrimitiveType], dict[str, "ValueType"]
+]
 DictValueType = dict[str, ValueType]
 ListDictValueType = list[DictValueType]
 OptimizerStateType = dict[str, DictValueType | ListDictValueType]
@@ -200,6 +200,7 @@ def _get_fqns(
                 return {f"{prefix}{fqn}" for fqn in flat_param._fqns}
             curr_obj = getattr(curr_obj, FSDP_WRAPPED_MODULE)
             if curr_obj_name != FSDP_WRAPPED_MODULE:
+                # pyrefly: ignore [bad-argument-type]
                 fqn_obj_names.append(curr_obj_name)
                 curr_obj = getattr(curr_obj, curr_obj_name)
         elif isinstance(curr_obj, torch._dynamo.eval_frame.OptimizedModule):
@@ -217,6 +218,7 @@ def _get_fqns(
                 ):
                     if hasattr(curr_obj, removed_fqn):
                         curr_obj = getattr(curr_obj, removed_fqn)
+            # pyrefly: ignore [bad-argument-type]
             fqn_obj_names.append(curr_obj_name)
             if curr_obj_name == nn.modules.module._EXTRA_STATE_KEY_SUFFIX:
                 if i != len(obj_names) - 1:
@@ -797,8 +799,7 @@ def _unflatten_optim_state_dict(
                 if part not in current:
                     current[part] = {}
                 # Move deeper into the nested structure
-                if not isinstance(current[part], dict):
-                    raise AssertionError
+                assert isinstance(current[part], dict)
                 current = current[part]
 
             # Set the value at the final level using the last part as the key
@@ -921,10 +922,8 @@ def _get_optim_state_dict(
                 fqn = next(iter(fqns))
                 if param not in param_pid_mapping:
                     continue
-                # pyrefly: ignore [bad-index]
                 pid = param_pid_mapping[param]
                 fqn_pid_mapping[fqn] = pid
-                # pyrefly: ignore [unsupported-operation]
                 fqn_pid_mapping[pid] = fqn
 
             # Only convert top-level parameter IDs to FQNs, preserve nested key types

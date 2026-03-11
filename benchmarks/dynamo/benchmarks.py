@@ -40,20 +40,11 @@ TORCHBENCH_MODELS_FILE_NAME = model_names(
 )
 
 # timm <> HF disjoint
-if not TIMM_MODEL_NAMES.isdisjoint(HF_MODELS_FILE_NAME):
-    raise AssertionError(
-        f"TIMM and HF model names overlap: {TIMM_MODEL_NAMES & HF_MODELS_FILE_NAME}"
-    )
+assert TIMM_MODEL_NAMES.isdisjoint(HF_MODELS_FILE_NAME)
 # timm <> torch disjoint
-if not TIMM_MODEL_NAMES.isdisjoint(TORCHBENCH_MODELS_FILE_NAME):
-    raise AssertionError(
-        f"TIMM and TorchBench model names overlap: {TIMM_MODEL_NAMES & TORCHBENCH_MODELS_FILE_NAME}"
-    )
+assert TIMM_MODEL_NAMES.isdisjoint(TORCHBENCH_MODELS_FILE_NAME)
 # torch <> hf disjoint
-if not TORCHBENCH_MODELS_FILE_NAME.isdisjoint(HF_MODELS_FILE_NAME):
-    raise AssertionError(
-        f"TorchBench and HF model names overlap: {TORCHBENCH_MODELS_FILE_NAME & HF_MODELS_FILE_NAME}"
-    )
+assert TORCHBENCH_MODELS_FILE_NAME.isdisjoint(HF_MODELS_FILE_NAME)
 
 
 def parse_args(args=None):

@@ -1,12 +1,10 @@
 # mypy: allow-untyped-defs
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import torch
 import torch.utils._pytree as pytree
 from torch._C import DispatchKey
-from torch._higher_order_ops.invoke_leaf_function import invoke_leaf_function
 from torch._higher_order_ops.print import print as hop_print
-from torch._higher_order_ops.schema import HopSchema
 from torch._higher_order_ops.torchbind import call_torchbind
 from torch._library.custom_ops import CustomOpDef
 from torch._library.effects import EffectType
@@ -46,7 +44,7 @@ def _get_op_qualname(op: _op_identifier) -> str:
 
 
 def _register_effectful_op(
-    op: _op_identifier, effect: EffectType | None
+    op: _op_identifier, effect: Optional[EffectType]
 ) -> RegistrationHandle:
     qualname = _get_op_qualname(op)
     entry = torch._library.simple_registry.singleton.find(qualname)
@@ -54,7 +52,7 @@ def _register_effectful_op(
     return handle
 
 
-def _get_effect(op: _op_identifier) -> _EffectType | None:
+def _get_effect(op: _op_identifier) -> Optional[_EffectType]:
     qualname = _get_op_qualname(op)
     entry = torch._library.simple_registry.singleton.find(qualname)
     return entry.effect.effect
@@ -64,7 +62,6 @@ _register_effectful_op("aten::_print", _EffectType.ORDERED)
 _register_effectful_op("profiler::_record_function_exit._RecordFunction", None)
 _register_effectful_op(call_torchbind, _EffectType.ORDERED)
 _register_effectful_op(hop_print, _EffectType.ORDERED)
-_register_effectful_op(invoke_leaf_function, _EffectType.ORDERED)
 
 
 class WithEffects(HigherOrderOperator):
@@ -91,14 +88,9 @@ class WithEffects(HigherOrderOperator):
         *args: tuple[Any, ...],
         **kwargs: dict[str, Any],
     ) -> tuple[Any, ...]:
-        if not isinstance(op, (torch._ops.HigherOrderOperator, torch._ops.OpOverload)):
-            raise AssertionError(
-                f"op must be HigherOrderOperator or OpOverload, got {type(op)}"
-            )
-        if has_aliasing(op):
-            raise AssertionError("Ops with aliasing is not supported")
-        if not isinstance(kwargs, dict):
-            raise AssertionError(f"kwargs must be a dict, got {type(kwargs)}")
+        assert isinstance(op, (torch._ops.HigherOrderOperator, torch._ops.OpOverload))
+        assert not has_aliasing(op), "Ops with aliasing is not supported"
+        assert isinstance(kwargs, dict)
         # pyrefly: ignore [missing-attribute]
         return super().__call__(token, op, *args, **kwargs)
 
@@ -200,32 +192,13 @@ with_effects.fallthrough(DispatchKey.AutogradCPU)
 with_effects.fallthrough(DispatchKey.AutogradCUDA)
 
 
-@with_effects.py_functionalize_impl
-def with_effects_functional(
-    ctx,
-    token: torch.Tensor,
-    op: torch._ops.OpOverload,
-    *args: tuple[Any, ...],
-    **kwargs: dict[str, Any],
-) -> tuple[torch.Tensor, ...]:
-    # with_effects is already functional, so just re-emit it.
-    unwrapped_token, unwrapped_args, unwrapped_kwargs = ctx.unwrap_tensors(
-        [token, args, kwargs]
-    )
-    with ctx.redispatch_to_next():
-        result = with_effects(unwrapped_token, op, *unwrapped_args, **unwrapped_kwargs)
-    return ctx.wrap_tensors(result)
-
-
-_EFFECTFUL_HOPS_WITH_SCHEMA = {hop_print, invoke_leaf_function}
-
-
-def _get_schema(op, args, kwargs: dict | None = None) -> torch.FunctionSchema:
+def _get_schema(op, args, kwargs: Optional[dict] = None) -> torch.FunctionSchema:
     if isinstance(op, torch._ops.OpOverload):
         return op._schema
     elif op == call_torchbind:
         return getattr(args[0], args[1]).schema
-    elif op in _EFFECTFUL_HOPS_WITH_SCHEMA:
+    elif op == hop_print:
+        # hop_print currently expects (format_str, *kwargs) as its arguments
         extra_kwargs = kwargs or {}
         return op.gen_schema(*args, **extra_kwargs)
     else:
@@ -256,13 +229,11 @@ def handle_effects(
     # this will create an empty tensor during proxy mode tracing if the token
     # doesn't exist. But the tokens should always exist during proxy mode tracing.
     key = _get_effect(op)
-    if key is None:
-        raise AssertionError(f"effect key must not be None for op {op}")
+    assert key is not None
     if key not in tokens:
-        if not allow_token_discovery:
-            raise AssertionError(
-                f"Could not find a token for effect {key} which came from the function {op}"
-            )
+        assert allow_token_discovery, (
+            f"Could not find a token for effect {key} which came from the function {op}"
+        )
         proxy_tensor_mode = torch._C._get_dispatch_mode(
             torch._C._TorchDispatchModeKey.PROXY
         )
@@ -303,37 +274,19 @@ def handle_effects(
         )
 
     schema = _get_schema(op, unwrapped_args, unwrapped_kwargs)
-
-    if isinstance(schema, HopSchema):
-        if len(schema.returns) == 0:
-            unwrapped_outs = ()
-        else:
-            if len(unwrapped_outs) != len(schema.returns):
-                raise AssertionError(
-                    f"expected {len(schema.returns)} outputs but got {len(unwrapped_outs)}"
-                )
-            unwrapped_outs = tuple(unwrapped_outs)
-    elif len(schema.returns) == 0:
-        if unwrapped_outs[0] is not None:
-            raise AssertionError(f"expected no outputs but got {unwrapped_outs[0]}")
+    if len(schema.returns) == 0:
+        assert unwrapped_outs[0] is None
         unwrapped_outs = None  # type: ignore[assignment]
     elif len(schema.returns) == 1:
-        if len(unwrapped_outs) != 1:
-            raise AssertionError(f"expected 1 output but got {len(unwrapped_outs)}")
+        assert len(unwrapped_outs) == 1
         unwrapped_outs = unwrapped_outs[0]
     else:
-        if len(unwrapped_outs) != len(schema.returns):
-            raise AssertionError(
-                f"expected {len(schema.returns)} outputs but got {len(unwrapped_outs)}"
-            )
+        assert len(unwrapped_outs) == len(schema.returns)
 
     # Add the newly created token into the tokens map for a following call to
     # use this token.
     wrapped_token = ctx.wrap_tensors(new_token)
-    if not isinstance(wrapped_token, torch.Tensor):
-        raise AssertionError(
-            f"expected wrapped_token to be torch.Tensor, got {type(wrapped_token)}"
-        )
+    assert isinstance(wrapped_token, torch.Tensor)
     tokens[key] = wrapped_token
 
     # pyrefly: ignore [bad-argument-type]

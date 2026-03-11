@@ -68,10 +68,18 @@ using ::c10::TypeKind;
 
 using ::c10::fmap;
 
-namespace prim = ::c10::prim;
-namespace attr = ::c10::attr;
-namespace aten = ::c10::aten;
-namespace cuda = ::c10::cuda;
+namespace prim {
+using namespace ::c10::prim;
+}
+namespace attr {
+using namespace ::c10::attr;
+}
+namespace aten {
+using namespace ::c10::aten;
+}
+namespace cuda {
+using namespace ::c10::cuda;
+} // namespace cuda
 
 struct Function;
 struct GraphFunction;

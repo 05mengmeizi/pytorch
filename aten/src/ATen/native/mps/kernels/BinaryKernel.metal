@@ -265,17 +265,6 @@ struct hypot_functor {
   }
 };
 
-struct atan2_functor {
-  template <typename T, enable_if_t<is_floating_point_v<T>, bool> = true>
-  inline T operator()(const T a, const T b) {
-    return static_cast<T>(precise::atan2(float(a), float(b)));
-  }
-  template <typename T, enable_if_t<is_integral_v<T>, bool> = true>
-  inline float operator()(const T a, const T b) {
-    return precise::atan2(float(a), float(b));
-  }
-};
-
 // Complex binary functors
 struct polar_functor {
   template <typename U>
@@ -390,21 +379,6 @@ struct igammac_functor {
   }
 };
 
-struct gcd_functor {
-  template <typename T>
-  inline T operator()(const T a, const T b) {
-    // Euclidean algorithm for GCD
-    T x = a < 0 ? -a : a;
-    T y = b < 0 ? -b : b;
-    while (x != 0) {
-      T c = x;
-      x = y % x;
-      y = c;
-    }
-    return y;
-  }
-};
-
 #define REGISTER_INTEGER_BINARY_OP(NAME)  \
   REGISTER_BINARY_OP(NAME, long, long);   \
   REGISTER_BINARY_OP(NAME, int, int);     \
@@ -432,8 +406,6 @@ struct gcd_functor {
   REGISTER_OPMATH_BINARY_OP(NAME, bfloat, bfloat)
 
 REGISTER_FLOAT_BINARY_OP(hypot);
-REGISTER_FLOAT_BINARY_OP(atan2);
-REGISTER_INT2FLOAT_BINARY_OP(atan2);
 REGISTER_FLOAT_BINARY_OP(copysign);
 REGISTER_INT2FLOAT_BINARY_OP(copysign);
 REGISTER_FLOAT_BINARY_OP(fmax);
@@ -489,7 +461,6 @@ REGISTER_OPMATH_FLOAT_BINARY_OP(fmod);
 REGISTER_INTEGER_BINARY_OP(fmod);
 REGISTER_OPMATH_FLOAT_BINARY_OP(igamma);
 REGISTER_OPMATH_FLOAT_BINARY_OP(igammac);
-REGISTER_INTEGER_BINARY_OP(gcd);
 REGISTER_BINARY_ALPHA_OP(add_alpha, long, long, long);
 REGISTER_BINARY_ALPHA_OP(add_alpha, int, int, int);
 REGISTER_BINARY_ALPHA_OP(add_alpha, float, float, float);

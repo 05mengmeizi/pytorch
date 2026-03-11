@@ -172,10 +172,7 @@ class Reduce2DBench(benchmark.Benchmark):
         return True
 
     def memory_workload(self):
-        if self.mode != "fwd":
-            raise AssertionError(
-                f"Only the forward operation is modeled, but got mode='{self.mode}'"
-            )
+        assert self.mode == "fwd", "Only the forward operation is modeled!"
 
         buffer_size = self.dim0 * self.dim1
         if self.red_dim == 0:

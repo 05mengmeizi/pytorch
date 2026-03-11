@@ -4,7 +4,7 @@ import logging
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, cast, Union
 
 import torch
 import torch.distributed as dist
@@ -95,7 +95,7 @@ class _RecvInfo:
 
 
 # An input can be either a received activation or a model input
-InputInfo = _RecvInfo | _RootArgPlaceholder
+InputInfo = Union[_RecvInfo, _RootArgPlaceholder]
 
 
 def _make_tensor_from_meta(
@@ -155,6 +155,7 @@ class _PipelineStageBase(ABC):
         self.submod = submodule
         self.stage_index = stage_index
         self.num_stages = num_stages
+        # pyrefly: ignore [read-only]
         self.device = device
         self.group = group
 
@@ -1006,8 +1007,8 @@ class _PipelineStageBase(ABC):
                 distributed_state = fully_shard.state(fsdp_module)  # type: ignore[attr-defined]
 
             for state in distributed_state._state_ctx.all_states:
-                for fsdp_param_group in state._fsdp_param_groups:
-                    fsdp_param_group.post_backward()
+                if state._fsdp_param_group:
+                    state._fsdp_param_group.post_backward()
 
             # it would be much better if pipelining backward invoked .backward so autograd hooks
             # worked and modules like DDP/FSDP behaved as expected.  Working around this for the time being,

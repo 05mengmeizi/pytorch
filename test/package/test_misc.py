@@ -146,10 +146,7 @@ class TestMisc(PackageTestCase):
                         spec = spec_from_loader(fullname, finder)
                     if spec is not None:
                         break
-                if spec is None or not isinstance(spec.loader, SourceFileLoader):
-                    raise AssertionError(
-                        f"Expected SourceFileLoader, got {type(spec.loader) if spec else None}"
-                    )
+                assert spec is not None and isinstance(spec.loader, SourceFileLoader)
                 spec.loader = LoaderThatRemapsModuleA(
                     spec.loader.name, spec.loader.path
                 )

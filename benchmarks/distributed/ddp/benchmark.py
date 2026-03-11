@@ -34,10 +34,7 @@ def allgather_object(obj):
 
 def allgather_run(cmd):
     proc = subprocess.run(shlex.split(cmd), capture_output=True)
-    if proc.returncode != 0:
-        raise AssertionError(
-            f"Command '{cmd}' failed with return code {proc.returncode}: {proc.stderr.decode('utf-8')}"
-        )
+    assert proc.returncode == 0
     return allgather_object(proc.stdout.decode("utf-8"))
 
 
@@ -209,10 +206,7 @@ def main():
     args = parser.parse_args()
 
     num_gpus_per_node = torch.cuda.device_count()
-    if num_gpus_per_node != 8:
-        raise AssertionError(
-            f"Expected 8 GPUs per machine, but found {num_gpus_per_node}"
-        )
+    assert num_gpus_per_node == 8, "Expected 8 GPUs per machine"
 
     # The global process group used only for communicating benchmark
     # metadata, like measurements. Not for benchmarking itself.

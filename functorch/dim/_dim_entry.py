@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 
 if TYPE_CHECKING:
@@ -15,19 +15,17 @@ import torch  # noqa: TC002
 # follow this convention even though it shouldn't be necessary now
 class DimEntry:
     # The dimension this is from the rhs, or a FCD
-    data: Dim | int
+    data: Union[Dim, int]
 
-    def __init__(self, data: Dim | int | None = None) -> None:
+    def __init__(self, data: Union[Dim, int, None] = None) -> None:
         from . import Dim
 
         if type(data) is int:
-            if data >= 0:
-                raise AssertionError(f"Expected negative int, got {data}")
+            assert data < 0
         elif data is None:
             data = 0
         else:
-            if not isinstance(data, Dim):
-                raise AssertionError(f"Expected Dim, got {type(data)}")
+            assert isinstance(data, Dim)
         self.data = data
 
     def __eq__(self, other: object) -> bool:
@@ -60,13 +58,11 @@ class DimEntry:
             return self.data == 0
 
     def position(self) -> int:
-        if not isinstance(self.data, int):
-            raise AssertionError(f"Expected int, got {type(self.data)}")
+        assert isinstance(self.data, int)
         return self.data
 
     def dim(self) -> Dim:
-        if isinstance(self.data, int):
-            raise AssertionError("Expected Dim, got int")
+        assert not isinstance(self.data, int)
         return self.data
 
     def __repr__(self) -> str:
@@ -106,8 +102,9 @@ def _match_levels(
     strides = tensor.stride()
 
     if not drop_levels:
-        if len(from_levels) > len(to_levels):
-            raise AssertionError("Cannot expand dimensions without drop_levels")
+        assert len(from_levels) <= len(to_levels), (
+            "Cannot expand dimensions without drop_levels"
+        )
 
     new_sizes = []
     new_strides = []

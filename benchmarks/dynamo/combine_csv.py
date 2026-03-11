@@ -7,8 +7,7 @@ import sys
 from collections import defaultdict
 
 
-if len(sys.argv) != 3:
-    raise AssertionError(f"Expected 2 arguments, but got {len(sys.argv) - 1}")
+assert len(sys.argv) == 3
 
 RESULTS = defaultdict(dict)
 

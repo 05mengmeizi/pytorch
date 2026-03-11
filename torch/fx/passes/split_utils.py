@@ -1,6 +1,7 @@
 # mypy: allow-untyped-defs
 import copy
 from dataclasses import dataclass, field
+from typing import Optional, Union
 
 import torch.fx
 from torch.fx._compatibility import compatibility
@@ -66,7 +67,7 @@ class Component:
     # Mapping from get_attr node in original graph to get_attr node in `graph`.
     getattr_maps: dict[torch.fx.Node, torch.fx.Node] = field(default_factory=dict)
     constructor_args: list[str] = field(default_factory=list)
-    gm: torch.fx.GraphModule | None = None
+    gm: Optional[torch.fx.GraphModule] = None
 
 
 @compatibility(is_backward_compatible=False)
@@ -76,7 +77,7 @@ def split_by_tags(
     return_fqn_mapping: bool = False,
     return_tuple: bool = False,
     GraphModuleCls: type[torch.fx.GraphModule] = torch.fx.GraphModule,
-) -> torch.fx.GraphModule | tuple[torch.fx.GraphModule, dict[str, str]]:
+) -> Union[torch.fx.GraphModule, tuple[torch.fx.GraphModule, dict[str, str]]]:
     """
     Splits a GraphModule using tags on its graph nodes. We honor the order of
     tags. For example, we have tags = ["a", "b", "c"], the function will create
@@ -165,7 +166,7 @@ def split_by_tags(
     main_remapping: dict[torch.fx.Node, torch.fx.Node] = {}
 
     # Output node of original module.
-    output_node: torch.fx.Node | None = None
+    output_node: Optional[torch.fx.Node] = None
 
     # Create a component for each tag, we don't expect to create other components afterwards.
     for tag in tags:
@@ -194,8 +195,7 @@ def split_by_tags(
 
         # Now we process callable nodes which are nodes with op of call_module,
         # call_function or call_method. Every callable nodes should be tagged.
-        if not hasattr(node, "tag"):
-            raise AssertionError(f"Node does not have tag: {node.format_node()}")
+        assert hasattr(node, "tag"), f"Node does not have tag: {node.format_node()}"
 
         upstream_components = [
             node_to_component[x]
@@ -210,11 +210,9 @@ def split_by_tags(
         mx = max((c.order for c in upstream_components), default=0)
 
         # Expect the component for `node` has higher order then its upstream components.
-        if comp.order < mx:
-            raise AssertionError(
-                f"Component {comp.name} order must be >= max of its upstream components, "
-                f"order={comp.order} and max={mx}"
-            )
+        assert comp.order >= mx, (
+            f"Component {comp.name} order must be >= max of its upstream components, order={comp.order} and max={mx}"
+        )
 
         # Map a input of `node` to nodes in the component's graph.
         def remap_func(x):
@@ -461,10 +459,9 @@ def move_non_tensor_nodes_on_boundary(subgraphs) -> None:
                 continue
 
             children = get_children_in_graph(current_node)
-            if len(children) == 0:
-                raise AssertionError(
-                    "Only node that has children in other subgraph can be moved"
-                )
+            assert len(children) > 0, (
+                "Only node that has children in other subgraph can be moved"
+            )
 
             # Find target subgraph. The children should all be in the same subgraph except current subgraph
             target_subgraph_candidates = set()
@@ -512,8 +509,7 @@ def move_non_tensor_nodes_on_boundary(subgraphs) -> None:
                         and node_to_subgraph[parent] == subgraph_idx
                     ):
                         # Check if parent meets step 1 requirement: any children in another subgraph
-                        if not has_children_in_other_subgraph(parent, subgraph_idx):
-                            raise AssertionError(
-                                f"Parent {parent.name} should have children in another subgraph"
-                            )
+                        assert has_children_in_other_subgraph(parent, subgraph_idx), (
+                            f"Parent {parent.name} should have children in another subgraph"
+                        )
                         queue.append(parent)

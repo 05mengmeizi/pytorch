@@ -778,9 +778,11 @@ class ParameterList(Module):
                     size_str,
                     device_str,
                 )
+                # pyrefly: ignore [bad-argument-type]
                 child_lines.append("  (" + str(k) + "): " + parastr)
             else:
                 child_lines.append(
+                    # pyrefly: ignore [bad-argument-type]
                     "  (" + str(k) + "): Object of type: " + type(p).__name__
                 )
 
@@ -1013,9 +1015,11 @@ class ParameterDict(Module):
                     size_str,
                     device_str,
                 )
+                # pyrefly: ignore [bad-argument-type]
                 child_lines.append("  (" + str(k) + "): " + parastr)
             else:
                 child_lines.append(
+                    # pyrefly: ignore [bad-argument-type]
                     "  (" + str(k) + "): Object of type: " + type(p).__name__
                 )
         tmpstr = "\n".join(child_lines)

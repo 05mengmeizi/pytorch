@@ -20,10 +20,7 @@
   _(ComplexHalf, 8)                    \
   _(ComplexFloat, 9)                   \
   _(Bool, 11)                          \
-  _(BFloat16, 15)                      \
-  _(UInt16, 27)                        \
-  _(UInt32, 28)                        \
-  _(UInt64, 29)
+  _(BFloat16, 15)
 
 namespace c10 {
 namespace metal {

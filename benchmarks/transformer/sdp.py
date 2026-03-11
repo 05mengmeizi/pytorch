@@ -5,6 +5,7 @@ import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pprint
+from typing import Optional
 
 import numpy as np
 from prettytable import PrettyTable
@@ -25,7 +26,7 @@ class ExperimentConfig:
     max_sequence_len: int
     embed_dimension: int
     dtype: torch.dtype
-    pad_percentage: float | None
+    pad_percentage: Optional[float]
     enable_math: bool
     enable_flash: bool
     enable_mem_efficient: bool
@@ -64,9 +65,9 @@ class ExperimentConfig:
 @dataclass(frozen=True)
 class ExperimentResults:
     nn_mha_time: float
-    compiled_nn_mha_time: float | None
+    compiled_nn_mha_time: Optional[float]
     composite_mha_time: float
-    compiled_composite_mha_time: float | None
+    compiled_composite_mha_time: Optional[float]
 
     def get_entries(self) -> list:
         return [
@@ -143,13 +144,10 @@ class CompositeMHA(torch.nn.Module):
 
 
 def build_composite_mha_from_nn_mha(pt):
-    if not pt._qkv_same_embed_dim:
-        raise AssertionError("pt._qkv_same_embed_dim must be True")
+    assert pt._qkv_same_embed_dim
     in_proj_weight = pt.in_proj_weight
-    if in_proj_weight is None:
-        raise AssertionError("pt.in_proj_weight must not be None")
-    if not pt.batch_first:
-        raise AssertionError("pt.batch_first must be True")
+    assert in_proj_weight is not None
+    assert pt.batch_first
     return CompositeMHA(pt.num_heads, pt.in_proj_weight, pt.in_proj_bias, pt.out_proj)
 
 
@@ -202,15 +200,9 @@ def assert_close_tensors(tensor_a, tensor_b):
     # First order sanity check. Not a replacement for rigorous tests.
     if tensor_a.is_nested and tensor_b.is_nested:
         for a, b in zip(tensor_a.unbind(), tensor_b.unbind()):
-            if not torch.allclose(a, b, atol=1e-2, rtol=1e-2):
-                raise AssertionError(
-                    f"Nested tensors not close: max diff = {(a - b).abs().max()}"
-                )
+            assert torch.allclose(a, b, atol=1e-2, rtol=1e-2)
     else:
-        if not torch.allclose(tensor_a, tensor_b, atol=1e-3, rtol=1e-3):
-            raise AssertionError(
-                f"Tensors not close: max diff = {(tensor_a - tensor_b).abs().max()}"
-            )
+        assert torch.allclose(tensor_a, tensor_b, atol=1e-3, rtol=1e-3)
 
 
 def run_single_experiment(config: ExperimentConfig) -> ExperimentResults:
@@ -305,7 +297,7 @@ def generate_experiments(
     return configs
 
 
-def main(save_path: Path | None):
+def main(save_path: Optional[Path]):
     seed = 123
     np.random.seed(seed)
     torch.manual_seed(seed)

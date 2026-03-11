@@ -218,8 +218,7 @@ class Dist2MultiProcessTestCase(MultiProcessTestCase):
             [0], timeout=timedelta(seconds=30), group_name="subgroup_1"
         )
         if self.rank == 0:
-            if subgroup is None:
-                raise AssertionError("Expected subgroup to not be None")
+            assert subgroup is not None
             self.assertEqual(subgroup.size(), 1)
             backend = subgroup._get_backend(self.device)
             self.assertEqual(backend.options._timeout, timedelta(seconds=30))
@@ -232,8 +231,7 @@ class Dist2MultiProcessTestCase(MultiProcessTestCase):
         subgroup_1 = group.split_group([0], timeout=timedelta(seconds=30))
         subgroup_2 = group.split_group([1], timeout=timedelta(seconds=30))
         if self.rank == 0:
-            if subgroup_1 is None:
-                raise AssertionError("Expected subgroup_1 to not be None")
+            assert subgroup_1 is not None
             tcp_store = dist.TCPStore(
                 host_name=os.environ["MASTER_ADDR"],
                 port=29781,
@@ -248,8 +246,7 @@ class Dist2MultiProcessTestCase(MultiProcessTestCase):
             self.assertEqual(backend.options._timeout, timedelta(seconds=40))
             self.assertEqual(merged_pg.group_name, "merged_pg")
         else:
-            if subgroup_2 is None:
-                raise AssertionError("Expected subgroup_2 to not be None")
+            assert subgroup_2 is not None
             tcp_store = dist.TCPStore(
                 host_name=os.environ["MASTER_ADDR"],
                 port=29781,
@@ -305,9 +302,8 @@ class ProcessGroupNCCLTest(Dist2MultiProcessTestCase):
 
 
 if __name__ == "__main__":
-    if torch.cuda._initialized:
-        raise AssertionError(
-            "test_distributed must not have initialized CUDA context on main process"
-        )
+    assert not torch.cuda._initialized, (
+        "test_distributed must not have initialized CUDA context on main process"
+    )
 
     run_tests()

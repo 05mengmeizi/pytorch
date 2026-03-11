@@ -1,7 +1,7 @@
 # mypy: allow-untyped-defs
 import os
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 from torch.fx import Graph, Node
 from torch.fx._compatibility import compatibility
@@ -26,8 +26,8 @@ class GraphTransformObserver:
         self,
         gm: GraphModule,
         passname: str,
-        subsystem: str | None = None,
-        log_url: str | None = None,
+        subsystem: Optional[str] = None,
+        log_url: Optional[str] = None,
     ):
         """
         log_url is inferred to be torch._inductor.config.trace.log_url_for_graph_xform unless otherwise specified
@@ -76,38 +76,21 @@ class GraphTransformObserver:
     def get_current_pass_count(cls):
         return cls.__pass_count
 
-    def apply_gm_pass(self, pass_fn: Callable[[GraphModule], T]) -> T | None:
-        from torch._dynamo.utils import dynamo_timed
-
+    def apply_gm_pass(self, pass_fn: Callable[[GraphModule], T]) -> Optional[T]:
         with self:
-            if self._check_disable_pass():
-                return None
-            with dynamo_timed(
-                f"pass.{self.subsystem}.{self.passname}"
-                if self.subsystem
-                else f"pass.{self.passname}"
-            ):
+            if not self._check_disable_pass():
                 return pass_fn(self.gm)
 
-    def apply_graph_pass(self, pass_fn: Callable[[Graph], T]) -> T | None:
-        from torch._dynamo.utils import dynamo_timed
+        return None
 
+    def apply_graph_pass(self, pass_fn: Callable[[Graph], T]) -> Optional[T]:
         with self:
-            if self._check_disable_pass():
-                return None
-            with dynamo_timed(
-                f"pass.{self.subsystem}.{self.passname}"
-                if self.subsystem
-                else f"pass.{self.passname}"
-            ):
+            if not self._check_disable_pass():
                 return pass_fn(self.gm.graph)
 
+        return None
+
     def _check_disable_pass(self):
-        from torch._inductor import config as inductor_config
-
-        if self.passname.upper() in inductor_config.disabled_passes.upper():
-            return True
-
         if self.subsystem is None:
             return False
 
@@ -154,8 +137,7 @@ class GraphTransformObserver:
                     e.obj_dict["attributes"]["fillcolor"] = "yellow"
                 else:
                     e.obj_dict["attributes"]["fillcolor"] = "grey"
-            if self.log_url is None:
-                raise AssertionError("log_url is not set")
+            assert self.log_url is not None
             self.input_dot_graph.write(
                 os.path.join(
                     self.log_url,
@@ -210,8 +192,7 @@ class GraphTransformObserver:
             if not new_node:
                 return
 
-            if not isinstance(new_node, Node):
-                raise AssertionError(f"Expected Node, got {type(new_node)}")
+            assert isinstance(new_node, Node)
 
             # replace hook is called once for each user of old
             # this avoids adding duplicated source nodes

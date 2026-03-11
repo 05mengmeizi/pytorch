@@ -4,7 +4,7 @@ import math
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import torch
 from torch._inductor.analysis.device_info import DeviceInfo, lookup_device_info
@@ -44,7 +44,7 @@ def parse_list(lst: str) -> list[int]:
 
 
 def register_adapter(
-    aten: str | list[str],
+    aten: Union[str, list[str]],
 ) -> Callable[
     [AdapterType],
     AdapterType,
@@ -144,7 +144,7 @@ def mm_adapter(
     return shapes, {}
 
 
-def _parse_kernel_name(name: str) -> str | None:
+def _parse_kernel_name(name: str) -> Optional[str]:
     """
     parse the name of the kernel from the event name.
     """
@@ -369,7 +369,7 @@ _dtype_map = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class KernelStats:
     flops: int
     bw: float
@@ -385,7 +385,7 @@ KernelNameMap = defaultdict[str, OrderedSet[KernelStats]]
 class Device:
     name: str
     index: int
-    info: DeviceInfo | None
+    info: Optional[DeviceInfo]
     stats: KernelNameMap
 
     def __repr__(self) -> str:
@@ -402,8 +402,8 @@ class JsonProfile:
     def __init__(
         self,
         path: str,
-        benchmark_name: str | None = None,
-        dtype: torch.dtype | str | None = None,
+        benchmark_name: Optional[str] = None,
+        dtype: Optional[Union[torch.dtype, str]] = None,
     ):
         """
         Convenience class for running common operations on chrome/perfetto json traces.
@@ -423,7 +423,7 @@ class JsonProfile:
             self.dtype = _dtype_map.get(dtype)
         self._create_devices()
 
-    def convert_dtype(self, event: dict[str, Any]) -> torch.dtype | None:
+    def convert_dtype(self, event: dict[str, Any]) -> Optional[torch.dtype]:
         """
         Each op has a list of dtypes for each input arg. We need to convert these into a single dtype for flop estimation.
         Issues:

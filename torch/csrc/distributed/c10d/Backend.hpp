@@ -40,7 +40,6 @@ class TORCH_API Backend : public torch::CustomClassHolder {
         std::chrono::milliseconds timeout = kBackendDefaultTimeout)
         : timeout(timeout), backend(std::move(backend)) {}
     ~Options() override = default;
-    Options(const Options&) = default;
 
     std::chrono::milliseconds timeout;
 

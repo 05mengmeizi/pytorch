@@ -93,10 +93,7 @@ class TestLiteScriptModule(TestCase):
             buffer = io.BytesIO(exported_module)
             buffer.seek(0)
 
-            if b"callstack_debug_map.pkl" not in exported_module:
-                raise AssertionError(
-                    "Expected callstack_debug_map.pkl in exported module"
-                )
+            assert b"callstack_debug_map.pkl" in exported_module
 
             mobile_module = _load_for_lite_interpreter(buffer)
             with self.assertRaisesRegex(

@@ -42,10 +42,7 @@ def from_buffer(
     data = torch.as_tensor(CupyWrapper(data_ptr, size_in_bytes), device=device).view(
         dtype
     )
-    if data.data_ptr() != data_ptr:
-        raise AssertionError(
-            f"Expected data_ptr to be {data_ptr}, got {data.data_ptr()}"
-        )
+    assert data.data_ptr() == data_ptr
     return data
 
 
@@ -104,8 +101,7 @@ class CupyAsTensorTest(MultiProcContinuousTest):
             tensor.fill_(1)
         device_module.synchronize()
         torch.distributed.barrier()
-        if not tensor.allclose(tensor, 1):
-            raise AssertionError("Expected tensor to be close to 1")
+        assert tensor.allclose(tensor, 1)
         torch.distributed.barrier()
 
     @classmethod

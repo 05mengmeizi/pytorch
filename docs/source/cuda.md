@@ -302,8 +302,6 @@ See the docs for {class}`~torch.cuda.green_contexts.GreenContext` for an example
 
 ```{eval-rst}
 .. py:module:: torch.cuda.nccl
-
-.. autofunction:: torch.cuda.nccl.is_available
 ```
 
 ```{eval-rst}

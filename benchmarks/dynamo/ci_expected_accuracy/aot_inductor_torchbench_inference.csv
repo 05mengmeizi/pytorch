@@ -178,6 +178,10 @@ pyhpc_turbulent_kinetic_energy,pass,0
 
 
 
+pytorch_CycleGAN_and_pix2pix,pass,0
+
+
+
 pytorch_stargan,pass,0
 
 
@@ -226,7 +230,7 @@ torchrec_dlrm,eager_fail_to_run,0
 
 
 
-tts_angular,pass,0
+tts_angular,fail_to_run,0
 
 
 

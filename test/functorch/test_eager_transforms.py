@@ -216,8 +216,7 @@ def _get_weights_and_functional_call(net, mechanism):
     if mechanism == "make_functional":
         return make_functional(net)
     else:
-        if mechanism != "functional_call":
-            raise AssertionError(f"Expected 'functional_call', got {mechanism!r}")
+        assert mechanism == "functional_call"
         # this makes it so the function from make_functional and this call have the same signature
 
         def net_func(weights, data):
@@ -230,8 +229,7 @@ def _get_weights_and_functional_call_with_buffers(net, mechanism):
     if mechanism == "make_functional":
         return make_functional_with_buffers(net)
     else:
-        if mechanism != "functional_call":
-            raise AssertionError(f"Expected 'functional_call', got {mechanism!r}")
+        assert mechanism == "functional_call"
 
         # this makes it so the function from make_functional and this call have the same signature
         def net_func(weights, buffers, data):
@@ -454,11 +452,9 @@ class TestGradTransform(TestCase):
         x = torch.tensor(1 + 1j)
 
         def foo(x):
-            if x.is_conj():
-                raise AssertionError("Expected x to not be conj")
+            assert not x.is_conj()
             y = x.conj()
-            if not y.is_conj():
-                raise AssertionError("Expected y to be conj")
+            assert y.is_conj()
             return y.abs()
 
         res = grad(foo)(x)
@@ -769,18 +765,14 @@ class TestGradTransform(TestCase):
         # Check list output
         output, vjp_fn = vjp(lambda x: [x, x.sum()], x)
         (vjp_out,) = vjp_fn([t, t.sum()])
-        if not isinstance(output, list) or len(output) != 2:
-            raise AssertionError(f"Expected list of length 2, got {type(output)}")
-        if not isinstance(vjp_out, torch.Tensor):
-            raise AssertionError(f"Expected Tensor, got {type(vjp_out)}")
+        assert isinstance(output, list) and len(output) == 2
+        assert isinstance(vjp_out, torch.Tensor)
 
         # Check dict output
         output, vjp_fn = vjp(lambda x: {"x": x, "xsum": x.sum()}, x)
         (vjp_out,) = vjp_fn({"x": t, "xsum": t.sum()})
-        if not isinstance(output, dict) or len(output) != 2 or "xsum" not in output:
-            raise AssertionError(f"Expected dict with 'xsum', got {output}")
-        if not isinstance(vjp_out, torch.Tensor):
-            raise AssertionError(f"Expected Tensor, got {type(vjp_out)}")
+        assert isinstance(output, dict) and len(output) == 2 and "xsum" in output
+        assert isinstance(vjp_out, torch.Tensor)
 
         def composite_output(x):
             out = x.sum()
@@ -794,12 +786,9 @@ class TestGradTransform(TestCase):
                 (t.sum(), {"a": t, "out": [t, t.sum()]}),
             ]
         )
-        if not isinstance(output, list):
-            raise AssertionError(f"Expected list, got {type(output)}")
-        if not isinstance(output[0], tuple) or not isinstance(output[0][1], dict):
-            raise AssertionError(f"Expected tuple with dict, got {output[0]}")
-        if not isinstance(vjp_out, torch.Tensor):
-            raise AssertionError(f"Expected Tensor, got {type(vjp_out)}")
+        assert isinstance(output, list)
+        assert isinstance(output[0], tuple) and isinstance(output[0][1], dict)
+        assert isinstance(vjp_out, torch.Tensor)
 
     def test_vjp_pytree_error(self, device):
         def f(x):
@@ -1526,8 +1515,7 @@ class TestAutogradFunctionVmapAPI(TestCase):
 
             @staticmethod
             def vmap(info, in_dims, input):
-                if in_dims != (0,):
-                    raise AssertionError(f"Expected in_dims == (0,), got {in_dims}")
+                assert in_dims == (0,)
                 return torch.zeros(input.shape[1:], device=input.device), None
 
         B = 2
@@ -1547,8 +1535,7 @@ class TestAutogradFunctionVmapAPI(TestCase):
 
             @staticmethod
             def vmap(info, in_dims, input):
-                if in_dims != (0,):
-                    raise AssertionError(f"Expected in_dims == (0,), got {in_dims}")
+                assert in_dims == (0,)
                 r = torch.zeros(input.shape[1:], device=input.device)
                 return (r, r), None
 
@@ -1657,8 +1644,7 @@ class TestAutogradFunctionVmapAPI(TestCase):
 
                 @staticmethod
                 def vmap(info, in_dims, x, *, y):
-                    if in_dims != (0,):
-                        raise AssertionError(f"Expected in_dims == (0,), got {in_dims}")
+                    assert in_dims == (0,)
                     return x + y, 0
 
             x = torch.randn(3)
@@ -1733,10 +1719,7 @@ class TestVmapOfGrad(TestCase):
             for r, e in zip(result, expected):
                 self.assertEqual(r, e, atol=0, rtol=1.5e-3)
         else:
-            if mechanism != "functional_call":
-                raise AssertionError(
-                    f"Expected mechanism 'functional_call', got '{mechanism}'"
-                )
+            assert mechanism == "functional_call"
             expected = {
                 k: tuple(d[k] for d in expected) for k, v in expected[0].items()
             }
@@ -1821,8 +1804,7 @@ class TestJac(VmapTearDownMixin, TestCase):
         x = torch.randn(3, device=device)
         y = jacapi(torch.sin)(x)
         expected = torch.diagflat(x.cos())
-        if not torch.allclose(y, expected):
-            raise AssertionError("torch.allclose failed: y and expected differ")
+        assert torch.allclose(y, expected)
 
     @jacrev_and_jacfwd
     def test_simple_not_flat(self, device, jacapi):
@@ -1830,8 +1812,7 @@ class TestJac(VmapTearDownMixin, TestCase):
         y = jacapi(torch.sin)(x)
         expected = torch.diagflat(x.view(-1).cos())
         expected = expected.view(2, 3, 2, 3)
-        if not torch.allclose(y, expected):
-            raise AssertionError("torch.allclose failed: y and expected differ")
+        assert torch.allclose(y, expected)
 
     @jacrev_and_jacfwd
     def test_take(self, device, jacapi):
@@ -1866,8 +1847,7 @@ class TestJac(VmapTearDownMixin, TestCase):
         x = torch.randn(2, 3, device=device)
         y = vmap(jacapi(torch.sin))(x)
         expected = torch.stack([torch.diagflat(x[i].cos()) for i in range(2)])
-        if not torch.allclose(y, expected):
-            raise AssertionError("torch.allclose failed: y and expected differ")
+        assert torch.allclose(y, expected)
 
     @jacrev_and_jacfwd
     def test_nested_jac_simple(self, device, jacapi):
@@ -1877,8 +1857,7 @@ class TestJac(VmapTearDownMixin, TestCase):
         x = torch.randn(3, device=device)
         y = jacapi(jacapi(foo))(x)
         expected = torch.diagflat(-x.sin())
-        if not torch.allclose(y, expected):
-            raise AssertionError("torch.allclose failed: y and expected differ")
+        assert torch.allclose(y, expected)
 
     @jacrev_and_jacfwd
     def test_multiple_args(self, device, jacapi):
@@ -1886,8 +1865,7 @@ class TestJac(VmapTearDownMixin, TestCase):
         y = torch.randn(3, device=device)
         z = jacapi(torch.multiply, argnums=1)(x, y)
         expected = torch.diagflat(x)
-        if not torch.allclose(z, expected):
-            raise AssertionError("torch.allclose failed: z and expected differ")
+        assert torch.allclose(z, expected)
 
     @jacrev_and_jacfwd
     def test_multiple_outputs_multiple_argnums(self, device, jacapi):
@@ -2050,17 +2028,11 @@ class TestJac(VmapTearDownMixin, TestCase):
 
         # Check list output
         out = jacapi(lambda x: [x, x.sum()])(x)
-        if not (isinstance(out, list) and len(out) == 2):
-            raise AssertionError(
-                f"Expected list of length 2, got {type(out).__name__} of length {len(out)}"
-            )
+        assert isinstance(out, list) and len(out) == 2
 
         # Check dict output
         out = jacapi(lambda x: {"x": x, "xsum": x.sum()})(x)
-        if not (isinstance(out, dict) and len(out) == 2 and "xsum" in out):
-            raise AssertionError(
-                f"Expected dict of length 2 with 'xsum' key, got {type(out).__name__}"
-            )
+        assert isinstance(out, dict) and len(out) == 2 and "xsum" in out
 
         def composite_output(x):
             out = x.sum()
@@ -2069,12 +2041,8 @@ class TestJac(VmapTearDownMixin, TestCase):
             ]
 
         out = jacapi(composite_output)(x)
-        if not isinstance(out, list):
-            raise AssertionError(f"Expected list, got {type(out).__name__}")
-        if not (isinstance(out[0], tuple) and isinstance(out[0][1], dict)):
-            raise AssertionError(
-                f"Expected (tuple, dict) structure, got ({type(out[0]).__name__}, {type(out[0][1]).__name__})"
-            )
+        assert isinstance(out, list)
+        assert isinstance(out[0], tuple) and isinstance(out[0][1], dict)
 
     @jacrev_and_jacfwd
     def test_multiple_inputs_outputs_pytree(self, device, jacapi):
@@ -2173,12 +2141,9 @@ class TestJac(VmapTearDownMixin, TestCase):
         z = jacapi(torch.multiply, argnums=(0, 1))(x, y)
         expected0 = torch.diagflat(y)
         expected1 = torch.diagflat(x)
-        if len(z) != 2:
-            raise AssertionError(f"Expected len(z) == 2, got {len(z)}")
-        if not torch.allclose(z[0], expected0):
-            raise AssertionError("torch.allclose failed: z[0] and expected0 differ")
-        if not torch.allclose(z[1], expected1):
-            raise AssertionError("torch.allclose failed: z[1] and expected1 differ")
+        assert len(z) == 2
+        assert torch.allclose(z[0], expected0)
+        assert torch.allclose(z[1], expected1)
 
     @jacrev_and_jacfwd
     def test_argnums_effect_on_return(self, device, jacapi):
@@ -2186,21 +2151,16 @@ class TestJac(VmapTearDownMixin, TestCase):
         y = torch.randn(3, device=device)
         z = jacapi(torch.multiply, argnums=(0,))(x, y)
         expected0 = torch.diagflat(y)
-        if not isinstance(z, tuple):
-            raise AssertionError(f"Expected tuple, got {type(z).__name__}")
-        if len(z) != 1:
-            raise AssertionError(f"Expected len(z) == 1, got {len(z)}")
-        if not torch.allclose(z[0], expected0):
-            raise AssertionError("torch.allclose failed: z[0] and expected0 differ")
+        assert isinstance(z, tuple)
+        assert len(z) == 1
+        assert torch.allclose(z[0], expected0)
 
         x = torch.randn(3, device=device)
         y = torch.randn(3, device=device)
         z = jacapi(torch.multiply, argnums=0)(x, y)
         expected0 = torch.diagflat(y)
-        if not isinstance(z, torch.Tensor):
-            raise AssertionError(f"Expected torch.Tensor, got {type(z).__name__}")
-        if not torch.allclose(z, expected0):
-            raise AssertionError("torch.allclose failed: z and expected0 differ")
+        assert isinstance(z, torch.Tensor)
+        assert torch.allclose(z, expected0)
 
     @jacrev_and_jacfwd
     def test_argnums_defaults_to_zero(self, device, jacapi):
@@ -2751,18 +2711,12 @@ class TestJvp(TestCase):
         # Check list output
         out = jvp(lambda x: [x, x.sum()], (x,), (t,))
         for i in range(2):
-            if not (isinstance(out[i], list) and len(out[i]) == 2):
-                raise AssertionError(
-                    f"Expected list of length 2, got {type(out[i]).__name__} of length {len(out[i])}"
-                )
+            assert isinstance(out[i], list) and len(out[i]) == 2
 
         # Check dict output
         out = jvp(lambda x: {"x": x, "xsum": x.sum()}, (x,), (t,))
         for i in range(2):
-            if not (isinstance(out[i], dict) and len(out[i]) == 2 and "xsum" in out[i]):
-                raise AssertionError(
-                    f"Expected dict of length 2 with 'xsum' key, got {type(out[i]).__name__}"
-                )
+            assert isinstance(out[i], dict) and len(out[i]) == 2 and "xsum" in out[i]
 
         def composite_output(x):
             out = x.sum()
@@ -2772,12 +2726,8 @@ class TestJvp(TestCase):
 
         out = jvp(composite_output, (x,), (t,))
         for i in range(2):
-            if not isinstance(out[i], list):
-                raise AssertionError(f"Expected list, got {type(out[i]).__name__}")
-            if not (isinstance(out[i][0], tuple) and isinstance(out[i][0][1], dict)):
-                raise AssertionError(
-                    f"Expected (tuple, dict) structure, got ({type(out[i][0]).__name__}, {type(out[i][0][1]).__name__})"
-                )
+            assert isinstance(out[i], list)
+            assert isinstance(out[i][0], tuple) and isinstance(out[i][0][1], dict)
 
     def test_aux_tensor(self, device):
         x = torch.randn(3, device=device)
@@ -3276,34 +3226,16 @@ class TestHelpers(TestCase):
                 ctx_y = CtxWithSavedTensors(ctx, (y,))
                 # Can't use self.assertEqual because that relies on TLS
                 # that is not available in multithread autograd
-                if len(ctx_y.saved_tensors) != 1:
-                    raise AssertionError(
-                        f"Expected len(ctx_y.saved_tensors) == 1, got {len(ctx_y.saved_tensors)}"
-                    )
-                if not torch.allclose(ctx_y.saved_tensors[0], y):
-                    raise AssertionError(
-                        "torch.allclose failed: ctx_y.saved_tensors[0] and y differ"
-                    )
+                assert len(ctx_y.saved_tensors) == 1
+                assert torch.allclose(ctx_y.saved_tensors[0], y)
 
                 wrapped = CtxWithSavedTensors(ctx_y, (z,))
 
-                if len(wrapped.saved_tensors) != 1:
-                    raise AssertionError(
-                        f"Expected len(wrapped.saved_tensors) == 1, got {len(wrapped.saved_tensors)}"
-                    )
-                if not torch.allclose(wrapped.saved_tensors[0], z):
-                    raise AssertionError(
-                        "torch.allclose failed: wrapped.saved_tensors[0] and z differ"
-                    )
+                assert len(wrapped.saved_tensors) == 1
+                assert torch.allclose(wrapped.saved_tensors[0], z)
 
-                if len(ctx_y.saved_tensors) != 1:
-                    raise AssertionError(
-                        f"Expected len(ctx_y.saved_tensors) == 1, got {len(ctx_y.saved_tensors)}"
-                    )
-                if not torch.allclose(ctx_y.saved_tensors[0], y):
-                    raise AssertionError(
-                        "torch.allclose failed: ctx_y.saved_tensors[0] and y differ"
-                    )
+                assert len(ctx_y.saved_tensors) == 1
+                assert torch.allclose(ctx_y.saved_tensors[0], y)
 
                 return gy * wrapped.saved_tensors[0]
 
@@ -3327,10 +3259,7 @@ class TestHelpers(TestCase):
                 wrapped = torch._functorch.autograd_function.CtxWithSavedTensors(
                     ctx, override
                 )
-                if wrapped.saved_tensors != override:
-                    raise AssertionError(
-                        f"Expected wrapped.saved_tensors == {override}, got {wrapped.saved_tensors}"
-                    )
+                assert wrapped.saved_tensors == override
                 return gy
 
         out = A.apply(x)
@@ -3354,21 +3283,11 @@ class TestHelpers(TestCase):
                     ctx, override
                 )
 
-                if wrapped.needs_input_grad[0] != ctx.needs_input_grad[0]:
-                    raise AssertionError(
-                        f"needs_input_grad[0] mismatch: wrapped={wrapped.needs_input_grad[0]}, ctx={ctx.needs_input_grad[0]}"
-                    )
-                if wrapped.needs_input_grad[1] != ctx.needs_input_grad[1]:
-                    raise AssertionError(
-                        f"needs_input_grad[1] mismatch: wrapped={wrapped.needs_input_grad[1]}, ctx={ctx.needs_input_grad[1]}"
-                    )
+                assert wrapped.needs_input_grad[0] == ctx.needs_input_grad[0]
+                assert wrapped.needs_input_grad[1] == ctx.needs_input_grad[1]
                 wrapped.foo = "bar"
-                if wrapped.foo != "bar":
-                    raise AssertionError(
-                        f"Expected wrapped.foo == 'bar', got {wrapped.foo!r}"
-                    )
-                if ctx.foo != "bar":
-                    raise AssertionError(f"Expected ctx.foo == 'bar', got {ctx.foo!r}")
+                assert wrapped.foo == "bar"
+                assert ctx.foo == "bar"
                 return gz, gz
 
         out = A.apply(x, y)
@@ -4127,10 +4046,7 @@ class TestMakeFunctional(TestCase):
             if mechanism == "make_functional":
                 return make_functional(mod)
             else:
-                if mechanism != "functional_call":
-                    raise AssertionError(
-                        f"Expected mechanism 'functional_call', got '{mechanism}'"
-                    )
+                assert mechanism == "functional_call"
                 return mod, dict(mod.named_parameters())
 
         mod = Net()
@@ -4148,10 +4064,7 @@ class TestMakeFunctional(TestCase):
         if mechanism == "make_functional":
             func_mod(params, x)
         else:
-            if mechanism != "functional_call":
-                raise AssertionError(
-                    f"Expected mechanism 'functional_call', got '{mechanism}'"
-                )
+            assert mechanism == "functional_call"
             functional_call(func_mod, params, x)
 
         mod = func_mod.stateless_model if mechanism == "make_functional" else func_mod
@@ -4171,10 +4084,7 @@ class TestExamplesCorrectness(TestCase):
         if mechanism == "make_functional":
             return [(params[i] - alpha * grads[i]) for i in range(len(params))]
         else:
-            if mechanism != "functional_call":
-                raise AssertionError(
-                    f"Expected mechanism 'functional_call', got '{mechanism}'"
-                )
+            assert mechanism == "functional_call"
             return {k: params[k] - alpha * grads[k] for k in params}
 
     @parametrize("mechanism", ["make_functional", "functional_call"])
@@ -4576,8 +4486,7 @@ class TestExamplesCorrectness(TestCase):
 
         weights0, spec0 = tree_flatten(weights0)
         weights1, spec1 = tree_flatten(weights1)
-        if spec0 != spec1:
-            raise AssertionError(f"Expected spec0 == spec1, got {spec0} != {spec1}")
+        assert spec0 == spec1
         expected_weights = tuple(
             torch.stack([w0, w1]) for w0, w1 in zip(weights0, weights1)
         )

@@ -77,7 +77,6 @@ __all__ = [
 
 # matches bfd8deac from resnet18-bfd8deac.pth
 HASH_REGEX = re.compile(r"-([a-f0-9]*)\.")
-_PATH_SEP_PATTERN = re.compile(r"[/\\]")
 
 _TRUSTED_REPO_OWNERS = (
     "facebookresearch",
@@ -125,48 +124,6 @@ def _remove_if_exists(path):
             os.remove(path)
         else:
             shutil.rmtree(path)
-
-
-def _safe_extract_zip(zip_file, extract_to):
-    """
-    Safely extract a zip file, preventing zipslip attacks.
-
-    Args:
-        zip_file: ZipFile object to extract
-        extract_to: Directory to extract to
-
-    Raises:
-        ValueError: If any archive entry contains unsafe paths
-    """
-    # Normalize the extraction directory path
-    extract_to = Path(extract_to).resolve(strict=False)
-
-    for member in zip_file.infolist():
-        # Get the normalized path
-        filename = os.path.normpath(member.filename)
-
-        # Check for directory traversal attempts
-        if filename.startswith(("/", "\\")):
-            raise ValueError(f"Archive entry has absolute path: {member.filename}")
-
-        if len(filename) >= 2 and filename[1] == ":" and filename[0].isalpha():
-            raise ValueError(f"Archive entry has absolute path: {member.filename}")
-
-        if ".." in re.split(_PATH_SEP_PATTERN, filename):
-            raise ValueError(
-                f"Archive entry contains directory traversal: {member.filename}"
-            )
-
-        # Construct the full extraction path and verify it's within extract_to
-        out = (extract_to / filename).resolve(strict=False)
-
-        if not out.is_relative_to(extract_to):
-            raise ValueError(
-                f"Archive entry escapes target directory: {member.filename}"
-            )
-
-        # Extract the member safely
-        zip_file.extract(member, extract_to)
 
 
 def _git_archive_link(repo_owner, repo_name, ref):
@@ -268,6 +225,7 @@ def _get_cache_or_reload(
     github,
     force_reload,
     trust_repo,
+    calling_fn,
     verbose=True,
     skip_validation=False,
 ):
@@ -293,6 +251,7 @@ def _get_cache_or_reload(
         repo_name,
         owner_name_branch,
         trust_repo=trust_repo,
+        calling_fn=calling_fn,
     )
 
     use_cache = (not force_reload) and os.path.exists(repo_dir)
@@ -337,8 +296,8 @@ def _get_cache_or_reload(
             extraced_repo_name = cached_zipfile.infolist()[0].filename
             extracted_repo = os.path.join(hub_dir, extraced_repo_name)
             _remove_if_exists(extracted_repo)
-            # Unzip the code and rename the base folder using safe extraction
-            _safe_extract_zip(cached_zipfile, hub_dir)
+            # Unzip the code and rename the base folder
+            cached_zipfile.extractall(hub_dir)
 
         _remove_if_exists(cached_file)
         _remove_if_exists(repo_dir)
@@ -352,6 +311,7 @@ def _check_repo_is_trusted(
     repo_name,
     owner_name_branch,
     trust_repo,
+    calling_fn="load",
 ):
     hub_dir = get_dir()
     filepath = os.path.join(hub_dir, "trusted_list")
@@ -371,6 +331,20 @@ def _check_repo_is_trusted(
         or owner_name_branch in trusted_repos_legacy
         or repo_owner in _TRUSTED_REPO_OWNERS
     )
+
+    # TODO: Remove `None` option in 2.0 and change the default to "check"
+    if trust_repo is None:
+        if not is_trusted:
+            warnings.warn(
+                "You are about to download and run code from an untrusted repository. In a future release, this won't "
+                f"be allowed. To add the repository to your trusted list, change the command to {calling_fn}(..., "
+                "trust_repo=False) and a command prompt will appear asking for an explicit confirmation of trust, "
+                f"or {calling_fn}(..., trust_repo=True), which will assume that the prompt is to be answered with "
+                f"'yes'. You can also use {calling_fn}(..., trust_repo='check') which will only prompt for "
+                f"confirmation if the repo is not already trusted. This will eventually be the default behaviour",
+                stacklevel=2,
+            )
+        return
 
     if (trust_repo is False) or (trust_repo == "check" and not is_trusted):
         response = input(
@@ -460,7 +434,7 @@ def list(
     github,
     force_reload=False,
     skip_validation=False,
-    trust_repo="check",
+    trust_repo=None,
     verbose=True,
 ):
     r"""
@@ -477,7 +451,7 @@ def list(
             specified by the ``github`` argument properly belongs to the repo owner. This will make
             requests to the GitHub API; you can specify a non-default GitHub token by setting the
             ``GITHUB_TOKEN`` environment variable. Default is ``False``.
-        trust_repo (bool or str): ``"check"``, ``True`` or ``False``.
+        trust_repo (bool, str or None): ``"check"``, ``True``, ``False`` or ``None``.
             This parameter was introduced in v1.12 and helps ensuring that users
             only run code from repos that they trust.
 
@@ -488,8 +462,12 @@ def list(
             - If ``"check"``, the repo will be checked against the list of
               trusted repos in the cache. If it is not present in that list, the
               behaviour will fall back onto the ``trust_repo=False`` option.
+            - If ``None``: this will raise a warning, inviting the user to set
+              ``trust_repo`` to either ``False``, ``True`` or ``"check"``. This
+              is only present for backward compatibility and will be removed in
+              v2.0.
 
-            Default is ``"check"``.
+            Default is ``None`` and will eventually change to ``"check"`` in v2.0.
         verbose (bool, optional): If ``False``, mute messages about hitting
             local caches. Note that the message about first download cannot be
             muted. Default is ``True``.
@@ -505,6 +483,7 @@ def list(
         github,
         force_reload,
         trust_repo,
+        "list",
         verbose=verbose,
         skip_validation=skip_validation,
     )
@@ -523,7 +502,7 @@ def list(
     return entrypoints
 
 
-def help(github, model, force_reload=False, skip_validation=False, trust_repo="check"):
+def help(github, model, force_reload=False, skip_validation=False, trust_repo=None):
     r"""
     Show the docstring of entrypoint ``model``.
 
@@ -539,7 +518,7 @@ def help(github, model, force_reload=False, skip_validation=False, trust_repo="c
             specified by the ``github`` argument properly belongs to the repo owner. This will make
             requests to the GitHub API; you can specify a non-default GitHub token by setting the
             ``GITHUB_TOKEN`` environment variable. Default is ``False``.
-        trust_repo (bool or str): ``"check"``, ``True`` or ``False``.
+        trust_repo (bool, str or None): ``"check"``, ``True``, ``False`` or ``None``.
             This parameter was introduced in v1.12 and helps ensuring that users
             only run code from repos that they trust.
 
@@ -550,8 +529,12 @@ def help(github, model, force_reload=False, skip_validation=False, trust_repo="c
             - If ``"check"``, the repo will be checked against the list of
               trusted repos in the cache. If it is not present in that list, the
               behaviour will fall back onto the ``trust_repo=False`` option.
+            - If ``None``: this will raise a warning, inviting the user to set
+              ``trust_repo`` to either ``False``, ``True`` or ``"check"``. This
+              is only present for backward compatibility and will be removed in
+              v2.0.
 
-            Default is ``"check"``.
+            Default is ``None`` and will eventually change to ``"check"`` in v2.0.
     Example:
         >>> # xdoctest: +REQUIRES(env:TORCH_DOCTEST_HUB)
         >>> print(torch.hub.help("pytorch/vision", "resnet18", force_reload=True))
@@ -560,6 +543,7 @@ def help(github, model, force_reload=False, skip_validation=False, trust_repo="c
         github,
         force_reload,
         trust_repo,
+        "help",
         verbose=True,
         skip_validation=skip_validation,
     )
@@ -578,7 +562,7 @@ def load(
     model,
     *args,
     source="github",
-    trust_repo="check",
+    trust_repo=None,
     force_reload=False,
     verbose=True,
     skip_validation=False,
@@ -608,7 +592,7 @@ def load(
         *args (optional): the corresponding args for callable ``model``.
         source (str, optional): 'github' or 'local'. Specifies how
             ``repo_or_dir`` is to be interpreted. Default is 'github'.
-        trust_repo (bool or str): ``"check"``, ``True`` or ``False``.
+        trust_repo (bool, str or None): ``"check"``, ``True``, ``False`` or ``None``.
             This parameter was introduced in v1.12 and helps ensuring that users
             only run code from repos that they trust.
 
@@ -619,8 +603,12 @@ def load(
             - If ``"check"``, the repo will be checked against the list of
               trusted repos in the cache. If it is not present in that list, the
               behaviour will fall back onto the ``trust_repo=False`` option.
+            - If ``None``: this will raise a warning, inviting the user to set
+              ``trust_repo`` to either ``False``, ``True`` or ``"check"``. This
+              is only present for backward compatibility and will be removed in
+              v2.0.
 
-            Default is ``"check"``.
+            Default is ``None`` and will eventually change to ``"check"`` in v2.0.
         force_reload (bool, optional): whether to force a fresh download of
             the github repo unconditionally. Does not have any effect if
             ``source = 'local'``. Default is ``False``.
@@ -662,6 +650,7 @@ def load(
             repo_or_dir,
             force_reload,
             trust_repo,
+            "load",
             verbose=verbose,
             skip_validation=skip_validation,
         )
@@ -817,8 +806,7 @@ def _legacy_zip_load(
         members = f.infolist()
         if len(members) != 1:
             raise RuntimeError("Only one file(not dir) is allowed in the zipfile")
-        # Use safe extraction to prevent zipslip attacks
-        _safe_extract_zip(f, model_dir)
+        f.extractall(model_dir)
         extraced_name = members[0].filename
         extracted_file = os.path.join(model_dir, extraced_name)
     return torch.load(

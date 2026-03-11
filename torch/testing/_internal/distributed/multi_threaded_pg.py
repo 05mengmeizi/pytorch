@@ -5,6 +5,7 @@ import threading
 import weakref
 from dataclasses import dataclass
 from functools import partial, reduce
+from typing import Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -131,17 +132,14 @@ class AllToAllBase:
     def _size_cumsum(
         self,
         buf_size: int,
-        sizes: torch.Tensor | list[int] | None,
+        sizes: Union[torch.Tensor, list[int], None],
         world_size: int,
     ) -> torch.Tensor:
         if sizes is None or len(sizes) == 0:
             sizes = torch.full((world_size,), buf_size // world_size, dtype=torch.int64)
         if not isinstance(sizes, torch.Tensor):
             sizes = torch.tensor(sizes, dtype=torch.int64)
-        if sizes.dtype != torch.int64:
-            raise AssertionError(
-                f"Expected sizes.dtype == torch.int64, got {sizes.dtype}"
-            )
+        assert sizes.dtype == torch.int64
         sizes = torch.cumsum(
             torch.cat(
                 (torch.tensor([0], dtype=torch.int64, device=sizes.device), sizes),
@@ -186,10 +184,7 @@ class AllGather:
         for src_rank in range(len(data)):
             in_tensor_list = data[src_rank][1]
             # Can't handle all_gather with multiple tensors
-            if len(in_tensor_list) != 1:
-                raise AssertionError(
-                    f"Can't handle all_gather with multiple tensors, got {len(in_tensor_list)}"
-                )
+            assert len(in_tensor_list) == 1
             src_tensor = in_tensor_list[0]
 
             for dest in data:
@@ -206,19 +201,13 @@ class Scatter:
     def work(self, data):
         src_in_tensor_list = data[self.src][1]
         # Can't handle scatter with multiple input tensor list
-        if len(src_in_tensor_list) != 1:
-            raise AssertionError(
-                f"Can't handle scatter with multiple input tensor list, got {len(src_in_tensor_list)}"
-            )
+        assert len(src_in_tensor_list) == 1
         src_in_tensors = src_in_tensor_list[0]
 
         for rank, each_rank_data in enumerate(data):
             out_tensor_list = each_rank_data[0]
             # Can't handle scatter with multiple output tensor
-            if len(out_tensor_list) != 1:
-                raise AssertionError(
-                    f"Can't handle scatter with multiple output tensor, got {len(out_tensor_list)}"
-                )
+            assert len(out_tensor_list) == 1
             dest_tensor = out_tensor_list[0]
             # See Note [Hide collectives mutation from autograd]
             dest_tensor.detach().copy_(src_in_tensors[rank])
@@ -231,18 +220,12 @@ class Gather:
     @torch.no_grad()
     def work(self, data):
         # Can't handle gather with multiple tensor lists
-        if len(data[self.dst][0]) != 1:
-            raise AssertionError(
-                f"Can't handle gather with multiple tensor lists, got {len(data[self.dst][0])}"
-            )
+        assert len(data[self.dst][0]) == 1
         out_tensor_list = data[self.dst][0][0]
         for rank, each_rank_data in enumerate(data):
             src_in_tensor_list = each_rank_data[1]
             # Can't handle gather with multiple tensor lists
-            if len(src_in_tensor_list) != 1:
-                raise AssertionError(
-                    f"Can't handle gather with multiple tensor lists, got {len(src_in_tensor_list)}"
-                )
+            assert len(src_in_tensor_list) == 1
             dest_tensor = out_tensor_list[rank]
             # See Note [Hide collectives mutation from autograd]
             dest_tensor.detach().copy_(src_in_tensor_list[0])
@@ -259,18 +242,12 @@ class ReduceScatter:
         start_reduction = [False for _ in range(len(data))]
         for each_rank_data in data:
             # Can't handle reduce_scatter with multiple scatter list
-            if len(each_rank_data[1]) != 1:
-                raise AssertionError(
-                    f"Can't handle reduce_scatter with multiple scatter list, got {len(each_rank_data[1])}"
-                )
+            assert len(each_rank_data[1]) == 1
             to_scatter = each_rank_data[1][0]
             for i in range(len(to_scatter)):
                 dest_tensor_on_rank_i = data[i][0]
                 # Can't handle reduce_scatter with multiple output tensor
-                if len(dest_tensor_on_rank_i) != 1:
-                    raise AssertionError(
-                        f"Can't handle reduce_scatter with multiple output tensor, got {len(dest_tensor_on_rank_i)}"
-                    )
+                assert len(dest_tensor_on_rank_i) == 1
                 dst_tensor_device = dest_tensor_on_rank_i[0].device
                 if not start_reduction[i]:
                     # See Note [Hide collectives mutation from autograd]
@@ -402,8 +379,8 @@ class ProcessLocalGroup(dist.ProcessGroup):
         self,
         output_buffer: torch.Tensor,
         input_buffer: torch.Tensor,
-        output_split_sizes: list[int] | None,
-        input_split_sizes: list[int] | None,
+        output_split_sizes: Optional[list[int]],
+        input_split_sizes: Optional[list[int]],
         opts=AllToAllOptions(),
     ) -> torch.Tensor:
         coll = ProcessLocalGroup._start_coll(AllToAllBase(), self)
@@ -551,15 +528,14 @@ dist.Backend.register_backend("threaded", _create_threaded_pg, devices=["cpu", "
 @dataclass
 class WorldData:
     default_pg: dist.ProcessGroup
-    pg_map: dict[dist.ProcessGroup, tuple[str, Store | None]]
+    pg_map: dict[dist.ProcessGroup, tuple[str, Optional[Store]]]
     pg_names: dict[dist.ProcessGroup, str]
     pg_group_ranks: dict[dist.ProcessGroup, dict[int, int]]
     pg_backend_config: dict[dist.ProcessGroup, str]
     group_count: int
     tags_to_pg: dict[str, list[dist.ProcessGroup]]
     pg_to_tag: dict[dist.ProcessGroup, str]
-    pg_coalesce_state: dict[dist.ProcessGroup, list[_CollOp | P2POp]]
-    comms: list
+    pg_coalesce_state: dict[dist.ProcessGroup, list[Union[_CollOp, P2POp]]]
 
 
 class ThreadLocalWorld:
@@ -568,7 +544,7 @@ class ThreadLocalWorld:
     def _get_world(self) -> WorldData:
         if not hasattr(ThreadLocalWorld._world, "world"):
             ThreadLocalWorld._world.world = WorldData(
-                None, {}, {}, {}, {}, 0, {}, {}, {}, []
+                None, {}, {}, {}, {}, 0, {}, {}, {}
             )
         return ThreadLocalWorld._world.world
 
@@ -613,12 +589,8 @@ class ThreadLocalWorld:
         return self._get_world().pg_to_tag
 
     @property
-    def pg_coalesce_state(self) -> dict[dist.ProcessGroup, list[_CollOp | P2POp]]:
+    def pg_coalesce_state(self) -> dict[dist.ProcessGroup, list[Union[_CollOp, P2POp]]]:
         return self._get_world().pg_coalesce_state
-
-    @property
-    def comms(self):
-        return self._get_world().comms
 
 
 _old_pg_world = None
@@ -636,9 +608,4 @@ def _install_threaded_pg():
 
 
 def _uninstall_threaded_pg():
-    global _ctx_manager
     dist.distributed_c10d._world = _old_pg_world
-    # Restore autograd multithreading state that was disabled in _install_threaded_pg
-    if _ctx_manager is not None:
-        _ctx_manager.__exit__(None, None, None)
-        _ctx_manager = None

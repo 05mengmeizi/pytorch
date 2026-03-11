@@ -234,10 +234,7 @@ def benchmark(
     if inp_file is not None:
         loader = OperatorInputsLoader(inp_file)
     else:
-        if suite not in ("timm", "huggingface", "torchbench"):
-            raise AssertionError(
-                f"suite must be one of 'timm', 'huggingface', 'torchbench', but got '{suite}'"
-            )
+        assert suite in ("timm", "huggingface", "torchbench"), f"got {suite}"
         if suite == "timm":
             loader = OperatorInputsLoader.get_timm_loader()
         elif suite == "huggingface":
@@ -245,8 +242,7 @@ def benchmark(
         else:
             loader = OperatorInputsLoader.get_torchbench_loader()
 
-    if dtype not in ("float16", "float32"):
-        raise AssertionError(f"dtype must be 'float16' or 'float32', but got '{dtype}'")
+    assert dtype in ("float16", "float32"), f"got {dtype}"
 
     inductor_configs = [{}]
     backend_names = ["inductor"]
@@ -359,10 +355,7 @@ def benchmark(
         ]
         if compare2:
             speedups.append(quantiles(timings[:, 1] / timings[:, 2]))
-        if len(backend_names) != len(speedups):
-            raise AssertionError(
-                f"Expected {len(backend_names)} speedups for {len(backend_names)} backends, but got {len(speedups)}"
-            )
+        assert len(backend_names) == len(speedups)
 
         row = [f"{operator}"]
         sys.stdout.write(f"{operator}: ")

@@ -132,7 +132,6 @@ __all__ = [
     "sym_min",
     "sym_not",
     "sym_sum",
-    "thread_safe_generator",
     "typename",
     "unravel_index",
     "use_deterministic_algorithms",
@@ -327,11 +326,6 @@ def _preload_cuda_lib(lib_folder: str, lib_name: str, required: bool = True) -> 
 
 def _preload_cuda_deps(err: OSError | None = None) -> None:
     cuda_libs: list[tuple[str, str]] = [
-        # NOTE: Order matters! We must preload libcublasLt BEFORE libcublas to prevent
-        # libcublas from loading a mismatched system-wide libcublasLt via its RUNPATH.
-        # Without this, if a different CUDA Toolkit version exists in the system PATH,
-        # libcublas may load the wrong libcublasLt, causing symbol errors or runtime failures.
-        ("cublas", "libcublasLt.so.*[0-9]"),
         ("cublas", "libcublas.so.*[0-9]"),
         ("cudnn", "libcudnn.so.*[0-9]"),
         ("cuda_nvrtc", "libnvrtc.so.*[0-9]"),
@@ -954,17 +948,11 @@ def sym_min(a, b):
         return builtins.min(a, b)  # type: ignore[call-overload]
 
 
-def sym_sum(*args):
+def sym_sum(args):
     """
     N-ary add which is faster to compute for long lists than iterated binary
     addition.  Only does something special for integers.
-
-    Accepts both ``sym_sum([a, b, c])`` and ``sym_sum(a, b, c)``.
     """
-    # Normalise: accept both sym_sum([a, b, c]) and sym_sum(a, b, c).
-    if len(args) == 1 and isinstance(args[0], (list, tuple)):
-        args = args[0]
-
     if overrides.has_torch_function(args):
         return overrides.handle_torch_function(sym_sum, args, args)
 
@@ -2151,14 +2139,7 @@ _tensor_classes: set[type["torch.Tensor"]] = set()
 from torch import amp as amp, random as random, serialization as serialization
 from torch._tensor_str import set_printoptions
 from torch.amp import autocast, GradScaler
-from torch.random import (
-    get_rng_state,
-    initial_seed,
-    manual_seed,
-    seed,
-    set_rng_state,
-    thread_safe_generator,
-)
+from torch.random import get_rng_state, initial_seed, manual_seed, seed, set_rng_state
 from torch.serialization import load, save
 
 
@@ -2469,11 +2450,10 @@ class _TorchCompileInductorWrapper:
                     )
             self.config[attr_name] = val
 
-    def __call__(self, model_, inputs_, *, config_patches=None):
+    def __call__(self, model_, inputs_):
         from torch._inductor.compile_fx import compile_fx
 
-        all_patches = {**self.config, **(config_patches or {})}
-        return compile_fx(model_, inputs_, config_patches=all_patches)
+        return compile_fx(model_, inputs_, config_patches=self.config)
 
     def get_compiler_config(self):
         from torch._inductor.compile_fx import get_patched_config_dict
@@ -2498,7 +2478,7 @@ class _TorchCompileAOTInductorWrapper(_TorchCompileInductorWrapper):
         self.apply_options({"cpp_wrapper": True})
         self.apply_options({"aot_inductor.package": True})
 
-    def __call__(self, model_, inputs_, *, config_patches=None):
+    def __call__(self, model_, inputs_):
         from contextlib import nullcontext
         from unittest import mock
 
@@ -2516,7 +2496,7 @@ class _TorchCompileAOTInductorWrapper(_TorchCompileInductorWrapper):
             ctx,
             torch._inductor.config.patch("enable_autograd_for_aot", True),
         ):
-            return super().__call__(model_, inputs_, config_patches=config_patches)
+            return super().__call__(model_, inputs_)
 
 
 class _TorchCompileWrapper:
@@ -2646,7 +2626,7 @@ def compile(
           usage, as we will cache the workspace memory required for the invocation so that we
           do not have to reallocate it on subsequent runs.  Reduction of overhead is not guaranteed
           to work; today, we only reduce overhead for CUDA only graphs which do not mutate inputs.
-          There are other circumstances where CUDA graphs are not applicable; use TORCH_LOGS=perf_hints
+          There are other circumstances where CUDA graphs are not applicable; use TORCH_LOG=perf_hints
           to debug.
 
         - "max-autotune" is a mode that leverages Triton or template based matrix multiplications
@@ -2997,14 +2977,12 @@ def _as_tensor_fullprec(t):
     """
     Like torch.as_tensor, but when given Python data types it will keep
     them in full precision.  Used for calling convention for Dynamo.
-    Python scalars (float, int) are always created on CPU to avoid being
-    affected by DeviceContext.
     """
     ty = type(t)
     if ty is builtins.float:
-        return torch.as_tensor(t, dtype=torch.float64, device="cpu")
+        return torch.as_tensor(t, dtype=torch.float64)
     elif ty is builtins.int:
-        return torch.as_tensor(t, dtype=torch.int64, device="cpu")
+        return torch.as_tensor(t, dtype=torch.int64)
     else:
         return torch.as_tensor(t)
 
@@ -3014,6 +2992,3 @@ def _as_tensor_fullprec(t):
 # an autoloaded backend are defined
 if _is_device_backend_autoload_enabled():
     _import_device_backends()
-
-# Register all registered custom / override ops in torch/_native
-import torch._native

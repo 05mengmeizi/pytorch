@@ -8,7 +8,7 @@ import platform
 import timeit
 from collections import namedtuple
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Optional
 
 import benchmark_utils
 
@@ -121,8 +121,7 @@ def _build_test(
             raise ValueError("Missing tags in configs")
 
         op = bench_op()
-        if op is None:
-            raise AssertionError("Can't create test: bench_op() returned None")
+        assert op is not None, "Can't create test"
         # op_name_function is a dictionary which has op_name and op_function.
         # an example of op_name_function is:
         # {'op_name' : 'abs', 'op_function' : torch.abs}
@@ -309,10 +308,9 @@ class BenchmarkRunner:
                 if c in open_to_close:
                     curr_brackets.append(c)
                 elif c in open_to_close.values():
-                    if not curr_brackets or open_to_close[curr_brackets[-1]] != c:
-                        raise AssertionError(
-                            f"ERROR: not able to parse the string! Mismatched bracket '{c}'"
-                        )
+                    assert curr_brackets and open_to_close[curr_brackets[-1]] == c, (
+                        "ERROR: not able to parse the string!"
+                    )
                     curr_brackets.pop()
                 elif c == "," and (not curr_brackets):
                     break_idxs.append(i)
@@ -598,7 +596,7 @@ class BenchmarkRunner:
             @dataclass
             class BenchmarkInfo:
                 name: str
-                mode: str | None
+                mode: Optional[str]
                 dtype: str
                 extra_info: dict[str, Any]
 
@@ -614,7 +612,7 @@ class BenchmarkRunner:
                 name: str
                 unit: str
                 benchmark_values: list[float]
-                target_value: float | None
+                target_value: Optional[float]
 
             @dataclass
             class BenchmarkRecord:

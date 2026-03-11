@@ -1,5 +1,6 @@
 # mypy: allow-untyped-defs
 import functools
+from typing import Optional, Union
 
 import torch
 import torch.utils._pytree as pytree
@@ -37,9 +38,9 @@ def create_int8_compensation(
 ) -> tuple[
     bool,
     ir.TensorBox,
-    ir.TensorBox | None,
+    Optional[ir.TensorBox],
 ]:
-    x_w_scale: ir.TensorBox | None = None
+    x_w_scale: Optional[ir.TensorBox] = None
     use_int8_fast_compensation_path = all(
         isinstance(item, ir.TensorBox)
         and item.get_name() in V.graph.constants
@@ -80,10 +81,10 @@ def codegen_int8_gemm_template_compensation(
     use_int8_fast_compensation_path: bool,
     input: OpsValue,
     _weight_compo: OpsValue,
-    _x_scale: OpsValue | None,
-    _x_zp: OpsValue | None,
-    _w_scale: OpsValue | None,
-    _x_w_scale: OpsValue | None,
+    _x_scale: Optional[OpsValue],
+    _x_zp: Optional[OpsValue],
+    _w_scale: Optional[OpsValue],
+    _x_w_scale: Optional[OpsValue],
 ) -> OpsValue:
     if use_int8_fast_compensation_path:
         temp = ops.sub(
@@ -223,7 +224,7 @@ def register_onednn_fusion_ops():
             kernel_creator=mkldnn_ir.QLinearPointwiseBinaryPT2E.create,
         )
         cpu_needs_realized_inputs: list[
-            torch._ops.OpOverload | torch._ops.OpOverloadPacket
+            Union[torch._ops.OpOverload, torch._ops.OpOverloadPacket]
         ] = [
             torch.ops.mkldnn._convolution_pointwise,
             torch.ops.mkldnn._convolution_pointwise_,
@@ -427,7 +428,7 @@ def register_onednn_fusion_ops():
                         "epilogue_creator": epilogue_creator,
                     }
 
-                    # pyrefly: ignore [bad-typed-dict-key, unsupported-operation]
+                    # pyrefly: ignore [unsupported-operation]
                     kwargs["input_indices"] = [0, 2, 1] if b is None else [3, 0, 2, 1]
                     CppGemmTemplate.add_choices(
                         choices,
@@ -1349,7 +1350,7 @@ def register_onednn_fusion_ops():
                 x: TensorBox,
                 packed_w: TensorBox,
                 orig_w: TensorBox,
-                b: TensorBox | None,
+                b: Optional[TensorBox],
                 batch_size,
                 *,
                 layout=None,

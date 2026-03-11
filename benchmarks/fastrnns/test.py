@@ -63,14 +63,10 @@ def test_rnns(
     assertEqual(experim_outputs, control_outputs)
 
     print("Checking grads...")
-    if control.backward_setup is None:
-        raise AssertionError("control.backward_setup must not be None")
-    if experiment.backward_setup is None:
-        raise AssertionError("experiment.backward_setup must not be None")
-    if control.backward is None:
-        raise AssertionError("control.backward must not be None")
-    if experiment.backward is None:
-        raise AssertionError("experiment.backward must not be None")
+    assert control.backward_setup is not None
+    assert experiment.backward_setup is not None
+    assert control.backward is not None
+    assert experiment.backward is not None
     control_backward_inputs = control.backward_setup(control_outputs, seed)
     experim_backward_inputs = experiment.backward_setup(experim_outputs, seed)
 
@@ -125,14 +121,10 @@ def test_vl_py(**test_args):
         assertEqual(torch.cat(experim_cx, dim=1), control_cx)
 
         print("Checking grads...")
-        if control.backward_setup is None:
-            raise AssertionError("control.backward_setup must not be None")
-        if experiment.backward_setup is None:
-            raise AssertionError("experiment.backward_setup must not be None")
-        if control.backward is None:
-            raise AssertionError("control.backward must not be None")
-        if experiment.backward is None:
-            raise AssertionError("experiment.backward must not be None")
+        assert control.backward_setup is not None
+        assert experiment.backward_setup is not None
+        assert control.backward is not None
+        assert experiment.backward is not None
         control_backward_inputs = control.backward_setup(
             (control_out, control_hiddens), test_args["seed"]
         )
@@ -172,10 +164,7 @@ if __name__ == "__main__":
     print(args)
 
     if "cuda" in args.device:
-        if not torch.cuda.is_available():
-            raise AssertionError(
-                f"CUDA device requested ({args.device}) but CUDA is not available"
-            )
+        assert torch.cuda.is_available()
 
     rnn_runners = get_nn_runners(*args.rnns)
 

@@ -357,7 +357,6 @@ These backends include:
 ```{eval-rst}
 .. py:module:: torch.backends.kleidiai
 
-.. autofunction:: torch.backends.kleidiai.is_available
 ```
 
 ## torch.backends.opt_einsum

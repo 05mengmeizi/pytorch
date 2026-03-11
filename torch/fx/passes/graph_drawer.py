@@ -3,7 +3,7 @@
 import hashlib
 from itertools import chain
 from types import ModuleType
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 import torch
 import torch.fx
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     HAS_PYDOT = True
 else:
-    pydot: ModuleType | None
+    pydot: Optional[ModuleType]
     try:
         import pydot
 
@@ -83,7 +83,7 @@ if HAS_PYDOT:
             ignore_parameters_and_buffers: bool = False,
             skip_node_names_in_args: bool = True,
             parse_stack_trace: bool = False,
-            dot_graph_shape: str | None = None,
+            dot_graph_shape: Optional[str] = None,
             normalize_args: bool = False,
         ):
             self._name = name
@@ -187,8 +187,7 @@ if HAS_PYDOT:
             self, module: torch.nn.Module, node: torch.fx.Node
         ) -> torch.nn.Module:
             py_obj = module
-            if not isinstance(node.target, str):
-                raise AssertionError(f"Expected str target, got {type(node.target)}")
+            assert isinstance(node.target, str)
             atoms = node.target.split(".")
             for atom in atoms:
                 if not hasattr(py_obj, atom):
@@ -343,10 +342,8 @@ if HAS_PYDOT:
             result += "|" + "requires_grad" + "=" + str(tm.requires_grad) + r"\n"
             result += "|" + "stride" + "=" + str(tm.stride) + r"\n"
             if tm.is_quantized:
-                if tm.qparams is None:
-                    raise AssertionError("qparams is None for quantized tensor")
-                if "qscheme" not in tm.qparams:
-                    raise AssertionError("qscheme not in qparams")
+                assert tm.qparams is not None
+                assert "qscheme" in tm.qparams
                 qscheme = tm.qparams["qscheme"]
                 if qscheme in {
                     torch.per_tensor_affine,
@@ -498,7 +495,7 @@ else:
                 ignore_parameters_and_buffers: bool = False,
                 skip_node_names_in_args: bool = True,
                 parse_stack_trace: bool = False,
-                dot_graph_shape: str | None = None,
+                dot_graph_shape: Optional[str] = None,
                 normalize_args: bool = False,
             ):
                 raise RuntimeError(
