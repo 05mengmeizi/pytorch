@@ -1785,7 +1785,7 @@ test_linux_aarch64() {
        inductor/test_split_cat_fx_passes inductor/test_compile inductor/test_torchinductor \
        inductor/test_torchinductor_codegen_dynamic_shapes inductor/test_torchinductor_dynamic_shapes inductor/test_memory \
        inductor/test_triton_cpu_backend inductor/test_triton_extension_backend inductor/test_mkldnn_pattern_matcher inductor/test_cpu_cpp_wrapper \
-       inductor/test_cpu_select_algorithm \
+       inductor/test_cpu_select_algorithm inductor/test_cpu_repro \
        --shard "$SHARD_NUMBER" "$NUM_TEST_SHARDS" --verbose
 }
 
@@ -1851,6 +1851,7 @@ test_attention_microbenchmark() {
 }
 
 test_openreg() {
+  git submodule update --init --depth 1 third_party/googletest
   python test/run_test.py --openreg --verbose
   assert_git_not_dirty
 }
@@ -1885,6 +1886,9 @@ elif [[ "$TEST_CONFIG" == *vllm* ]]; then
     (cd .ci/lumen_cli && python -m pip install -e .)
 
     python -m cli.run test external vllm --test-plan "$TEST_CONFIG" --shard-id "$SHARD_NUMBER" --num-shards "$NUM_TEST_SHARDS"
+elif [[ "$TEST_CONFIG" == *torchtitan* ]]; then
+    (cd .ci/lumen_cli && python -m pip install -e .)
+    python -m cli.run test external torchtitan --test-plan "$TEST_CONFIG" --shard-id "$SHARD_NUMBER" --num-shards "$NUM_TEST_SHARDS"
 elif [[ "${TEST_CONFIG}" == *executorch* ]]; then
   test_executorch
 elif [[ "$TEST_CONFIG" == 'jit_legacy' ]]; then
