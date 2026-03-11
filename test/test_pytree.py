@@ -1,8 +1,10 @@
 # Owner(s): ["module: pytree"]
 
+import copy
 import enum
 import inspect
 import os
+import pickle
 import re
 import subprocess
 import sys
@@ -817,6 +819,38 @@ class TestGenericPytree(TestCase):
         deserialized_spec = pytree.treespec_loads(serialized)
         self.assertEqual(spec, deserialized_spec)
 
+    @parametrize_pytree_module
+    def test_treespec_deepcopy_roundtrip(self, pytree):
+        cases = [
+            1,
+            (1, 2),
+            [1, 2, 3],
+            {"a": 1, "b": 2},
+            (1, [2, {"a": 3}]),
+            {"a": [1, 2], "b": (3, 4)},
+        ]
+
+        for tree in cases:
+            treespec = pytree.tree_structure(tree)
+            reconstructed = copy.deepcopy(treespec)
+            self.assertEqual(treespec, reconstructed)
+
+    @parametrize_pytree_module
+    def test_treespec_pickle_roundtrip(self, pytree):
+        cases = [
+            1,
+            (1, 2),
+            [1, 2, 3],
+            {"a": 1, "b": 2},
+            (1, [2, {"a": 3}]),
+            {"a": [1, 2], "b": (3, 4)},
+        ]
+
+        for tree in cases:
+            treespec = pytree.tree_structure(tree)
+            reconstructed = pickle.loads(pickle.dumps(treespec))
+            self.assertEqual(treespec, reconstructed)
+
 
 class TestPythonPytree(TestCase):
     def test_deprecated_register_pytree_node(self):
@@ -891,31 +925,6 @@ if "optree" in sys.modules:
             python_pytree.TreeSpec(tuple, None, [])
             != python_pytree.TreeSpec(list, None, []),
         )
-
-    def test_treespec_leaf_deepcopy(self):
-        # Regression test: on Python 3.10.0, frozen+slots dataclasses with
-        # init=False fields and simple defaults (default=None) don't populate
-        # the slots, so copy.deepcopy calls _dataclass_getstate which hits
-        # an uninitialized slot and raises AttributeError.
-        import copy
-
-        spec = python_pytree.treespec_leaf()
-        self.assertTrue(spec.is_leaf())
-        copy.deepcopy(spec)
-
-    def test_leafspec_post_init_initializes_all_slots(self):
-        # Simulate previous failure by bypassing __init__ with
-        # object.__new__ and verify __post_init__ initializes all fields
-        import dataclasses
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            spec = object.__new__(python_pytree.LeafSpec)
-        object.__setattr__(spec, "_children", [])
-        spec.__post_init__()
-        for f in dataclasses.fields(spec):
-            getattr(spec, f.name)
 
     def test_treespec_repr(self):
         # Check that it looks sane
