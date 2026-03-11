@@ -271,6 +271,12 @@ class PallasKernelOverrides(OpOverrides):
         src_dtype: torch.dtype | None = None,
         use_compute_types: bool = True,
     ) -> str:
+        # TPU does not support 64-bit types; downcast to 32-bit
+        if V.graph.get_current_device_or_throw().type == "tpu":
+            if dtype == torch.int64:
+                dtype = torch.int32
+            elif dtype == torch.float64:
+                dtype = torch.float32
         jax_dtype = torch_dtype_to_jax(dtype)
         # Wrap in jnp.asarray to handle scalars from integer indexing
         return f"jnp.asarray({x}).astype({jax_dtype})"
@@ -303,6 +309,12 @@ class PallasKernelOverrides(OpOverrides):
     @staticmethod
     def constant(val, dtype: torch.dtype) -> str:
         """Convert a constant value to JAX representation."""
+        # TPU does not support 64-bit types; downcast to 32-bit
+        if V.graph.get_current_device_or_throw().type == "tpu":
+            if dtype == torch.int64:
+                dtype = torch.int32
+            elif dtype == torch.float64:
+                dtype = torch.float32
         jax_dtype = torch_dtype_to_jax(dtype)
         if dtype == torch.bool:
             return "True" if val else "False"
@@ -804,9 +816,11 @@ class PallasKernelOverrides(OpOverrides):
     def randint64(seed: str, offset: str, low: str, high: str) -> str:
         """Generate random int64 values in [low, high)."""
         # For vectorized random, use vmap to fold in each offset value
+        # TPU does not support int64; use int32 instead
+        int_dtype = "jnp.int32" if V.graph.get_current_device_or_throw().type == "tpu" else "jnp.int64"
         return (
             f"jax.vmap(lambda o: jax.random.randint("
-            f"jax.random.fold_in(jax.random.PRNGKey(jnp.uint32({seed})), jnp.uint32(o)), (), {low}, {high}, dtype=jnp.int64))"
+            f"jax.random.fold_in(jax.random.PRNGKey(jnp.uint32({seed})), jnp.uint32(o)), (), {low}, {high}, dtype={int_dtype}))"
             f"(jnp.asarray({offset}).flatten()).reshape(jnp.asarray({offset}).shape)"
         )
 
@@ -2027,7 +2041,9 @@ class PallasKernel(SIMDKernel):
             self.flatten_indexed_buffers.add(name)
             # Flatten then index for non-contiguous access (gather operation)
             has_minmax = index.has(sympy.Min) or index.has(sympy.Max)
-            idx = f"({index_str}).astype(jnp.int64)" if has_minmax else index_str
+            # TPU does not support int64; use int32 for gather indices
+            int_dtype = "jnp.int32" if V.graph.get_current_device_or_throw().type == "tpu" else "jnp.int64"
+            idx = f"({index_str}).astype({int_dtype})" if has_minmax else index_str
             return f"{buf}[...].flatten()[{idx}]"
         else:
             # Direct indexing for contiguous access

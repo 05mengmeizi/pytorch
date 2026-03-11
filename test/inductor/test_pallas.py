@@ -1221,7 +1221,7 @@ class PallasTestsMixin:
 
     @skip_if_cuda
     def test_stack_then_reshape(self):
-        """Test Rotary Position Embedding with interleaved halves.
+        """Test a stack + reshape pattern.
 
         Uses even/odd stride-2 slicing instead of contiguous halves, then
         reassembles via stack + reshape. Exercises strided input access.
