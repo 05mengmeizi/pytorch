@@ -323,7 +323,7 @@ fake_tensor_propagate_real_tensors = False
 #   ...
 #   with torch.amp.autocast(device="cuda"):
 #       z.backward()
-backward_pass_autocast = "same_as_forward"
+backward_pass_autocast = "off"
 
 # This controls whether we collect donated buffers. This flag must be set
 # False if a user wants to retain_graph=True for backward.

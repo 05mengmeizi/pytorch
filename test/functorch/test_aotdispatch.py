@@ -790,6 +790,39 @@ def forward(self, primals_1):
                 self.assertEqual(out, torch.zeros_like(out))
                 self.assertEqual(grad, torch.ones_like(grad))
 
+    @unittest.skipIf(not torch.cuda.is_available(), "requires CUDA")
+    def test_backward_pass_autocast_default_matches_eager(self):
+        # Regression test for https://github.com/pytorch/pytorch/issues/153044
+        # When autocast wraps a compiled region from the outside, the backward
+        # pass should NOT inherit the forward's autocast context (matching eager
+        # behavior, per PyTorch docs).
+        w = torch.ones(4, 4, device="cuda")
+        linear = torch.nn.Linear(4, 1, device="cuda")
+
+        def model(x):
+            y = x @ w
+            with torch.amp.autocast(device_type="cuda", enabled=False):
+                y = y.float()
+                y = linear(y)
+            return y
+
+        x = torch.ones(1, 4, device="cuda")
+
+        # Eager reference
+        with torch.amp.autocast(device_type="cuda"):
+            eager_out = model(x)
+        (eager_out * 16384).sum().backward()
+        eager_grad = linear.weight.grad.clone()
+        linear.weight.grad.zero_()
+
+        # Compiled
+        with torch.amp.autocast(device_type="cuda"):
+            compiled_out = torch.compile(model, backend="aot_eager")(x)
+        (compiled_out * 16384).sum().backward()
+        compiled_grad = linear.weight.grad.clone()
+
+        self.assertEqual(eager_grad, compiled_grad)
+
     @skipIfDynamoInput(
         "Test doesn't make sense with dynamo, which changes order of mutations"
     )
