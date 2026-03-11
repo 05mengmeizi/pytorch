@@ -1,6 +1,7 @@
 # mypy: allow-untyped-defs
 import builtins
 import contextlib
+import enum
 import functools
 import inspect
 import logging
@@ -175,6 +176,10 @@ def fakify(
     sourced_prefixes: _KeyPathTrie | None = None,
 ):
     source = key_path_to_source(kp, sourced_prefixes=sourced_prefixes)
+    if isinstance(t, enum.Enum):
+        from torch._library.opaque_object import _maybe_register_enum_as_opaque
+
+        _maybe_register_enum_as_opaque(type(t))
     if (
         _is_constant_argument(t)
         or isinstance(t, (torch.ScriptObject, torch.nn.Module))

@@ -1,6 +1,7 @@
 # Owner(s): ["module: custom-operators"]
 
 import contextlib
+import enum
 import gc
 import random
 import unittest
@@ -3151,6 +3152,21 @@ def forward(self, p_linear_weight, p_linear_bias, obj_lifted_custom_0, x):
             self.assertIs(out2._counter, counter2)
             self.assertEqual(out2._size_store, size2)
             self.assertEqual(counters["aot_autograd"]["autograd_cache_hit"], 1)
+
+    def test_enum_export(self):
+        class Direction(enum.Enum):
+            UP = 0
+            DOWN = 1
+
+        class Mod(torch.nn.Module):
+            def forward(self, x, d):
+                return x + d.value
+
+        ep = torch.export.export(Mod(), (torch.randn(4, 4), Direction.UP), strict=False)
+        self.assertEqual(
+            ep.module()(torch.ones(4, 4), Direction.UP),
+            torch.ones(4, 4) + Direction.UP.value,
+        )
 
 
 instantiate_parametrized_tests(TestOpaqueObject)
