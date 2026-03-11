@@ -196,7 +196,13 @@ def estimate_roofline_runtime_ms(node: fx.Node) -> float:
     compute_ns: float = 0.0
     func_packet = getattr(node.target, "overloadpacket", None)
     if func_packet in flop_registry and len(out_dtypes) == 1:
-        compute_ns = get_compute_time(func_packet, args, kwargs, out, out_dtypes.copy())
+        try:
+            compute_ns = get_compute_time(
+                func_packet, args, kwargs, out, out_dtypes.copy()
+            )
+        except Exception:
+            log.debug("Failed to estimate compute time for %s", node)
+            compute_ns = 0.0
         # Extract hint from symbolic value if needed
         if isinstance(compute_ns, (torch.SymInt, torch.SymFloat)):
             compute_ns = compute_ns.node.hint if compute_ns.node.has_hint() else 0.0

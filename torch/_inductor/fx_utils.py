@@ -1,5 +1,6 @@
 # mypy: allow-untyped-defs
 import contextlib
+import logging
 import operator
 from collections import defaultdict
 from collections.abc import Callable
@@ -23,6 +24,9 @@ from torch.utils._pytree import tree_map
 from torch.utils.flop_counter import flop_registry
 
 from .virtualized import V
+
+
+log = logging.getLogger(__name__)
 
 
 # Check the pattern: (nn.module, F.function/torch.Tensor.method) matched.
@@ -318,17 +322,20 @@ def is_node_realized(node: torch.fx.Node) -> bool:
 def count_flops_fx(node: torch.fx.Node) -> Optional[int]:
     if not countable_fx(node) or isinstance(node.target, str):
         return None
-    with FakeTensorMode(allow_non_fake_inputs=True):
-        success, args, kwargs = get_fake_args_kwargs(node)
+    try:
+        with FakeTensorMode(allow_non_fake_inputs=True):
+            success, args, kwargs = get_fake_args_kwargs(node)
 
-        if success:
-            with torch.utils.flop_counter.FlopCounterMode(
-                display=False
-            ) as flop_counter_mode:
-                node.target(*args, **kwargs)
+            if success:
+                with torch.utils.flop_counter.FlopCounterMode(
+                    display=False
+                ) as flop_counter_mode:
+                    node.target(*args, **kwargs)
 
-            counted_flops = flop_counter_mode.get_total_flops()
-            return counted_flops
+                counted_flops = flop_counter_mode.get_total_flops()
+                return counted_flops
+    except Exception:
+        log.debug("Failed to count flops for node %s", node)
     return None
 
 
