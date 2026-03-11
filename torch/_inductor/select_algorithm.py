@@ -75,10 +75,7 @@ from .codegen.triton_utils import config_of, equal_1_arg_indices, signature_to_m
 from .codegen.wrapper import pexpr
 from .exc import CUDACompileError
 from .fx_utils import count_flops_fx
-from .ir import (
-    ChoiceCaller,
-    PrimitiveInfoType,
-)
+from .ir import ChoiceCaller, PrimitiveInfoType
 from .ops_handler import StoreMode
 from .runtime.hints import DeviceProperties
 from .runtime.triton_compat import HAS_WARP_SPEC
@@ -713,9 +710,9 @@ class TritonTemplateKernel(TritonKernel):
         )
         contiguous_index = self.rename_indexing(contiguous_index)
         self.body.writeline(f"{xindex_name} = " + texpr(contiguous_index))
-        self.range_trees[0].lookup(
-            sympy.S.One, sympy_product(lengths)
-        ).set_name(xindex_name)
+        self.range_trees[0].lookup(sympy.S.One, sympy_product(lengths)).set_name(
+            xindex_name
+        )
         self.template_mask = mask
         self.template_indices = indices
         return contiguous_index
