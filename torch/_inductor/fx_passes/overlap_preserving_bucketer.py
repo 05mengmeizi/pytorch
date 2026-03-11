@@ -10,6 +10,7 @@ from torch._dynamo.utils import counters
 from torch._inductor.augmented_graph_helper import AugmentedGraphHelper
 from torch._inductor.fx_passes.bucketing import (
     _default_bucket_mode,
+    _get_collective_node_from_wait,
     _schedulable_wait_node,
     BucketMode,
     get_full_bucket_key,
@@ -1019,18 +1020,30 @@ class OverlapPreservingBucketer:
 
         # Get new nodes
         new_waits = [n for n in new_nodes if _schedulable_wait_node(n)]
-        assert len(new_waits) == 1
-
-        new_wait = new_waits[0]
-        new_start = new_wait.args[0]
-        assert isinstance(new_start, fx.Node)
 
         # Create mapping of all erased nodes to their replacements
         erased_to_new: dict[fx.Node, fx.Node | None] = {}
-        for old_start in old_starts:
-            erased_to_new[old_start] = new_start
-        for old_wait in old_waits:
-            erased_to_new[old_wait] = new_wait
+        new_start: fx.Node | None = None
+        if len(new_waits) == 1:
+            # Standard bucketing: single start + single wait
+            new_wait = new_waits[0]
+            new_start = new_wait.args[0]  # pyrefly: ignore [bad-assignment]
+            assert isinstance(new_start, fx.Node)
+            for old_start in old_starts:
+                erased_to_new[old_start] = new_start
+            for old_wait in old_waits:
+                erased_to_new[old_wait] = new_wait
+        else:
+            # Coalesced bucketing: single start + N waits (one per original tensor)
+            assert len(new_waits) == len(old_waits)
+            coll_start = _get_collective_node_from_wait(new_waits[0])
+            assert coll_start is not None, (
+                f"Expected collective node behind wait, got {new_waits[0]}"
+            )
+            new_start = coll_start
+            for old_start in old_starts:
+                erased_to_new[old_start] = coll_start
+            erased_to_new.update(dict(zip(old_waits, new_waits)))
 
         # Handle convert_element_type nodes that were fused and erased
         # The bucketed operation may have a _pre_bucket op that handles dtype conversion
