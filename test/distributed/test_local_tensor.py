@@ -607,8 +607,6 @@ class TestLocalTensorWorld3(LocalTensorWorldTest):
 
     def test_reduce_scatter_list_collective(self):
         """Test that reduce_scatter (list API) works correctly with LocalTensor."""
-        fake_pg = torch.distributed.distributed_c10d._get_default_group()
-
         with LocalTensorMode(self.world_size) as mode:
             # Each rank has [0..6] + rank*10, split into uneven chunks [3, 2, 2]
             x = mode.rank_map(lambda r: torch.arange(7, dtype=torch.float) + r * 10)
