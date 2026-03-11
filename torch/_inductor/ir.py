@@ -9988,10 +9988,21 @@ class _WaitKernel(_CollectiveKernel):
             unbacked_bindings=unbacked_bindings,
         )
         self.set_cpp_kernel_name("aoti_torch_cpu__c10d_functional_wait_tensor")
+        self.use_rs_stream = False
 
     def codegen(self, wrapper: PythonWrapperCodegen) -> None:
         wrapper.include_extra_header("torch/csrc/inductor/aoti_torch/c/shim_cpu.h")
+        if self.use_rs_stream:
+            device = self.get_device()
+            assert device is not None
+            device_idx = device.index
+            wrapper.add_import_once(
+                "from torch._inductor.runtime.rs_stream import get_rs_stream, restore_stream"
+            )
+            wrapper.writeline(f"get_rs_stream({device_idx})")
         wrapper.generate_extern_kernel_alloc(self)
+        if self.use_rs_stream:
+            wrapper.writeline(f"restore_stream({device_idx})")
 
         if isinstance(self.layout, Layout):
             self.codegen_size_asserts(wrapper)
@@ -10039,6 +10050,9 @@ class _WaitKernel(_CollectiveKernel):
             non_tensor_args,
             unflatten_args,
         )
+        origin = V.graph.current_node
+        if origin is not None and origin.meta.get("use_rs_stream", False):
+            packed.use_rs_stream = True
         packed.mutation_outputs.append(
             MutationOutput(NoneLayout(device=inp.get_device()), inp, packed)
         )

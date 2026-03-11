@@ -1100,6 +1100,10 @@ class aten_distributed_optimizations:
     # as atomic units with memory-bound runtime estimates.
     enable_fusion_regions: bool | None = None
 
+    # Put reduce-scatter wait_tensor on a dedicated CUDA stream so it
+    # doesn't block compute/AG on the main stream.
+    manual_bucketing_rs_stream: bool = False
+
     # Prioritize bucketing during overlap scheduling by grouping candidates by bucket key
     prioritize_bucketing_during_scheduling: bool = True
 
