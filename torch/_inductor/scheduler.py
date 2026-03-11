@@ -815,6 +815,9 @@ class BaseSchedulerNode:
         return False
 
     def has_side_effects(self) -> bool:
+        body = getattr(self, "_body", None)
+        if body is not None and body.has_op("device_assert_async"):
+            return True
         return False
 
     def decide_inplace_update(self) -> None:
@@ -1842,13 +1845,6 @@ class SchedulerNode(BaseSchedulerNode):
                         else (node.args[1] if len(node.args) >= 2 else "")
                     )
         return buffers_store_as_atomic_add
-
-    @cache_on_self
-    def has_side_effects(self) -> bool:
-        # self._body is None sometimes that's why this check was added
-        if self._body is not None and self._body.has_op("device_assert_async"):
-            return True
-        return super().has_side_effects()
 
 
 def refresh_group_node_dependencies(

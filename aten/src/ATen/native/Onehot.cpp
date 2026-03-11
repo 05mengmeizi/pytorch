@@ -6,9 +6,13 @@
 #include <ATen/Functions.h>
 #include <ATen/NativeFunctions.h>
 #else
+#include <ATen/ops/_assert_async.h>
+#include <ATen/ops/all.h>
 #include <ATen/ops/arange.h>
 #include <ATen/ops/empty.h>
 #include <ATen/ops/eq.h>
+#include <ATen/ops/ge.h>
+#include <ATen/ops/lt.h>
 #include <ATen/ops/one_hot_native.h>
 #include <ATen/ops/zeros.h>
 #endif
@@ -24,6 +28,14 @@ Tensor one_hot(const Tensor &self, int64_t num_classes) {
         // functional version that torch.compiles better and works with dynamic shapes
         if (num_classes == -1) {
           num_classes = self.max().item().toLong() + 1;
+        }
+        // Validate index bounds. _assert_async traces into the compiled graph
+        // so these checks run at execution time without a host-device sync.
+        if (self.sym_numel() > 0) {
+          at::_assert_async(at::all(at::ge(self, 0)),
+              "one_hot: Class values must be non-negative.");
+          at::_assert_async(at::all(at::lt(self, num_classes)),
+              "one_hot: Class values must be smaller than num_classes.");
         }
         {
           // If `self` is a DTensor, then allow implicit replication
