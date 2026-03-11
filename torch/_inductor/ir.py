@@ -5223,9 +5223,7 @@ class TemplateBuffer(OperationBuffer):
         # Annotations dict for storing metadata (e.g., KernelTemplateChoice)
         self.annotations: dict[str, Any] = {}
 
-        # Inputs that the kernel mutates in-place (parallel to
-        # ExternKernel.mutation_outputs — kept separate from self.outputs
-        # so subclasses can freely use self.outputs for other purposes).
+        # Inputs that the kernel mutates in-place
         self.mutated_inputs = mutated_inputs
         self.mutation_outputs: list[MutationOutput] = []
         if mutated_inputs is not None:
@@ -5335,9 +5333,6 @@ class TritonTemplateBuffer(TemplateBuffer):
         self.subgraph_inps: list[IRNode | sympy.Expr | None] | None = None
         self.subgraph_outs: list[IRNode | None] | None = None
 
-    def get_outputs(self) -> list[Buffer]:
-        return [self, *self.mutation_outputs]
-
     @cache_on_self_and_args("TritonTemplateBuffer")
     def get_free_symbol_uses(
         self, unbacked_only: bool = False
@@ -5361,6 +5356,9 @@ class TritonTemplateBuffer(TemplateBuffer):
                 assert out is None
 
         return res
+
+    def get_outputs(self) -> list[Buffer]:
+        return [self, *self.mutation_outputs]
 
     def __str__(self) -> str:
         out = f"TritonTemplateBuffer(layout={self.layout})"
