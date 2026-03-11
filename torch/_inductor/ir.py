@@ -10044,6 +10044,21 @@ class _WaitKernel(_CollectiveKernel):
             wrapper.writeline(f'switch_to_comm_stream("rs", {device_idx})')
             wrapper.generate_extern_kernel_alloc(self)
             wrapper.writeline(f"restore_comm_stream({device_idx})")
+        elif self.use_comm_stream is not None:
+            # Pool stream: run wait_tensor on the pool stream, then sync
+            # back to compute stream so the result is visible there.
+            device = self.get_device()
+            assert device is not None
+            device_idx = device.index
+            wrapper.add_import_once(
+                "from torch._inductor.runtime.comm_streams import "
+                "switch_to_comm_stream, restore_stream_with_sync"
+            )
+            wrapper.writeline(
+                f'switch_to_comm_stream("{self.use_comm_stream}", {device_idx})'
+            )
+            wrapper.generate_extern_kernel_alloc(self)
+            wrapper.writeline(f"restore_stream_with_sync({device_idx})")
         elif self.use_rs_stream:
             device = self.get_device()
             assert device is not None

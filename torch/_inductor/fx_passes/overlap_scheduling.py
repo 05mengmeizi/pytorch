@@ -18,8 +18,12 @@ from torch._inductor.fx_passes.bucketing import (
     bucket_key,
     BucketMode,
     get_full_bucket_key,
+    is_all_gather_into_tensor,
+    is_fsdp_reduce_scatter,
+    is_reduce_scatter_tensor,
     is_wait_tensor,
 )
+from torch._inductor.fx_passes.fsdp import is_fsdp_all_gather
 from torch._inductor.fx_passes.memory_estimator import MemoryTracker
 from torch._logging import trace_structured
 from torch.fx.operator_schemas import normalize_function
@@ -146,6 +150,13 @@ def estimate_collective_time(
     # Use analytical model (benchmarking is handled separately in alignment)
     return torch._inductor.comm_analysis.estimate_nccl_collective_runtime_from_fx_node(
         n, override_size
+    )
+
+
+def estimate_nccl_collective_runtime(n: fx.Node) -> float:
+    """Estimate collective runtime in nanoseconds (convenience wrapper)."""
+    return torch._inductor.comm_analysis.estimate_nccl_collective_runtime_from_fx_node(
+        n
     )
 
 
@@ -309,6 +320,24 @@ def get_cached_node_time(key: str) -> float:
 
 def set_cached_node_time(key: str, value: float) -> None:
     return get_benchmark_cache().set_value(key, value=value)
+
+
+@dataclass
+class _StreamPoolCtx:
+    """Mutable state shared across stream pool strategy functions."""
+
+    pool_size: int
+    pool_counter: list[int]
+    in_flight_mem: dict[str, int]
+    in_flight_time: dict[str, float]
+    start_info: dict[fx.Node, tuple[str, int]]
+    has_budget: bool
+    budget_bytes: int
+    # ag_rs strategy: separate counters for AG and RS
+    ag_counter: list[int] = field(default_factory=lambda: [0])
+    rs_counter: list[int] = field(default_factory=lambda: [0])
+    # Greedy: maps start node -> (stream_name, runtime_ns)
+    start_info_time: dict[fx.Node, tuple[str, float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -994,6 +1023,8 @@ class OverlapScheduler:
             bucket_only_internode_comms=self.bucket_only_internode_comms,
         )
 
+        self._assign_stream_pool()
+
         if self.log_final_collectives_estimations:
             from torch._inductor.fx_passes.node_runtime_estimation import (
                 _log_graph_collective_benchmarks,
@@ -1004,6 +1035,154 @@ class OverlapScheduler:
             )
 
         return self.gm
+
+    def _assign_stream_pool(self) -> None:
+        """Assign comm streams to FSDP collectives using the configured strategy.
+
+        Only FSDP collectives (AG/RS connected to graph inputs/outputs via
+        unary op chains) get pool streams; TP collectives stay on the default
+        stream.
+        """
+        pool_size = config.aten_distributed_optimizations.comm_stream_pool_size
+        if pool_size <= 0:
+            return
+
+        strategy = config.aten_distributed_optimizations.comm_stream_pool_strategy
+        budget_gb = (
+            config.aten_distributed_optimizations.comm_stream_pool_exceed_budget_gb
+        )
+        has_budget = budget_gb is not None
+        budget_bytes = int(budget_gb * 1024**3) if has_budget else 0
+
+        def _is_fsdp_collective(node: fx.Node) -> bool:
+            if is_all_gather_into_tensor(node):
+                return is_fsdp_all_gather(node)
+            if is_reduce_scatter_tensor(node):
+                return is_fsdp_reduce_scatter(node)
+            return False
+
+        # Build the pick function for each strategy.
+        if strategy == "ag_rs":
+            stream_name_fn = self._strategy_ag_rs
+        elif strategy == "greedy":
+            stream_name_fn = self._strategy_greedy
+        else:
+            stream_name_fn = self._strategy_round_robin
+
+        # State shared across all strategies.
+        pool_counter = [0]
+        # Per-stream in-flight memory: stream_name -> bytes
+        in_flight_mem: dict[str, int] = defaultdict(int)
+        # Per-stream estimated remaining runtime (ns) at the time the latest
+        # collective was placed; decremented heuristically as we walk the graph.
+        in_flight_time: dict[str, float] = defaultdict(float)
+        # Map start node -> (stream_name, size_bytes)
+        start_info: dict[fx.Node, tuple[str, int]] = {}
+
+        ctx = _StreamPoolCtx(
+            pool_size=pool_size,
+            pool_counter=pool_counter,
+            in_flight_mem=in_flight_mem,
+            in_flight_time=in_flight_time,
+            start_info=start_info,
+            has_budget=has_budget,
+            budget_bytes=budget_bytes,
+        )
+
+        fsdp_count = 0
+        skipped_count = 0
+        for node in self.gm.graph.nodes:
+            if is_all_gather_into_tensor(node) or is_reduce_scatter_tensor(node):
+                if _is_fsdp_collective(node):
+                    fsdp_count += 1
+                    stream_name = stream_name_fn(node, ctx)
+
+                    # Memory budget enforcement (applied on top of any strategy).
+                    coll_bytes = (
+                        estimate_fx_collective_memory_footprint(node)
+                        if has_budget
+                        else 0
+                    )
+                    if has_budget:
+                        total_in_flight = sum(in_flight_mem.values())
+                        if (
+                            total_in_flight + coll_bytes > budget_bytes
+                            and in_flight_mem
+                        ):
+                            stream_name = max(
+                                in_flight_mem, key=lambda s: in_flight_mem[s]
+                            )
+                        in_flight_mem[stream_name] += coll_bytes
+                        start_info[node] = (stream_name, coll_bytes)
+
+                    node.meta["use_comm_stream"] = stream_name
+                else:
+                    skipped_count += 1
+
+            elif _schedulable_wait_node(node):
+                start = node.args[0]
+                if isinstance(start, fx.Node) and "use_comm_stream" in start.meta:
+                    node.meta["use_comm_stream"] = start.meta["use_comm_stream"]
+                    if start in start_info:
+                        sname, sbytes = start_info.pop(start)
+                        in_flight_mem[sname] -= sbytes
+                        if in_flight_mem[sname] <= 0:
+                            del in_flight_mem[sname]
+                    if start in ctx.start_info_time:
+                        sname, stime = ctx.start_info_time.pop(start)
+                        in_flight_time[sname] -= stime
+                        if in_flight_time[sname] <= 0:
+                            del in_flight_time[sname]
+
+        log.info(
+            "Stream pool: %d FSDP collectives assigned to %d streams "
+            "(strategy=%s), %d non-FSDP collectives skipped",
+            fsdp_count,
+            pool_size,
+            strategy,
+            skipped_count,
+        )
+
+    # -- Strategy implementations ------------------------------------------------
+
+    @staticmethod
+    def _strategy_round_robin(node: fx.Node, ctx: _StreamPoolCtx) -> str:
+        name = f"pool_{ctx.pool_counter[0] % ctx.pool_size}"
+        ctx.pool_counter[0] += 1
+        return name
+
+    @staticmethod
+    def _strategy_ag_rs(node: fx.Node, ctx: _StreamPoolCtx) -> str:
+        """AllGather on lower-half streams, ReduceScatter on upper-half."""
+        ag_slots = max(ctx.pool_size // 2, 1)
+        if is_all_gather_into_tensor(node):
+            name = f"pool_{ctx.ag_counter[0] % ag_slots}"
+            ctx.ag_counter[0] += 1
+        else:
+            base = ag_slots
+            rs_slots = max(ctx.pool_size - base, 1)
+            name = f"pool_{base + ctx.rs_counter[0] % rs_slots}"
+            ctx.rs_counter[0] += 1
+        return name
+
+    @staticmethod
+    def _strategy_greedy(node: fx.Node, ctx: _StreamPoolCtx) -> str:
+        """Pick the stream with the least remaining runtime (earliest to finish)."""
+        # If not all streams are populated yet, use the next empty one.
+        if len(ctx.in_flight_time) < ctx.pool_size:
+            for i in range(ctx.pool_size):
+                name = f"pool_{i}"
+                if name not in ctx.in_flight_time:
+                    break
+        else:
+            # Pick the stream closest to finishing.
+            name = min(ctx.in_flight_time, key=lambda s: ctx.in_flight_time[s])
+
+        # Track this collective's runtime for future decisions.
+        runtime_ns = estimate_nccl_collective_runtime(node)
+        ctx.in_flight_time[name] += runtime_ns
+        ctx.start_info_time[node] = (name, runtime_ns)
+        return name
 
     def get_non_collective_runtime_estimate(self, node: fx.Node) -> float | None:
         """Get runtime estimation for a node in ms. Returns None if no estimation is available."""
