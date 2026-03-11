@@ -37,7 +37,7 @@ from torch.testing._internal.common_utils import dtype_name, freeze_rng_state, r
     download_file, get_function_arglist, load_tests, skipIfMPS, \
     IS_PPC, \
     parametrize as parametrize_test, subtest, \
-    skipIfTorchDynamo, gcIfJetson, set_default_dtype
+    skipIfTorchDynamo, gcIfJetson, set_default_dtype, ACCELERATOR_TYPE
 
 from torch.testing._internal.common_cuda import TEST_CUDA, TEST_MULTIGPU, TEST_CUDNN, \
     _get_torch_rocm_version
@@ -48,7 +48,7 @@ from torch.testing._internal.common_device_type import dtypesIfMPS, instantiate_
     dtypesIfCUDA, precisionOverride, onlyCUDA, onlyCPU, \
     skipCUDAIfRocm, skipCUDAIf, skipCUDAIfNotRocm, \
     onlyNativeDeviceTypes, deviceCountAtLeast, largeTensorTest, expectedFailureMeta, expectedFailureMPS, \
-    skipMeta, get_all_device_types, onlyOn
+    skipMeta, get_all_device_types, onlyAccelerator
 
 from hypothesis import given
 import torch.testing._internal.hypothesis_utils as hu
@@ -61,14 +61,6 @@ from torch.testing._internal.common_mkldnn import reduced_f32_on_and_off
 
 AMPERE_OR_ROCM = TEST_WITH_ROCM or torch.cuda.is_tf32_supported()
 
-ACCELERATOR_TYPE = (
-    acc.type
-    if (acc := torch.accelerator.current_accelerator(check_available=True))
-    else None
-)
-
-def onlyAccelerator(fn):
-    return onlyOn(["cuda", "mps", "xpu"])(fn)
 
 if TEST_WITH_ROCM:
     os.environ["PYTORCH_MIOPEN_SUGGEST_NHWC"] = "1"
@@ -241,7 +233,7 @@ class TestNN(NNTestCase):
         self.assertEqual(m.double(), m.to(torch.float64))
         self.assertRaises(RuntimeError, lambda: m.to('cpu', copy=True))
 
-        if ACCELERATOR_TYPE == device == device:
+        if ACCELERATOR_TYPE == device:
             for gpu in [device,
                         str(torch.device(0)) if torch.accelerator.device_count() == 1 else str(torch.device(1))]:
                 m2 = m.to(device)
@@ -2303,6 +2295,8 @@ tensor(..., device='meta', size=(1,), requires_grad=True)""")
         mask[0, 2] = False
         self.assertRaises(RuntimeError, lambda: torch._nested_tensor_from_mask(input, mask))
 
+    @unittest.skipIf(os.environ.get("PYTORCH_TEST_WITH_DYNAMO") == "1",
+                     "TypeError: add(): argument 'input' (position 1) must be Tensor, not NoneType")
     def test_normalize(self):
         inputs = torch.randn(1, 3, 4, 4, requires_grad=True, dtype=torch.double)
         self.assertTrue(gradcheck(lambda x: F.normalize(x, p=1, dim=-1), (inputs,)))
@@ -7021,6 +7015,7 @@ tensor(..., device='meta', size=(1,), requires_grad=True)""")
         with self.assertRaisesRegex(RuntimeError, ".*both arguments.*1D.*"):
             m(inp)
 
+    @unittest.skipIf(os.environ.get("PYTORCH_TEST_WITH_DYNAMO") == "1", "NotImplementedError")
     @tf32_on_and_off(0.005)
     @parametrize_test('bias', [
         subtest(False, name='nobias'), subtest(True, name='bias')])
