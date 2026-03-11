@@ -212,11 +212,48 @@ class PartialRender:
     def _replace_placeholder(self, hook_key: str, result: str) -> str:
         """Replace a placeholder in the code with the hook result.
 
-        If the placeholder sits alone on its line:
-        - empty result: remove the entire line
-        - non-empty result: dedent + re-indent to match the placeholder's column
+        During Jinja template rendering, hooks like ``def_kernel()``,
+        ``load_input()``, and ``store_output()`` emit placeholder strings
+        (e.g. ``<DEF_KERNEL>``, ``<LOAD_INPUT_A>``, ``<STORE_OUTPUT_0>``)
+        into the rendered code and register corresponding hook functions in
+        ``self.replacement_hooks``.  When ``finalize_hook()`` is called for
+        each key, the hook function runs and this method splices the result
+        back into the code in place of the placeholder.
 
-        If the placeholder is inline: substitute the result as-is.
+        Two replacement modes based on the hook result:
+
+        **Non-empty result** — dedent + re-indent.
+            The placeholder sits alone on an indented line.  The result
+            (often multi-line) is dedented then re-indented to match the
+            placeholder's column, so it integrates at the right nesting
+            level.  Real-world cases:
+
+            - ``<DEF_KERNEL>`` at column 0: the hook emits the full
+              ``@triton.jit`` decorator, function signature, constant
+              defines, and prologue code.  Re-indent is a no-op (col 0).
+            - ``<STORE_OUTPUT_0>`` at 4–8 spaces indent: the hook emits
+              ``tl.store()`` plus any fused epilogue ops (e.g. relu, bias
+              add).  Re-indent aligns the block to the template's loop
+              body.
+            - ``<LOAD_INPUT_A>`` at 8 spaces indent: the hook emits
+              range-tree indexing setup and a ``tl.load()`` call.
+              Re-indent aligns to the inner loop body.
+
+        **Empty result** — line removal.
+            The entire placeholder line is deleted.  Cases:
+
+            - ``<DEF_KERNEL>`` returns ``""`` for
+              ``ExternalTritonTemplateKernel`` (Helion), which emits its
+              own kernel definition outside the template system.
+            - ``<LOAD_INPUT_A>`` returns ``""`` when prologue fusion
+              replaces the explicit load with inline computation from a
+              fused producer.
+            - ``<STORE_OUTPUT_0>`` returns ``""`` for
+              ``ExternalTritonTemplateKernel`` outputs that have no
+              matching epilogue consumer.
+
+        All callers (Jinja templates, CuteDSL, and Helion AST generation)
+        always emit placeholders alone on their line.
         """
         idx = self._code.find(hook_key)
         if idx < 0:
@@ -227,9 +264,10 @@ class PartialRender:
         if line_end == -1:
             line_end = len(self._code)
 
-        # Inline placeholder — substitute as-is (first occurrence only)
-        if self._code[line_start:line_end].strip() != hook_key:
-            return self._code[:idx] + result + self._code[idx + len(hook_key) :]
+        assert self._code[line_start:line_end].strip() == hook_key, (
+            f"Placeholder {hook_key} must occupy the whole line, "
+            f"got: {self._code[line_start:line_end]!r}"
+        )
 
         # Whole-line placeholder with empty result — remove entire line
         if not (result and result.strip()):
