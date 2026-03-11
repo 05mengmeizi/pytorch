@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Callable
 from contextlib import ContextDecorator, ExitStack, nullcontext
 from functools import partial, wraps
-from typing import Any, Optional, Union
+from typing import Any
 from unittest.mock import patch
 
 from common_utils import (
@@ -424,8 +424,8 @@ class TestAOTAutograd(AOTTestCase):
     def run_autograd(
         self,
         f: Callable,
-        fw_graph_cell: list[Optional[Callable]],
-        decompositions: Optional[dict],
+        fw_graph_cell: list[Callable | None],
+        decompositions: dict | None,
         keep_input_mutations: bool,
         dynamic: bool,
     ):
@@ -463,11 +463,11 @@ class TestAOTAutograd(AOTTestCase):
     def verify_aot_autograd(
         self,
         f,
-        inp_: Union[Callable, list[Any]],
+        inp_: Callable | list[Any],
         *,
         test_mutation: bool = False,
         keep_inp_mutations: bool = False,
-        decompositions: Optional[dict] = None,
+        decompositions: dict | None = None,
         dynamic: bool = False,
         # Only active when inp_ is Callable.
         # TODO: probably consolidate all tests to make inp a Callable.
@@ -4675,6 +4675,58 @@ def forward(self, tangents_1):
         self.assertEqual(counters["aot_autograd"]["total"], 1)
         counters.clear()
         torch._dynamo.reset()
+
+    def test_compute_outer_size_and_stride_bug(self):
+        import dataclasses
+
+        from torch._functorch._aot_autograd.schemas import (
+            PlainTensorMeta,
+            SubclassCreationMeta,
+        )
+
+        # Simulate a 2D TwoTensor(4, 6), contiguous, with dynamic shapes.
+        # After make_runtime_safe(), outer_size=(None, None), outer_stride=(None, 1).
+        # The packed symints in all_args at curr_start_idx are: [4, 6, 6]
+        # (2 size symints for the two None entries, 1 stride symint for the first None).
+        meta = object.__new__(SubclassCreationMeta)
+        for f in dataclasses.fields(SubclassCreationMeta):
+            setattr(meta, f.name, f.default)
+        meta.flat_tensor_start_idx = 0
+        meta.arg_count = 2
+        meta.included_subclass_symints = True
+        meta.attrs = {
+            "a": PlainTensorMeta(unwrapped_idx=0),
+            "b": PlainTensorMeta(unwrapped_idx=1),
+        }
+        meta.outer_size = (None, None)
+        meta.outer_stride = (None, 1)
+        meta.meta = None
+        meta.original_subclass = None
+        meta.original_subclass_type = TwoTensor
+        meta.memory_format = None
+
+        # all_args: [tensor_a, tensor_b, 4, 6, 6]
+        # curr_start_idx = 2 (after the two inner tensors)
+        a = torch.randn(4, 6)
+        b = torch.randn(4, 6)
+        all_args = [a, b, 4, 6, 6]
+
+        outer_size, outer_stride = meta.compute_outer_size_and_stride(
+            all_args, curr_start_idx=2
+        )
+        self.assertEqual(outer_size, (4, 6))
+        self.assertEqual(outer_stride, (6, 1))
+
+    def test_subclass_dynamic_stride(self):
+        @torch.compile(backend="aot_eager", dynamic=True)
+        def f(x):
+            return x.sin()
+
+        a = torch.randn(4, 6)
+        b = torch.randn(4, 6)
+        inp = TwoTensor(a, b)
+        out = f(inp)
+        self.assertEqual(out.stride(), inp.stride())
 
 
 def extract_graph(fx_g, _, graph_cell):
@@ -8960,8 +9012,8 @@ class TestAOTAutogradWithDynamo(TestAOTAutograd):
     def run_autograd(
         self,
         f: Callable,
-        fw_graph_cell: list[Optional[Callable]],
-        decompositions: Optional[dict],
+        fw_graph_cell: list[Callable | None],
+        decompositions: dict | None,
         keep_input_mutations: bool,
         dynamic: bool,
     ):
@@ -9184,8 +9236,8 @@ class TestAOTAutogradWithCache(TestAOTAutogradWithDynamo):
     def run_autograd(
         self,
         f: Callable,
-        fw_graph_cell: list[Optional[Callable]],
-        decompositions: Optional[dict],
+        fw_graph_cell: list[Callable | None],
+        decompositions: dict | None,
         keep_input_mutations: bool,
         dynamic: bool,
     ):
@@ -9207,11 +9259,11 @@ class TestAOTAutogradWithCache(TestAOTAutogradWithDynamo):
     def verify_aot_autograd(
         self,
         f,
-        inp_: Union[Callable, list[Any]],
+        inp_: Callable | list[Any],
         *,
         test_mutation: bool = False,
         keep_inp_mutations: bool = False,
-        decompositions: Optional[dict] = None,
+        decompositions: dict | None = None,
         dynamic: bool = False,
         # Only active when inp_ is Callable.
         # TODO: probably consolidate all tests to make inp a Callable.
