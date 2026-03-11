@@ -3471,7 +3471,6 @@ def handle_traced_output(
             fake_script_obj,
         )
     else:
-        breakpoint()
         unimplemented(
             gb_type="torch.* op returned non-Tensor",
             context=f"example_value type: {typestr(example_value)}; op: {proxy.node.op}; target: {proxy.node.target}",
