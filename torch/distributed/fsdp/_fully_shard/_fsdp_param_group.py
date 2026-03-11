@@ -82,9 +82,9 @@ class FSDPCommContext:
         # All-gather and reduce-scatter share the same NCCL communicator, so
         # the collectives serialize regardless of stream. Use one stream for
         # both to avoid unnecessary stream overhead.
-        comm_stream = self.device_handle.Stream(priority=high_priority)
-        self.all_gather_stream = comm_stream
-        self.reduce_scatter_stream = comm_stream
+        ag_rs_shared_stream = self.device_handle.Stream(priority=high_priority)
+        self.all_gather_stream = ag_rs_shared_stream
+        self.reduce_scatter_stream = ag_rs_shared_stream
         # Run the HSDP all-reduces concurrently with all-gather/reduce-scatter
         # since collectives use different network resources and can overlap
         # in the typical intra-node sharding / inter-node replication case
