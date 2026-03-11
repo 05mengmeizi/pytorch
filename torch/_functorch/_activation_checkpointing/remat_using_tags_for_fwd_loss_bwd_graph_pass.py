@@ -5,17 +5,16 @@ from typing import Any, overload
 
 import torch
 import torch.fx as fx
-from torch._functorch import config
 from torch._functorch.compile_utils import raise_getitems
 from torch._functorch.partitioners import (
     cleanup_recompute_tags,
     force_save_bw_mutation_src,
-    force_save_collectives,
     has_recomputable_ops,
     has_recomputable_rng_ops,
     is_not_collective,
     must_recompute,
 )
+
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +69,6 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
     # Use partitioner pass to normalize AC node tags.
     gm = cleanup_recompute_tags(gm, is_default_partition=True)
 
-    if not config.unsafe_allow_optimization_of_collectives:
-        force_save_collectives(gm)
-
     force_save_bw_mutation_src(gm)
 
     new_graph = fx.Graph()
@@ -118,9 +114,9 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
             (dep for dep in deps if dep not in recomputed_nodes),
             key=lambda n: order[n],
         )
-        if new_deps and torch.distributed.get_rank() == 0:
-            print(
-                "remat: to compute backward node %s, recomputing [%s]",
+        if new_deps:
+            log.debug(
+                "To compute backward node %s, recomputing [%s]",
                 node.name,
                 ", ".join(dep.name for dep in new_deps),
             )
