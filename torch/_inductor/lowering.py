@@ -856,13 +856,27 @@ def foreach_group_loop(groups, num_outputs, apply_fn, realize_outputs):
     return outputs
 
 
-def to_dtype(x: TensorBox, dtype: torch.dtype, copy: bool = False):
+def to_dtype(
+    x: TensorBox, dtype: torch.dtype, copy: bool = False, use_compute_types: bool = True
+):
     src_dtype = x.get_dtype()
     if src_dtype == dtype:
         return clone(x) if copy else x
 
     def _to_dtype(x):
-        return ops.to_dtype(x, dtype, src_dtype=src_dtype)
+        result = ops.to_dtype(
+            x,
+            dtype,
+            src_dtype=src_dtype,
+            use_compute_types=use_compute_types,
+        )
+        low_pr_fp = (torch.bfloat16, torch.float16)
+        if not use_compute_types and dtype in low_pr_fp:
+            # Upcast back to compute type so fused consumers see a compute-type
+            # value. Without this, a raw low-precision value gets a redundant
+            # downcast from the consumer's input emulation.
+            result = ops.to_dtype(result, dtype)
+        return result
 
     return make_pointwise(_to_dtype, override_return_dtype=dtype)(x)
 
@@ -925,7 +939,13 @@ def _convert_element_type(x: TensorBox, dtype: torch.dtype):
             return fallback_handler(
                 prims.convert_element_type.default, add_to_fallback_set=False
             )(x, dtype)
-    return to_dtype(x, dtype, copy=True)
+    src_dtype = x.get_dtype()
+    low_pr_fp = (torch.bfloat16, torch.float16)
+    use_compute_types = not (
+        config.emulate_precision_casts
+        and (src_dtype in low_pr_fp or dtype in low_pr_fp)
+    )
+    return to_dtype(x, dtype, copy=True, use_compute_types=use_compute_types)
 
 
 def to_dtype_bitcast(x: TensorBox, dtype: torch.dtype, *, copy=False):
@@ -2906,6 +2926,12 @@ def constrain_to_fx_strides(fx_node, *args, **kwargs):
     )
     kwargs = {k: apply_constraint(v, fx_node.kwargs[k]) for k, v in kwargs.items()}
     return args, kwargs
+
+
+# native_dropout uses empty_like(input) internally, so bernoulli_ consumes
+# RNG values in the input's stride order. Constrain input strides to match
+# the FX graph (i.e. eager) so the dropout mask is identical.
+add_layout_constraint(aten.native_dropout.default, constrain_to_fx_strides)
 
 
 def sdpa_constraint(fx_node, *args, **kwargs):
@@ -5152,11 +5178,6 @@ def max_pool2d_with_indices_backward(
     is_channels_last = (x_stride is not None and x_stride[1] == 1) or (
         gO_stride is not None and gO_stride[1] == 1
     )
-    if any(d != 1 for d in dilation):
-        # dilation NYI
-        return fallback_max_pool2d_with_indices_backward(
-            grad_output, x, kernel_size, stride, padding, dilation, ceil_mode, indices
-        )
 
     *_batch, _height, width = x.get_size()
     *_, pooled_height, pooled_width = grad_output.get_size()
@@ -5165,13 +5186,17 @@ def max_pool2d_with_indices_backward(
     grad_loader = grad_output.make_loader()
     new_size = list(x.get_size())
 
+    # Effective kernel size accounts for dilation
+    effective_kh = (kernel_size[0] - 1) * dilation[0] + 1
+    effective_kw = (kernel_size[1] - 1) * dilation[1] + 1
+
     h_window_size = max(
-        max(FloorDiv(h, stride[0]) - max(0, FloorDiv(h - kernel_size[0], stride[0])), 1)
-        for h in range(kernel_size[0] * 2)
+        max(FloorDiv(h, stride[0]) - max(0, FloorDiv(h - effective_kh, stride[0])), 1)
+        for h in range(effective_kh * 2)
     )
     w_window_size = max(
-        max(FloorDiv(w, stride[1]) - max(0, FloorDiv(w - kernel_size[1], stride[1])), 1)
-        for w in range(kernel_size[1] * 2)
+        max(FloorDiv(w, stride[1]) - max(0, FloorDiv(w - effective_kw, stride[1])), 1)
+        for w in range(effective_kw * 2)
     )
 
     window_size = h_window_size * w_window_size
@@ -5190,10 +5215,10 @@ def max_pool2d_with_indices_backward(
         h = h + padding[0]
         w = w + padding[1]
         phstart = ops.index_expr(
-            FloorDiv(h - kernel_size[0] + stride[0], stride[0]), torch.int32
+            FloorDiv(h - effective_kh + stride[0], stride[0]), torch.int32
         )
         pwstart = ops.index_expr(
-            FloorDiv(w - kernel_size[1] + stride[1], stride[1]), torch.int32
+            FloorDiv(w - effective_kw + stride[1], stride[1]), torch.int32
         )
         phend = ops.index_expr(FloorDiv(h, stride[0]) + 1, torch.int32)
         pwend = ops.index_expr(FloorDiv(w, stride[1]) + 1, torch.int32)

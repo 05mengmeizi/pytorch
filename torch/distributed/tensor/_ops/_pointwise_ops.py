@@ -79,11 +79,14 @@ def _common_pointwise_single_dim_strategy(
         common_shape = torch.broadcast_shapes(
             *[arg.shape for arg in args_schema if isinstance(arg, TensorMeta)]
         )
+        # For multi-output ops (e.g. frexp), all outputs share the same
+        # pointwise sharding, so replicate the output placement.
+        num_outputs = sum(1 for r in op._schema.returns if "Tensor" in str(r.type))
         placements: list[list[Placement | _ShardingPlaceholder]] = []
         for i in range(len(common_shape)):
             shard_placements: list[Placement | _ShardingPlaceholder] = [
                 _ShardingPlaceholder(i)
-            ]
+            ] * num_outputs
             for arg in tensor_arg_metas:
                 common_dim_to_arg_dim = infer_broadcast_dims_map(
                     common_shape, arg.shape
@@ -99,7 +102,7 @@ def _common_pointwise_single_dim_strategy(
             placements.append(shard_placements)
         if partial_extra_rules:
             n_tensors = len(tensor_arg_metas)
-            expected_len = 1 + n_tensors
+            expected_len = num_outputs + n_tensors
             for rule in partial_extra_rules:
                 # Filter rather than assert: some ops (e.g. mul.Tensor) mix
                 # unary rules (len 2, for scalar promotion) and binary rules
@@ -137,11 +140,12 @@ def _register_single_dim_pointwise(
         ) -> list[list[Placement | _ShardingPlaceholder]]:
             strategies = _fn(op, args, kwargs)
             n_tensor_args = sum(1 for a in args if isinstance(a, TensorMeta))
+            n_outputs = sum(1 for r in op._schema.returns if "Tensor" in str(r.type))
             for s in strategies:
-                if len(s) != 1 + n_tensor_args:
+                if len(s) != n_outputs + n_tensor_args:
                     raise AssertionError(
-                        f"Strategy length {len(s)} != expected {1 + n_tensor_args} "
-                        f"(1 output + {n_tensor_args} args) for {op}. "
+                        f"Strategy length {len(s)} != expected {n_outputs + n_tensor_args} "
+                        f"({n_outputs} output(s) + {n_tensor_args} args) for {op}. "
                         f"out kwarg will be appended by infra."
                     )
             return [s + [s[0]] for s in strategies]
@@ -151,6 +155,7 @@ def _register_single_dim_pointwise(
         op,
         schema_info=RuntimeSchemaInfo(static_argnum, static_kwargkey=["out"]),
         allow_uneven_sharding=True,
+        allow_unbacked_sharding=True,
     )(strategy_fn)
 
 
