@@ -42,12 +42,10 @@ from typing import (
     Generic,
     NamedTuple,
     NoReturn,
-    Optional,
     TYPE_CHECKING,
     TypeAlias,
     TypeGuard,
     TypeVar,
-    Union,
 )
 from typing_extensions import deprecated, ParamSpec
 
@@ -128,8 +126,8 @@ from torch.fx.experimental._size_hinting import (
 
 
 def guarding_hint_or_throw(
-    a: Union[torch.SymInt, torch.SymBool, int, bool, SymNode],
-) -> Union[int, bool]:
+    a: torch.SymInt | torch.SymBool | int | bool | SymNode,
+) -> int | bool:
     """
     Return a concrete hint for a symbolic value, for use in guarding decisions.
 
@@ -151,9 +149,7 @@ def guarding_hint_or_throw(
     return a
 
 
-def optimization_hint(
-    a: Union[torch.SymInt, int], fallback: Optional[int] = None
-) -> int:
+def optimization_hint(a: torch.SymInt | int, fallback: int | None = None) -> int:
     """
     Return a concrete hint for a symbolic integer, for use in optimization decisions.
 
@@ -420,7 +416,7 @@ def create_contiguous(shape: Sequence[Int]) -> list[Int]:
     return list(reversed(strides))
 
 
-Scalar: TypeAlias = Union[torch.SymInt, torch.SymFloat, torch.SymBool, int, float, bool]
+Scalar: TypeAlias = torch.SymInt | torch.SymFloat | torch.SymBool | int | float | bool
 
 
 def has_guarding_hint(a: Scalar) -> bool:
@@ -2238,6 +2234,8 @@ class StatelessSymbolicContext(SymbolicContext, Generic[_P1, _T1]):
     view_base_context: SymbolicContext | None = None
     # Maps dimension index to shape_id.
     shape_ids: dict[int, str | None] | None = None
+    # Maps dimension index to (min, max) bounds for unbacked dimensions.
+    unbacked_bounds: dict[int, tuple[int | None, int | None]] | None = None
     # TODO: add storage offset and stride symbolic_context
 
     def __post_init__(self) -> None:
@@ -4068,8 +4066,8 @@ class ShapeEnv:
 
         # Used by _get_unbacked_replacements / _sub_unbacked_exprs for
         # optimization_hint canonicalization of unbacked expressions.
-        self._equality_graph: Optional[dict[sympy.Expr, OrderedSet[sympy.Expr]]] = None
-        self._unbacked_replacements: Optional[dict[sympy.Expr, sympy.Expr]] = None
+        self._equality_graph: dict[sympy.Expr, OrderedSet[sympy.Expr]] | None = None
+        self._unbacked_replacements: dict[sympy.Expr, sympy.Expr] | None = None
 
         self.trace_asserts = trace_asserts
 
@@ -5265,6 +5263,8 @@ class ShapeEnv:
             # If so, we allocate a fresh symbol but add a runtime equality check
             # via torch._check against the existing symbols with the same shape_id.
             shape_id = None
+            unbacked_min = None
+            unbacked_max = None
             if (
                 isinstance(symbolic_context, StatelessSymbolicContext)
                 and symbolic_context.shape_ids is not None
@@ -5274,9 +5274,29 @@ class ShapeEnv:
                 if isinstance(source, TensorPropertySource) and source.idx is not None:
                     shape_id = symbolic_context.shape_ids.get(source.idx)
 
+            # Check for unbacked bounds
+            if (
+                isinstance(symbolic_context, StatelessSymbolicContext)
+                and symbolic_context.unbacked_bounds is not None
+            ):
+                from torch._dynamo.source import TensorPropertySource
+
+                if isinstance(source, TensorPropertySource) and source.idx is not None:
+                    bounds = symbolic_context.unbacked_bounds.get(source.idx)
+                    if bounds is not None:
+                        unbacked_min, unbacked_max = bounds
+
             # Always allocate a fresh unbacked symbol
             out = self.create_unbacked_symint(source).node.expr
             self._constrain_range_for_size(out)
+
+            # Apply min/max bounds via torch._check if specified
+            if unbacked_min is not None or unbacked_max is not None:
+                out_symint = self.create_symintnode(out, hint=None)
+                if unbacked_min is not None:
+                    torch._check(out_symint >= unbacked_min)
+                if unbacked_max is not None:
+                    torch._check(out_symint <= unbacked_max)
 
             # Add runtime equality check for shape_id if applicable
             if shape_id is not None:
@@ -6898,7 +6918,7 @@ class ShapeEnv:
         return expr
 
     @lru_cache(256)
-    def guarding_hint_or_throw(self, expr: Union[sympy.Expr, int]) -> Union[int, bool]:
+    def guarding_hint_or_throw(self, expr: sympy.Expr | int) -> int | bool:
         """
         Return a concrete hint for an expression.
 
@@ -6916,7 +6936,7 @@ class ShapeEnv:
         return True
 
     def optimization_hint(
-        self, expr: Union[sympy.Expr, int], fallback: Optional[int] = None
+        self, expr: sympy.Expr | int, fallback: int | None = None
     ) -> int:
         """
         Return a concrete integer hint for an expression.
