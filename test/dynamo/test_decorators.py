@@ -1,4 +1,6 @@
 # Owner(s): ["module: dynamo"]
+from __future__ import annotations
+
 import copy
 import functools
 import operator
@@ -1149,13 +1151,22 @@ class DecoratorTests(PytreeRegisteringTestCase):
     def test_substitute_in_graph(self):
         counters.clear()
 
-        # NB: Choose another C function for test when we support operator.indexOf
+        class C:
+            def __init__(self, id: int):
+                self._id = id
+
+            def __matmul__(self, other: object) -> int:
+                if not isinstance(other, C):
+                    return NotImplemented
+                return self._id * other._id
+
+        # NB: Choose another C function for test when we support operator.matmul
         #     out of the box
         cnts = torch._dynamo.testing.CompileCounter()
-        fn = operator.indexOf
+        fn = operator.matmul
         opt_fn = torch.compile(fn, backend=cnts)
-        out = fn([1, 2, 3, 4, 5], 3)
-        opt_out = opt_fn([1, 2, 3, 4, 5], 3)
+        out = fn(C(3), C(2))
+        opt_out = opt_fn(C(3), C(2))
         self.assertEqual(out, opt_out)
         self.assertEqual(cnts.frame_count, 0)
         self.assertEqual(len(counters["graph_break"]), 1)
@@ -1165,25 +1176,19 @@ class DecoratorTests(PytreeRegisteringTestCase):
 
         with self.assertRaisesRegex(TypeError, "Signature mismatch"):
 
-            @torch._dynamo.substitute_in_graph(operator.indexOf)
-            def _(sequence, x):
-                for i, item in enumerate(sequence):
-                    if item is x or item == x:
-                        return i
-                raise ValueError("sequence.index(x): x not in sequence")
+            @torch._dynamo.substitute_in_graph(operator.matmul)
+            def _(self, other):
+                return self @ other
 
-        @torch._dynamo.substitute_in_graph(operator.indexOf)
-        def polyfill(a, b):
-            for i, item in enumerate(a):
-                if item is b or item == b:
-                    return i
-            raise ValueError("sequence.index(x): x not in sequence")
+        @torch._dynamo.substitute_in_graph(operator.matmul)
+        def polyfill(a: C, b: C) -> int:
+            return a._id * b._id
 
         cnts = torch._dynamo.testing.CompileCounter()
-        fn = operator.indexOf
+        fn = operator.matmul
         opt_fn = torch.compile(fn, backend=cnts, fullgraph=True)
-        out = fn([1, 2, 3, 4, 5], 3)
-        opt_out = opt_fn([1, 2, 3, 4, 5], 3)
+        out = fn(C(4), C(5))
+        opt_out = opt_fn(C(4), C(5))
         self.assertEqual(out, opt_out)
         self.assertEqual(cnts.frame_count, 0)
         self.assertEqual(len(counters["graph_break"]), 0)
@@ -1194,8 +1199,8 @@ class DecoratorTests(PytreeRegisteringTestCase):
         cnts = torch._dynamo.testing.CompileCounter()
         fn = polyfill
         opt_fn = torch.compile(fn, backend=cnts, fullgraph=True)
-        out = fn([1, 2, 3, 4, 5], 3)
-        opt_out = opt_fn([1, 2, 3, 4, 5], 3)
+        out = fn(C(7), C(8))
+        opt_out = opt_fn(C(7), C(8))
         self.assertEqual(out, opt_out)
         self.assertEqual(cnts.frame_count, 0)
         self.assertEqual(len(counters["graph_break"]), 0)
