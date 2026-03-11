@@ -737,6 +737,38 @@ def leaf_function(
     return inner
 
 
+@overload
+def opaque_function(fn: Callable[_P, _R]) -> Callable[_P, _R]: ...
+
+
+@overload
+def opaque_function(
+    *, level: str = "frontend", mutates_args: set[str] | None = None
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]: ...
+
+
+def opaque_function(
+    fn=None, *, level="frontend", mutates_args=None
+):
+    if level not in ("frontend", "all"):
+        raise ValueError(
+            f"Invalid level '{level}'. Expected 'frontend' or 'all'."
+        )
+
+    if level == "frontend" and mutates_args is not None:
+        raise ValueError(
+            "mutates_args is only supported with level='all'."
+        )
+
+    if level == "frontend":
+        if fn is not None:
+            return nonstrict_trace(fn)
+        return nonstrict_trace
+
+    # level == "all"
+    return leaf_function(fn, mutates_args=mutates_args)
+
+
 def _disallow_in_graph_helper(throw_if_not_allowed: bool) -> Callable[..., Any]:
     def inner(fn: Any) -> Any:
         if isinstance(fn, (list, tuple)):
