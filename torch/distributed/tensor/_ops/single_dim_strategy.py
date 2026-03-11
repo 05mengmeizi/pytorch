@@ -76,6 +76,7 @@ class _SingleDimStrategyInfo:
     func: _SingleDimStrategyFunc
     allow_unbacked_sharding: bool | None = field(default=None)
     allow_uneven_sharding: bool = field(default=False)
+    cross_mesh_indices: list[int] | None = field(default=None)
 
     # Delegate to func so this can be used interchangeably with a raw
     # _SingleDimStrategyFunc (e.g. in tests that call strategy functions directly).
@@ -461,6 +462,7 @@ def _expand_single_dim_strategy_to_mesh(
                 input_index=prepared_strategy.num_outputs,
                 allow_unbacked_sharding=prepared_strategy.allow_unbacked_sharding,
                 allow_uneven_sharding=prepared_strategy.allow_uneven_sharding,
+                cross_mesh_indices=strategy_info.cross_mesh_indices,
             )
 
         return expanded_strategy
@@ -482,12 +484,12 @@ def _expand_single_dim_strategy_to_mesh(
             # Unhashable types (SymInts), skip caching
             return _create_expanded_strategy_impl(op_schema, output_tensor_meta)
 
-    def _translate_foreach_op_schema(
+    def _translate_list_op_schema(
         op_schema: OpSchema, output_tensor_meta: Sequence[TensorMeta], index: int
     ) -> tuple[OpSchema, TensorMeta]:
-        """Translate foreach op to per-element version of schema."""
+        """Translate foreach/fused op to per-element version of schema."""
         op_parts = str(op_schema.op).split(".")
-        base_op_name = op_parts[-2].replace("_foreach_", "")
+        op_name = op_parts[-2]
         foreach_variant = op_parts[-1]
 
         # select per-element inputs, outputs
@@ -498,6 +500,27 @@ def _expand_single_dim_strategy_to_mesh(
             is_leaf=lambda x: isinstance(x, TupleStrategy),
         )
         target_output_meta = output_tensor_meta[index]
+
+        # Strip the prefix to get the base op name and find the per-element op.
+        # Fused ops (e.g. _fused_adam) have no per-element ATen equivalent,
+        # so we keep the original op unchanged.
+        if "_foreach_" in op_name:
+            base_op_name = op_name.replace("_foreach_", "")
+        elif "_amp_foreach_" in op_name:
+            base_op_name = op_name.replace("_amp_foreach_", "")
+        else:
+            # Fused ops or unknown: keep original op, no translation
+            target_op = op_schema.op
+            op_schema = OpSchema(
+                target_op,  # type: ignore[arg-type]
+                args_schema=tuple(target_args),
+                kwargs_schema=op_schema.kwargs_schema,
+            )
+            return op_schema, target_output_meta
+
+        # Strip trailing underscore for inplace ops
+        if base_op_name.endswith("_"):
+            base_op_name = base_op_name[:-1]
 
         # figure out target op variant
         variant_map = {
@@ -546,7 +569,7 @@ def _expand_single_dim_strategy_to_mesh(
 
         child_strategies: list[StrategyType] = []
         for tensorlist_i in range(tensorlist_len):
-            per_index_schema, per_index_output_meta = _translate_foreach_op_schema(
+            per_index_schema, per_index_output_meta = _translate_list_op_schema(
                 op_schema,
                 output_tensor_meta,  # type: ignore[arg-type]
                 tensorlist_i,
@@ -563,7 +586,12 @@ def _expand_single_dim_strategy_to_mesh(
         return TupleStrategy(children=child_strategies)
 
     # TODO maybe this could be helped by adding a new 'tag' to the OpOverload?
-    if op_schema.op.name().startswith("aten::_foreach_"):
+    op_name = op_schema.op.name()
+    if (
+        op_name.startswith("aten::_foreach_")
+        or op_name.startswith("aten::_amp_foreach_")
+        or op_name.startswith("aten::_fused_")
+    ):
         return expanded_foreach_strategy
 
     return _create_expanded_strategy(op_schema, output_tensor_meta)
@@ -574,6 +602,7 @@ def register_single_dim_strategy(
     schema_info: RuntimeSchemaInfo | None = None,
     allow_unbacked_sharding: bool | None = None,
     allow_uneven_sharding: bool = False,
+    cross_mesh_indices: list[int] | None = None,
 ) -> Callable[[_SingleDimStrategyFunc], _SingleDimStrategyFunc]:
     """
     Registers a single_dim_strategy function for the given op.
@@ -622,6 +651,7 @@ def register_single_dim_strategy(
             func=impl,
             allow_unbacked_sharding=allow_unbacked_sharding,
             allow_uneven_sharding=allow_uneven_sharding,
+            cross_mesh_indices=cross_mesh_indices,
         )
         registration_wrapper(info)
         return impl

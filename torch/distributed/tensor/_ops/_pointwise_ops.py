@@ -116,6 +116,16 @@ def _common_pointwise_single_dim_strategy(
     return strategy
 
 
+def _is_list_op(op: OpOverload) -> bool:
+    """Returns True if op is a foreach, amp_foreach, or fused op."""
+    name = op.name()
+    return (
+        name.startswith("aten::_foreach_")
+        or name.startswith("aten::_amp_foreach_")
+        or name.startswith("aten::_fused_")
+    )
+
+
 def _register_single_dim_pointwise(
     op: OpOverload,
     partial_extra_rules: list[list[Placement]] | None = None,
@@ -151,9 +161,13 @@ def _register_single_dim_pointwise(
             return [s + [s[0]] for s in strategies]
 
         strategy_fn = _out_wrapper
+    if _is_list_op(op):
+        schema_info = RuntimeSchemaInfo(needs_pytree=True)
+    else:
+        schema_info = RuntimeSchemaInfo(static_argnum, static_kwargkey=["out"])
     register_single_dim_strategy(
         op,
-        schema_info=RuntimeSchemaInfo(static_argnum, static_kwargkey=["out"]),
+        schema_info=schema_info,
         allow_uneven_sharding=True,
         allow_unbacked_sharding=True,
     )(strategy_fn)
@@ -171,6 +185,11 @@ binary_additive_ops = [
     aten.sub.Tensor,
     aten.sub_.Tensor,
     aten.sub.out,
+    # foreach variants
+    aten._foreach_add.List,
+    aten._foreach_add_.List,
+    aten._foreach_sub.List,
+    aten._foreach_sub_.List,
 ]
 
 _BINARY_ADDITIVE_RULES: list[list[Placement]] = [
@@ -191,8 +210,22 @@ for op in binary_additive_ops:
     _register_single_dim_pointwise(op, _BINARY_ADDITIVE_RULES)
 
 # mul: partials propagate through either arg. div: only through numerator.
-binary_mul_ops = [aten.mul.Tensor, aten.mul_.Tensor, aten.mul.out]
-binary_div_ops = [aten.div.Tensor, aten.div_.Tensor, aten.div.out]
+binary_mul_ops = [
+    aten.mul.Tensor,
+    aten.mul_.Tensor,
+    aten.mul.out,
+    # foreach variants
+    aten._foreach_mul.List,
+    aten._foreach_mul_.List,
+]
+binary_div_ops = [
+    aten.div.Tensor,
+    aten.div_.Tensor,
+    aten.div.out,
+    # foreach variants
+    aten._foreach_div.List,
+    aten._foreach_div_.List,
+]
 
 # _UNARY_LINEAR_RULES handles the scalar promotion case: Python's __mul__/__truediv__
 # promote scalars to 0-dim tensors, so aten.mul.Scalar dispatches as aten.mul.Tensor
@@ -220,6 +253,11 @@ scalar_linear_ops = [
     aten.div_.Scalar,
     aten.mul.Scalar,
     aten.mul_.Scalar,
+    # foreach variants
+    aten._foreach_div.Scalar,
+    aten._foreach_div_.Scalar,
+    aten._foreach_mul.Scalar,
+    aten._foreach_mul_.Scalar,
 ]
 
 for op in scalar_linear_ops:
@@ -322,7 +360,14 @@ for op in non_increasing_unary_ops:
     _register_single_dim_pointwise(op, _NON_INCREASING_RULES)
 
 # neg is linear: -(A1 + A2) = -A1 + -A2
-neg_ops = [aten.neg.default, aten.neg_.default, aten.neg.out]
+neg_ops = [
+    aten.neg.default,
+    aten.neg_.default,
+    aten.neg.out,
+    # foreach variants
+    aten._foreach_neg.default,
+    aten._foreach_neg_.default,
+]
 
 _NEG_RULES: list[list[Placement]] = _UNARY_LINEAR_RULES + _NON_INCREASING_RULES
 
@@ -721,6 +766,49 @@ pointwise_ops = [
     prims.ne.default,
     prims.spherical_bessel_j0.default,
     prims.zeta.default,
+    # foreach variants
+    aten._foreach_abs.default,
+    aten._foreach_abs_.default,
+    aten._foreach_addcdiv_.Scalar,
+    aten._foreach_addcdiv_.ScalarList,
+    aten._foreach_addcdiv_.Tensor,
+    aten._foreach_addcmul.Scalar,
+    aten._foreach_addcmul_.Scalar,
+    aten._foreach_addcmul_.ScalarList,
+    aten._foreach_addcmul_.Tensor,
+    aten._foreach_clamp_max_.Scalar,
+    aten._foreach_clamp_min_.Scalar,
+    aten._foreach_div_.ScalarList,
+    aten._foreach_div_.Tensor,
+    aten._foreach_div.ScalarList,
+    aten._foreach_div.Tensor,
+    aten._foreach_lerp_.Scalar,
+    aten._foreach_maximum_.List,
+    aten._foreach_mul.ScalarList,
+    aten._foreach_mul.Tensor,
+    aten._foreach_mul_.ScalarList,
+    aten._foreach_mul_.Tensor,
+    aten._foreach_pow.List,
+    aten._foreach_pow.ScalarList,
+    aten._foreach_reciprocal_.default,
+    aten._foreach_sub.Scalar,
+    aten._foreach_sub_.Scalar,
+    aten._foreach_sub.ScalarList,
+    aten._foreach_sub_.ScalarList,
+    aten._foreach_sqrt.default,
+    aten._foreach_sqrt_.default,
+    aten._foreach_zero_.default,
+    aten._foreach_exp.default,
+    aten._foreach_exp_.default,
+    aten._foreach_cos.default,
+    aten._foreach_cos_.default,
+    aten._foreach_log.default,
+    aten._foreach_log_.default,
+    aten._amp_foreach_non_finite_check_and_unscale_.default,
+    # foreach linearity variants
+    aten._foreach_add.Scalar,
+    aten._foreach_add_.Scalar,
+    aten._foreach_add_.ScalarList,
 ]
 
 
@@ -1259,3 +1347,10 @@ for op in fused_ops:
     register_op_strategy(op, schema_info=RuntimeSchemaInfo(needs_pytree=True))(
         list_pointwise_strategy
     )
+
+for op in fused_ops:
+    register_single_dim_strategy(
+        op,
+        schema_info=RuntimeSchemaInfo(needs_pytree=True),
+        cross_mesh_indices=[_FUSED_OP_SCALAR_IDX],
+    )(single_mesh_dim_pointwise_strategy)

@@ -919,6 +919,129 @@ class DistElementwiseOpsTest(DTensorOpTestBase):
         self.assertEqual(d_self.full_tensor(), expected)
 
 
+    @with_comms
+    def test_foreach_add_list_partial(self):
+        """Test that _foreach_add.List preserves Partial("sum") placement."""
+        device_mesh = self.build_device_mesh()
+        comm_mode = CommDebugMode()
+
+        t1 = torch.rand(8, 8, device=self.device_type)
+        t2 = torch.rand(8, 8, device=self.device_type)
+
+        dt1 = DTensor.from_local(t1, device_mesh, [Partial("sum")])
+        dt2 = DTensor.from_local(t2, device_mesh, [Partial("sum")])
+
+        with comm_mode:
+            result = torch._foreach_add([dt1], [dt2])
+
+        self.assertEqual(comm_mode.get_total_counts(), 0)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(isinstance(result[0], DTensor))
+        self.assertEqual(result[0].placements, (Partial("sum"),))
+
+    @with_comms
+    def test_foreach_mul_scalar_partial(self):
+        """Test that _foreach_mul.Scalar preserves Partial("sum") placement."""
+        device_mesh = self.build_device_mesh()
+        comm_mode = CommDebugMode()
+
+        t1 = torch.rand(8, 8, device=self.device_type)
+        dt1 = DTensor.from_local(t1, device_mesh, [Partial("sum")])
+
+        with comm_mode:
+            result = torch._foreach_mul([dt1], 2.0)
+
+        self.assertEqual(comm_mode.get_total_counts(), 0)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(isinstance(result[0], DTensor))
+        self.assertEqual(result[0].placements, (Partial("sum"),))
+
+    @with_comms
+    def test_foreach_neg_partial(self):
+        """Test that _foreach_neg preserves Partial("sum") placement."""
+        device_mesh = self.build_device_mesh()
+        comm_mode = CommDebugMode()
+
+        t1 = torch.rand(8, 8, device=self.device_type)
+        dt1 = DTensor.from_local(t1, device_mesh, [Partial("sum")])
+
+        with comm_mode:
+            result = torch._foreach_neg([dt1])
+
+        self.assertEqual(comm_mode.get_total_counts(), 0)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(isinstance(result[0], DTensor))
+        self.assertEqual(result[0].placements, (Partial("sum"),))
+
+    @with_comms
+    def test_foreach_sharded(self):
+        """Test that foreach ops work correctly with Shard placements."""
+        device_mesh = self.build_device_mesh()
+        comm_mode = CommDebugMode()
+
+        t1 = torch.rand(8, 8, device=self.device_type)
+        t2 = torch.rand(8, 8, device=self.device_type)
+
+        dt1 = distribute_tensor(t1, device_mesh, [Shard(0)])
+        dt2 = distribute_tensor(t2, device_mesh, [Shard(0)])
+
+        with comm_mode:
+            result = torch._foreach_add([dt1], [dt2])
+
+        self.assertEqual(comm_mode.get_total_counts(), 0)
+        self.assertEqual(len(result), 1)
+        self.assertTrue(isinstance(result[0], DTensor))
+        self.assertEqual(result[0].placements, (Shard(0),))
+
+    @with_comms
+    def test_fused_adam_same_mesh(self):
+        """Test that fused adam works with tensors on the same mesh."""
+        device_mesh = self.build_device_mesh()
+
+        # Create params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps
+        params = [torch.rand(8, 8, device=self.device_type)]
+        grads = [torch.rand(8, 8, device=self.device_type)]
+        exp_avgs = [torch.zeros(8, 8, device=self.device_type)]
+        exp_avg_sqs = [torch.zeros(8, 8, device=self.device_type)]
+        max_exp_avg_sqs = [torch.zeros(8, 8, device=self.device_type)]
+        state_steps = [torch.tensor(1.0, device=self.device_type)]
+
+        # Distribute all tensors on the same mesh
+        d_params = [distribute_tensor(p, device_mesh, [Shard(0)]) for p in params]
+        d_grads = [distribute_tensor(g, device_mesh, [Shard(0)]) for g in grads]
+        d_exp_avgs = [distribute_tensor(e, device_mesh, [Shard(0)]) for e in exp_avgs]
+        d_exp_avg_sqs = [
+            distribute_tensor(e, device_mesh, [Shard(0)]) for e in exp_avg_sqs
+        ]
+        d_max_exp_avg_sqs = [
+            distribute_tensor(e, device_mesh, [Shard(0)]) for e in max_exp_avg_sqs
+        ]
+        d_state_steps = [
+            distribute_tensor(s, device_mesh, [Replicate()]) for s in state_steps
+        ]
+
+        # This should not raise
+        torch._fused_adam_(
+            d_params,
+            d_grads,
+            d_exp_avgs,
+            d_exp_avg_sqs,
+            d_max_exp_avg_sqs,
+            d_state_steps,
+            lr=0.001,
+            beta1=0.9,
+            beta2=0.999,
+            weight_decay=0.0,
+            eps=1e-8,
+            amsgrad=False,
+            maximize=False,
+        )
+
+        # Verify outputs are still DTensors with expected placements
+        self.assertTrue(isinstance(d_params[0], DTensor))
+        self.assertEqual(d_params[0].placements, (Shard(0),))
+
+
 instantiate_parametrized_tests(DistElementwiseOpsTest)
 
 
