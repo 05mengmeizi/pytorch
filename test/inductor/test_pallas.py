@@ -392,7 +392,6 @@ class PallasTestsMixin:
                 expected = fn(x, y)
                 self.assertEqual(result, expected)
 
-    @skip_if_tpu
     def test_different_shapes(self):
         """Test with different tensor shapes."""
         if self.DEVICE == "cuda":

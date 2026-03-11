@@ -1398,6 +1398,83 @@ class PallasKernel(SIMDKernel):
                         slice_parts.append(":")
                 code.writeline(f"{param} = {param}[{', '.join(slice_parts)}]")
 
+    def _codegen_collapsed_input_reshapes(
+        self, code: IndentedBuffer, params: list[str]
+    ) -> None:
+        """Flatten non-strided multi-dim inputs when collapsed dim groups exist.
+
+        When a single iteration variable spans multiple buffer dimensions,
+        strided inputs are reshaped to a collapsed form (e.g. (1024, 2)).
+        Non-strided inputs with matching numel also need flattening so that
+        shapes broadcast correctly inside the kernel.
+        """
+        if not self.strided_dim_groups:
+            return
+
+        num_vars = len(self.used_iter_vars)
+        if num_vars < 2:
+            return
+
+        # Find the collapsed range from any strided input's dim groups
+        collapsed_numel: int | None = None
+        for buf_name, groups in self.strided_dim_groups.items():
+            if buf_name not in self.strided_input_buffers:
+                continue
+            strides = self.strided_input_buffers[buf_name]
+            info = self._get_buffer_info(buf_name)
+            if info is None:
+                continue
+            _, buf_size, _, _, _ = info
+            for group in groups:
+                if len(group) <= 1:
+                    continue
+                merged = 1
+                group_stride = 1
+                valid = True
+                for d in group:
+                    dim = self._safe_int(buf_size[d])
+                    if dim is None:
+                        valid = False
+                        break
+                    merged *= dim
+                    if strides[d][0] > 1:
+                        group_stride = strides[d][0]
+                if valid:
+                    collapsed_numel = merged // group_stride
+                    break
+            if collapsed_numel is not None:
+                break
+
+        if collapsed_numel is None:
+            return
+
+        trailing_ones = num_vars - 1
+        target_shape = [str(collapsed_numel)] + ["1"] * trailing_ones
+        target_shape_str = ", ".join(target_shape)
+
+        for param in params:
+            buf_name = self._param_to_buf_name(param)
+            if buf_name is None or buf_name in self.strided_input_buffers:
+                continue
+            info = self._get_buffer_info(buf_name)
+            if info is None:
+                continue
+            _, buf_size, _, _, _ = info
+            if len(buf_size) <= 1:
+                continue
+            numel = 1
+            for s in buf_size:
+                dim = self._safe_int(s)
+                if dim is None:
+                    numel = None  # type: ignore[assignment]
+                    break
+                numel *= dim
+            if numel != collapsed_numel:
+                continue
+            code.writeline(
+                f"{param} = {param}.reshape({target_shape_str})"
+            )
+
     @staticmethod
     def _c_contiguous_strides(shape: list[int]) -> list[int]:
         """Return C-contiguous strides for the given shape."""
@@ -3347,6 +3424,9 @@ class PallasKernel(SIMDKernel):
                 self._codegen_tiled_specs(ctx)
             else:
                 self._codegen_strided_reshapes(code, ctx.kernel_input_params)
+                self._codegen_collapsed_input_reshapes(
+                    code, ctx.kernel_input_params
+                )
 
                 code.writeline("indexer = lambda n: lambda i: [jnp.int32(i)] * n")
                 code.writeline("out_specs_pallas = tuple(")
@@ -3453,6 +3533,19 @@ from torch._inductor.runtime.runtime_utils import (
             if result[0]:
                 reshape_target_shape, reshape_target_numel = result
                 break
+
+        # When collapsed dim groups exist (a single iteration variable
+        # spans multiple buffer dims), skip N-D reshape for iteration
+        # vars.  This keeps them flat (e.g. (1024, 1)) so shapes are
+        # consistent with the collapsed strided input (e.g. (1024, 2)).
+        has_collapsed_dims = any(
+            len(g) > 1
+            for groups in self.strided_dim_groups.values()
+            for g in groups
+        )
+        if has_collapsed_dims:
+            reshape_target_shape = None
+            reshape_target_numel = None
 
         var_items = list(self.range_tree_nodes.items())
 
