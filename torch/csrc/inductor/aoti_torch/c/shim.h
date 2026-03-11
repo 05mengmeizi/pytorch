@@ -640,17 +640,18 @@ AOTI_TORCH_EXPORT void aoti_torch_check(
         __func__,                                \
         __FILE__,                                \
         static_cast<uint32_t>(__LINE__),         \
-        TORCH_CHECK_MSG(cond, "", __VA_ARGS__)); \
+        #cond " CHECK FAILED at " __FILE__);     \
   }
 #else
-#define AOTI_TORCH_CHECK(cond, ...)                \
-  if (!(cond)) {                                   \
-    aoti_torch_check(                              \
-        false,                                     \
-        __func__,                                  \
-        __FILE__,                                  \
-        static_cast<uint32_t>(__LINE__),           \
-        TORCH_CHECK_MSG(cond, "", ##__VA_ARGS__)); \
+#define AOTI_TORCH_CHECK(cond, ...)              \
+  if (!(cond)) {                                 \
+    aoti_torch_check(                            \
+        false,                                   \
+        __func__,                                \
+        __FILE__,                                \
+        static_cast<uint32_t>(__LINE__),         \
+        #cond " AOTI_TORCH_CHECK failed. "       \
+        #__VA_ARGS__);                           \
   }
 #endif
 
