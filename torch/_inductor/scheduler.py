@@ -6128,9 +6128,13 @@ class Scheduler:
         # Fall back to name-based matching so that the fusion score reflects
         # the actual shared buffers.
         if (
-            isinstance(node1.node, ir.UserDefinedTritonKernel)
-            and node1.node.can_fuse_epilogue()
-        ) or node1.is_template() or node2.is_template():
+            (
+                isinstance(node1.node, ir.UserDefinedTritonKernel)
+                and node1.node.can_fuse_epilogue()
+            )
+            or node1.is_template()
+            or node2.is_template()
+        ):
             node1_deps = node1.read_writes.reads | node1.read_writes.writes
             node2_deps = node2.read_writes.reads | node2.read_writes.writes
 
@@ -7634,16 +7638,12 @@ class BaseScheduling:  # noqa: docstring_linter
         and node2 corresponds to one of its outputs. If so, we further check if
         backend supports this fusion.
 
-        Delegates to ``TemplateBuffer.can_fuse_multi_output_epilogue`` which
-        TemplateBuffer subclasses may override to allow fusion of additional node types.
         """
         template_buf = node1.get_template_node()
         if not isinstance(template_buf, ir.TemplateBuffer):
             return False
         if not template_buf.is_multi_outputs_template():
             return False
-        if template_buf.can_fuse_multi_output_epilogue(node2):
-            return True
         return False
 
     def fuse(
