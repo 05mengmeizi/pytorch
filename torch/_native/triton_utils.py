@@ -54,6 +54,10 @@ def runtime_version() -> None | Version:
 @functools.cache
 def _version_is_sufficient() -> bool:
     _, version = _check_runtime_available()
+
+    if version is None:
+        return False
+
     # Either exact version, or same major
     major_ok = version.major == _TRITON_REQUIRED_VERSION_MAJOR
     minor_ok = version.minor >= _TRITON_MINIMUM_VERSION_MINOR
