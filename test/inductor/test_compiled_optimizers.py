@@ -1020,52 +1020,40 @@ class CompiledOptimizerBitwiseTests(TestCase):
         torch._inductor.metrics.reset()
         torch.manual_seed(42)
 
-        params_eager = [
-            torch.randn(64, 64, device=GPU_TYPE, dtype=torch.float32),
-            torch.randn(32, 32, device=GPU_TYPE, dtype=torch.float32),
-        ]
-        params_compiled = [p.clone() for p in params_eager]
-
-        opt_eager = optim_cls(
-            params_eager,
-            **optim_kwargs,
+        input = torch.ones([10, 10], device=GPU_TYPE)
+        model_eager = torch.nn.Sequential(
+            *[torch.nn.Linear(10, 10, device=GPU_TYPE) for _ in range(2)]
         )
-        opt_compiled = optim_cls(
-            params_compiled,
-            **optim_kwargs,
-        )
+        model_eager(input).sum().backward()
 
-        @torch.compile
-        def compiled_step():
-            opt_compiled.step()
+        model_compiled = deepcopy(model_eager)
+        model_compiled(input).sum().backward()
 
-        for step in range(num_steps):
-            # Generate gradients with consistent seed
-            torch.manual_seed(1000 + step)
-            grads = [torch.randn_like(p) for p in params_eager]
+        opt_eager = optim_cls(model_eager.parameters(), **optim_kwargs)
+        opt_compiled = optim_cls(model_compiled.parameters(), **optim_kwargs)
+        compiled_step = compile_opt(opt_compiled)
 
-            for p, g in zip(params_eager, grads):
-                p.grad = g.clone()
-            for p, g in zip(params_compiled, grads):
-                p.grad = g.clone()
+        with torch.set_grad_enabled(False):
+            for step in range(num_steps):
+                compiled_step()
+                opt_eager.step()
 
-            opt_eager.step()
-            compiled_step()
-
-            # Check bitwise equality
-            for i, (p_eager, p_compiled) in enumerate(
-                zip(params_eager, params_compiled)
-            ):
-                test_case.assertEqual(
-                    p_eager,
-                    p_compiled,
-                    atol=0,
-                    rtol=0,
-                    msg=f"Step {step + 1}, param {i}: params differ",
-                )
+                # Check bitwise equality
+                for i, (p_eager, p_compiled) in enumerate(
+                    zip(model_eager.parameters(), model_compiled.parameters())
+                ):
+                    test_case.assertEqual(
+                        p_eager,
+                        p_compiled,
+                        atol=0,
+                        rtol=0,
+                        msg=f"Step {step + 1}, param {i}: params differ",
+                    )
 
         # Also check optimizer state
-        for p_eager, p_compiled in zip(params_eager, params_compiled):
+        for p_eager, p_compiled in zip(
+            model_eager.parameters(), model_compiled.parameters()
+        ):
             for key in opt_eager.state[p_eager]:
                 eager_val = opt_eager.state[p_eager][key]
                 compiled_val = opt_compiled.state[p_compiled][key]
@@ -1100,6 +1088,7 @@ def _make_bitwise_test(optim_cls, kernel_count=None, **optim_kwargs):
     @requires_cuda_and_triton
     @config.patch(
         {
+            "score_fusion_memory_threshold": 1,
             "eager_numerics.division_rounding": True,
             "eager_numerics.use_pytorch_libdevice": True,
             "emulate_precision_casts": True,
@@ -1142,14 +1131,16 @@ for optim_cls, name, kwargs, scheduler_cls in COMPILED_OPT_KWARG_DB:
         )
     ):
         bitwise_name = name.replace("test_", "test_bitwise_")
-        # Compute from KERNEL_COUNTS directly rather than reusing
-        # kwargs["kernel_count"], which may be a lambda from
-        # KERNEL_COUNT_OVERRIDES tied to a specific source location.
-        kernel_count = (
-            KERNEL_COUNTS[optim_cls].multitensor
-            if kwargs.get("foreach", False)
-            else KERNEL_COUNTS[optim_cls].singletensor
-        )
+        # Use the same kernel count as the non-bitwise test, including
+        # any overrides for specific test configurations.
+        if name in KERNEL_COUNT_OVERRIDES:
+            kernel_count = KERNEL_COUNT_OVERRIDES[name]
+        else:
+            kernel_count = (
+                KERNEL_COUNTS[optim_cls].multitensor
+                if kwargs.get("foreach", False)
+                else KERNEL_COUNTS[optim_cls].singletensor
+            )
         optim_kwargs = {
             k: v for k, v in kwargs.items() if k not in ("device", "kernel_count")
         }
