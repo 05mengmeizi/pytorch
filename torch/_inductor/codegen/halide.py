@@ -594,10 +594,6 @@ class HalideOverrides(OpOverrides):
         raise NotImplementedError("frexp")
 
     @staticmethod
-    def device_assert_async(cond, msg):
-        raise NotImplementedError("device_assert_async")
-
-    @staticmethod
     # pyrefly: ignore [bad-override]
     def partial_accumulate(
         name: str,
@@ -1707,6 +1703,9 @@ class HalideKernel(SIMDKernel):
             device=current_device,
             triton=False,
         )
+
+    def device_assert_async(self, cond, msg):
+        pass  # Halide pipelines are declarative; see also generate_assert/check_bounds
 
     def generate_assert(self, check):
         return False  # TODO(jansel): support asserts

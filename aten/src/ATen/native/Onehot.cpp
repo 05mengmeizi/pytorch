@@ -31,12 +31,11 @@ Tensor one_hot(const Tensor &self, int64_t num_classes) {
         }
         // Validate index bounds. _assert_async traces into the compiled graph
         // so these checks run at execution time without a host-device sync.
-        if (self.sym_numel() > 0) {
-          at::_assert_async(at::all(at::ge(self, 0)),
-              "one_hot: Class values must be non-negative.");
-          at::_assert_async(at::all(at::lt(self, num_classes)),
-              "one_hot: Class values must be smaller than num_classes.");
-        }
+        // No numel guard needed: all() on an empty tensor returns True.
+        at::_assert_async(at::all(at::ge(self, 0)),
+            "one_hot: Class values must be non-negative.");
+        at::_assert_async(at::all(at::lt(self, num_classes)),
+            "one_hot: Class values must be smaller than num_classes.");
         {
           // If `self` is a DTensor, then allow implicit replication
           // of the `index` Tensor.
