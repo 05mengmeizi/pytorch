@@ -5174,7 +5174,6 @@ class CPUReproTests(TestCase):
                     "at::vec::VectorizedN<double,2>::loadu", 2, exactly=True
                 ).run(code)
 
-
     @unittest.skipIf(
         get_gcc_major_version() == 13,
         "Fails under GCC 13 due to vector codegen (passes with GCC 11)",
