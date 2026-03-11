@@ -5465,7 +5465,6 @@ class AOTInductorTestsTemplate:
     )
     @common_utils.parametrize("enable_kernel_profile", (True, False))
     def test_aoti_profiler(self, enable_kernel_profile):
-        # basic addmm model
         class Model(torch.nn.Module):
             def __init__(self, n, k, device):
                 super().__init__()
@@ -5473,7 +5472,10 @@ class AOTInductorTestsTemplate:
                 self.bias = torch.randn(n, device=device)
 
             def forward(self, a):
-                return torch.nn.functional.linear(a, self.weight, self.bias)
+                # addmm: exercises scalar args (alpha, beta) and output handle
+                out = torch.nn.functional.linear(a, self.weight, self.bias)
+                # mm with transposed view: exercises ReinterpretView input path
+                return torch.mm(out.t(), a)
 
         if sys.platform not in ["linux", "win32"]:
             raise unittest.SkipTest(
@@ -5484,8 +5486,7 @@ class AOTInductorTestsTemplate:
         N = 6
         K = 16
         model = Model(N, K, self.device)
-        batch = 2
-        a = torch.randn(batch, M, K, device=self.device)
+        a = torch.randn(M, K, device=self.device)
         example_inputs = (a,)
         kernel_calls = (
             f"aoti_torch_{GPU_TYPE}_addmm_out"
@@ -5499,6 +5500,18 @@ class AOTInductorTestsTemplate:
             shim_fn_codes = f'RAIIAtenRecordFunctionHandle .*\\("{kernel_calls}"'
             if enable_kernel_profile:
                 FileCheck().check_regex(shim_fn_codes).run(code)
+                # Verify that tensor inputs are converted to IValues for
+                # shape recording (3-arg RAIIAtenRecordFunctionHandle form).
+                FileCheck().check("aoti_torch_tensor_to_ivalue").run(code)
+                # Verify dummy scalar IValues are generated for non-tensor args.
+                FileCheck().check("aoti_torch_int64_to_ivalue").run(code)
+                FileCheck().check("std::vector<C10IValueHandle>").run(code)
+                # Verify output tensor is included in IValues for out-variant
+                # kernels.
+                FileCheck().check_regex(r"tmp_.*_output\b").run(code)
+                # Verify ReinterpretView inputs use reinterpret_tensor_wrapper
+                # for correct logical shapes in profiling.
+                FileCheck().check("reinterpret_tensor_wrapper").run(code)
             else:
                 FileCheck().check_not("RAIIAtenRecordFunctionHandle").run(code)
 
