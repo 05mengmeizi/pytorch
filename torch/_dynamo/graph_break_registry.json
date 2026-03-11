@@ -3396,6 +3396,20 @@
       ]
     }
   ],
+  "GB7324": [
+    {
+      "Gb_type": "returning intermediate with requires_grad_()",
+      "Context": "graph output depends on source-less requires_grad_()",
+      "Explanation": "msg",
+      "Hints": [
+        "If you only need the tensor values without gradients, ",
+        "call .detach() before returning.",
+        "Consume the gradient inside the compiled function ",
+        "(call backward() and use .grad), ",
+        "or move requires_grad_() outside torch.compile."
+      ]
+    }
+  ],
   "GB0280": [
     {
       "Gb_type": "1-arg super not implemented",
