@@ -199,7 +199,7 @@ class CPythonTestCase(TestCase):
                 f"For debugging, run with TORCH_LOGS=dynamo to see what prevented compilation."
             )
             if skip_test_file.exists():
-                raise unittest.SkipTest(reason)
+                raise unittest.SkipTest(reason) from None
             else:
                 self.fail(reason)
 
@@ -210,8 +210,8 @@ class CPythonTestCase(TestCase):
             except RuntimeError as e:
                 if "Unexpected success, please remove" in e.args[0]:
                     self._check_dynamo_compile_test(captured)
-                    # re-raise the original error
-                    raise
+                # re-raise the original error
+                raise
             else:
                 self._check_dynamo_compile_test(captured)
 
