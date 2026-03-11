@@ -397,8 +397,7 @@ class _AnalyzeCustomOpInputOutputMode(TorchDispatchMode):
         if (
             not isinstance(func, torch._ops.HigherOrderOperator)
             and not is_builtin(func)
-            # TODO (https://github.com/pytorch/pytorch/issues/170986)
-            and func.namespace not in ("_c10d_functional", "c10d", "onednn")
+            and func.namespace not in ("_c10d_functional", "c10d")
             and not _schema_allows_aliasing(func)
         ):
             _check_custom_op_aliasing(

@@ -361,6 +361,19 @@ class TestFunctionSchema(TestCase):
             f"Return {return_idx} should have alias annotation in schema {schema}",
         )
 
+    def test_onednn_qconv2d_pointwise_binary_alias_annotations(self):
+        # The qaccum argument is mutated (used as the output buffer) and the
+        # return aliases it. Verify the schema reflects this.
+        schemas = {str(s): s for s in torch._C._jit_get_all_schemas()}
+        for overload in ("binary", "binary_tensor"):
+            key = f"onednn::qconv2d_pointwise.{overload}"
+            matching = [s for name, s in schemas.items() if name.startswith(key)]
+            if not matching:
+                raise unittest.SkipTest(f"Schema {key} not registered (onednn not available)")
+            schema = matching[0]
+            self._check_alias_annotation(schema, "qaccum", expected_is_write=True)
+            self._check_return_alias_annotation(schema, 0)
+
     def test_fsdp_all_gather_copy_in_alias_annotations(self):
         # The all_gather_output argument is mutated and both returns alias it.
         try:
