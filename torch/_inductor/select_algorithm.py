@@ -1092,7 +1092,9 @@ class TritonTemplateKernel(TritonKernel):
             # is needed on the load.  Pass "None" when mask is unset to override
             # the mask that would otherwise be inherited.
             contiguous_index = self._setup_contiguous_index_state(
-                indices, index_symbols, lengths,
+                indices,
+                index_symbols,
+                lengths,
                 mask=mask if mask is not None else "None",
             )
             self.template_out_shape = index_shape if index_shape else "xindex"
@@ -1447,7 +1449,9 @@ class TritonTemplateKernel(TritonKernel):
             )
             self.codegen_body()
 
-        return self._register_hook(subgraph_name, self._make_codegen_hook(subgraph_name))
+        return self._register_hook(
+            subgraph_name, self._make_codegen_hook(subgraph_name)
+        )
 
     def _register_hook(
         self,
