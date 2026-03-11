@@ -1,4 +1,4 @@
-"""AC rematerialize pass: Duplicates checkpointed nodes for backward, then DCE removes unused forward versions."""
+"""AC rematerialize pass: Duplicates recompute nodes for backward, then DCE removes unused forward versions."""
 
 import logging
 from typing import Any, overload
@@ -41,7 +41,7 @@ def _is_backward_node(node: fx.Node) -> bool:
 
 def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModule:
     """
-    Duplicate checkpointed nodes for backward use. DCE removes unused forward versions. We assume that
+    Duplicate recompute nodes for backward use. DCE removes unused forward versions. We assume that
     you already annotated your backward region with fx.traceback.annotate({"remat_pass_tag": "is_backward"})
     which helps us identify the backward region.
     """
@@ -61,9 +61,9 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
 
     if has_recomputable_rng_ops(gm):
         raise RuntimeError(
-            "Activation checkpoint rematerializing in `forward-loss-backward` graph does not support RNG ops "
-            "in checkpointed regions. Please move RNG operations outside "
-            "of checkpoint regions, or use joint graph mode (where partitioner handles RNG)."
+            "Activation checkpoint rematerialization in `forward-loss-backward` graph does not support RNG ops "
+            "in recompute regions. Please move RNG operations outside "
+            "of recompute regions, or use joint graph mode (where partitioner handles RNG)."
         )
 
     # Use partitioner pass to normalize AC node tags.
@@ -90,30 +90,31 @@ def remat_using_tags_for_fwd_loss_bwd_graph(gm: fx.GraphModule) -> fx.GraphModul
             return x
         return recomputed_nodes.get(x, env[x])
 
-    def gather_checkpointed_deps(node: fx.Node, visited: set[fx.Node]) -> None:
-        if node in visited or node in recomputed_nodes:
-            return
-        if not must_recompute(node):
-            return
-        visited.add(node)
+    def gather_recompute_deps(node: fx.Node) -> set[fx.Node]:
+        deps: set[fx.Node] = set()
+
+        def _gather(n: fx.Node) -> None:
+            if n in deps or n in recomputed_nodes or not must_recompute(n):
+                return
+            deps.add(n)
+            for inp in n.all_input_nodes:
+                _gather(inp)
+
+        # Can't call _gather(node) directly: node itself may not be must_recompute
+        # (e.g. backward nodes), so _gather would return early without visiting inputs.
         for inp in node.all_input_nodes:
-            gather_checkpointed_deps(inp, visited)
+            _gather(inp)
+        return deps
 
     # Insert backward nodes
     for node in list(gm.graph.nodes)[bwd_start:]:
-        # Gather all checkpointed deps needed by this node
-        deps = set()
-        for inp in node.all_input_nodes:
-            if must_recompute(inp):
-                gather_checkpointed_deps(inp, deps)
+        # Gather all deps that need to be recomputed for this node
+        deps = gather_recompute_deps(node)
 
         # Insert deps in forward order (guaranteed disjoint from already-inserted)
         # This is not as inefficient as it looks, because we only add fresh dependencies
         # when they are not yet processed as recomputed nodes.
-        new_deps = sorted(
-            (dep for dep in deps if dep not in recomputed_nodes),
-            key=lambda n: order[n],
-        )
+        new_deps = sorted(deps, key=lambda n: order[n])
         if new_deps:
             log.debug(
                 "To compute backward node %s, recomputing [%s]",
