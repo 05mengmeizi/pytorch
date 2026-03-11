@@ -37,7 +37,8 @@ from torch.testing._internal.common_utils import dtype_name, freeze_rng_state, r
     download_file, get_function_arglist, load_tests, skipIfMPS, \
     IS_PPC, \
     parametrize as parametrize_test, subtest, \
-    skipIfTorchDynamo, gcIfJetson, set_default_dtype, ACCELERATOR_TYPE
+    skipIfTorchDynamo, gcIfJetson, set_default_dtype
+
 from torch.testing._internal.common_cuda import TEST_CUDA, TEST_MULTIGPU, TEST_CUDNN, \
     _get_torch_rocm_version
 from torch.testing._internal.common_nn import NNTestCase, NewModuleTest, CriterionTest, \
@@ -47,7 +48,7 @@ from torch.testing._internal.common_device_type import dtypesIfMPS, instantiate_
     dtypesIfCUDA, precisionOverride, onlyCUDA, onlyCPU, \
     skipCUDAIfRocm, skipCUDAIf, skipCUDAIfNotRocm, \
     onlyNativeDeviceTypes, deviceCountAtLeast, largeTensorTest, expectedFailureMeta, expectedFailureMPS, \
-    skipMeta, get_all_device_types, onlyAccelerator
+    skipMeta, get_all_device_types, onlyOn
 
 from hypothesis import given
 import torch.testing._internal.hypothesis_utils as hu
@@ -59,6 +60,15 @@ from torch.types import _TensorOrTensors
 from torch.testing._internal.common_mkldnn import reduced_f32_on_and_off
 
 AMPERE_OR_ROCM = TEST_WITH_ROCM or torch.cuda.is_tf32_supported()
+
+ACCELERATOR_TYPE = (
+    acc.type
+    if (acc := torch.accelerator.current_accelerator(check_available=True))
+    else None
+)
+
+def onlyAccelerator(fn):
+    return onlyOn(["cuda", "mps", "xpu"])(fn)
 
 if TEST_WITH_ROCM:
     os.environ["PYTORCH_MIOPEN_SUGGEST_NHWC"] = "1"
