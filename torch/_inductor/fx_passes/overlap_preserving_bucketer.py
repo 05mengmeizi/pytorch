@@ -9,6 +9,7 @@ import torch.fx as fx
 from torch._dynamo.utils import counters
 from torch._inductor.augmented_graph_helper import AugmentedGraphHelper
 from torch._inductor.fx_passes.bucketing import (
+    _default_bucket_mode,
     _schedulable_wait_node,
     BucketMode,
     get_full_bucket_key,
@@ -139,7 +140,7 @@ class OverlapPreservingBucketer:
         max_coll_distance: int = 1000,
         insert_overlap_deps: bool = False,
         collective_bucketing: bool = True,
-        bucket_mode: BucketMode = "custom_ops_multidtype",
+        bucket_mode: BucketMode | None = None,
         bucket_exposed_first: bool | None = None,
         region_of: dict[fx.Node, Any] | None = None,
         bucket_only_internode_comms: bool = False,
@@ -153,7 +154,7 @@ class OverlapPreservingBucketer:
         self.insert_overlap_deps = insert_overlap_deps
         self.bucket_exposed_first = bucket_exposed_first
         self.bucket_only_internode_comms = bucket_only_internode_comms
-        self.bucket_mode = bucket_mode
+        self.bucket_mode = bucket_mode or _default_bucket_mode()
         self.collective_bucketing = collective_bucketing
         self.region_of: dict[fx.Node, Any] = region_of or {}
         self.node_to_event: dict[fx.Node, PGEvent] = {}
@@ -998,13 +999,13 @@ class OverlapPreservingBucketer:
                 self.graph,
                 bucket,
                 insert_before=next_node,
-                mode="custom_ops",
+                mode=self.bucket_mode,
             )
         elif is_all_reduce_tensor(bucket[0]):
             new_nodes, replacements = merge_all_reduce_bucket(
                 self.graph,
                 bucket,
-                mode="custom_ops",
+                mode=self.bucket_mode,
                 insert_before=next_node,
             )
         else:
@@ -1013,7 +1014,7 @@ class OverlapPreservingBucketer:
                 self.graph,
                 bucket,
                 insert_before=next_node,
-                mode="custom_ops",
+                mode=self.bucket_mode,
             )
 
         # Get new nodes
