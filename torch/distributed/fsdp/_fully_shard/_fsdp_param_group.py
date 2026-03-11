@@ -79,12 +79,12 @@ class FSDPCommContext:
         self.all_gather_copy_in_stream = self.device_handle.Stream(
             priority=high_priority
         )
-        # All-gather stream allows overlapping next all-gather with current
-        # forward compute
-        self.all_gather_stream = self.device_handle.Stream(priority=high_priority)
-        # Reduce-scatter stream gives separate execution "thread" for post-
-        # backward logic like pre/post-gradient division and reduce-scatter
-        self.reduce_scatter_stream = self.device_handle.Stream(priority=high_priority)
+        # All-gather and reduce-scatter share the same NCCL communicator, so
+        # the collectives serialize regardless of stream. Use one stream for
+        # both to avoid unnecessary stream overhead.
+        ag_rs_shared_stream = self.device_handle.Stream(priority=high_priority)
+        self.all_gather_stream = ag_rs_shared_stream
+        self.reduce_scatter_stream = ag_rs_shared_stream
         # Run the HSDP all-reduces concurrently with all-gather/reduce-scatter
         # since collectives use different network resources and can overlap
         # in the typical intra-node sharding / inter-node replication case
