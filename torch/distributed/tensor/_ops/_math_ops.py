@@ -775,31 +775,45 @@ def linalg_replicate_strategy(op_schema: OpSchema) -> OpStrategy:
     return OpStrategy(output_strategies)
 
 
+# Maps each pooling op to its spatial rank (number of spatial dimensions).
+# Batched inputs have layout (N, C, *spatial) with ndim = spatial_rank + 2;
+# unbatched inputs drop the batch dim giving ndim = spatial_rank + 1.
+POOL_SPATIAL_RANK: dict[torch._ops.OpOverload, int] = {
+    aten.avg_pool1d.default: 1,
+    aten.avg_pool2d.default: 2,
+    aten.avg_pool3d.default: 3,
+    aten.adaptive_avg_pool1d.default: 1,
+    aten._adaptive_avg_pool2d.default: 2,
+    aten._adaptive_avg_pool3d.default: 3,
+    aten.adaptive_max_pool1d.default: 1,
+    aten.adaptive_max_pool2d.default: 2,
+    aten.adaptive_max_pool3d.default: 3,
+    aten.fractional_max_pool2d.default: 2,
+    aten.fractional_max_pool3d.default: 3,
+    aten.max_pool1d_with_indices.default: 1,
+    aten.max_pool2d_with_indices.default: 2,
+    aten.max_pool3d_with_indices.default: 3,
+}
+
 AVG_POOL_OPS = [
+    aten.avg_pool1d.default,
     aten.avg_pool2d.default,
     aten.avg_pool3d.default,
+    aten.adaptive_avg_pool1d.default,
     aten._adaptive_avg_pool2d.default,
     aten._adaptive_avg_pool3d.default,
 ]
 
-# S(1) is safe for non-adaptive avg_pool (pooling never touches the channel
-# dim).  Adaptive variants are excluded because some OpInfo samples use
-# unbatched inputs where dim 1 is spatial, not channel.
-CHANNEL_SHARDABLE_POOL_OPS = [
-    aten.avg_pool2d.default,
-    aten.avg_pool3d.default,
-]
-
 MAX_POOL_OPS = [
+    aten.adaptive_max_pool1d.default,
     aten.adaptive_max_pool2d.default,
     aten.adaptive_max_pool3d.default,
     aten.fractional_max_pool2d.default,
     aten.fractional_max_pool3d.default,
+    aten.max_pool1d_with_indices.default,
     aten.max_pool2d_with_indices.default,
     aten.max_pool3d_with_indices.default,
 ]
-
-DUAL_OUTPUT_POOL_OPS = MAX_POOL_OPS
 
 
 @register_op_strategy(
@@ -809,7 +823,7 @@ DUAL_OUTPUT_POOL_OPS = MAX_POOL_OPS
 def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
     input_strategy = cast(OpStrategy, op_schema.args_schema[0])
     mesh = input_strategy.mesh
-    num_outputs = 2 if op_schema.op in DUAL_OUTPUT_POOL_OPS else 1
+    num_outputs = 2 if op_schema.op in MAX_POOL_OPS else 1
     num_inputs = len(op_schema.args_strategy) + len(op_schema.kwargs_strategy)
     n = num_outputs + num_inputs
     single_mesh_dim_strategies: list[PlacementList] = [
@@ -820,14 +834,11 @@ def pooling_strategy(op_schema: OpSchema) -> OpStrategy:
     if op_schema.op in AVG_POOL_OPS:
         single_mesh_dim_strategies.append([Partial("sum")] * n)
         single_mesh_dim_strategies.append([Partial("avg")] * n)
-    # max distributes over max for the values output; indices output is
-    # undefined under P(max) reduction so we mark it None.
-    if op_schema.op in MAX_POOL_OPS:
-        single_mesh_dim_strategies.append(
-            # pyrefly: ignore [bad-argument-type]
-            [Partial("max"), None] + [Partial("max")] * num_inputs
-        )
-    if op_schema.op in CHANNEL_SHARDABLE_POOL_OPS:
+    # S(1) is safe when dim 1 is the channel dim (pooling never touches it).
+    # Batched inputs have layout (N, C, *spatial) with ndim = spatial_rank + 2.
+    spatial_rank = POOL_SPATIAL_RANK[op_schema.op]
+    is_batched = input_strategy.ndim >= spatial_rank + 2
+    if is_batched:
         single_mesh_dim_strategies.append([Shard(1)] * n)
     return expand_to_full_mesh_op_strategy(
         mesh, op_schema, single_mesh_dim_strategies, input_index=num_outputs
