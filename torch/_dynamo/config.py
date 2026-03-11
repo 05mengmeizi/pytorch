@@ -179,32 +179,6 @@ automatic_dynamic_shapes_mark_as: Literal["dynamic", "unbacked"] = "dynamic"
 # (progressive dynamism). Does NOT handle data-dependent branching
 # (if x.size(0) > k), graph breaks, or other recompilation triggers where
 # no dimension actually transitions.
-#
-# Theorem: For graphs G0, ..., Gn compiled via progressive dynamism (one dim
-# per step), each input is accepted by at most one graph.
-#
-#   Setup: G0 is all-static with shape S. Gk is created by making dim d_k
-#   dynamic, with exclusion guard d_k != S[d_k].
-#
-#   Proof by induction on n:
-#
-#   Base case (n=0): Only G0, all-static. Trivially unique.
-#
-#   Inductive step: Assume the property holds for G0, ..., G_{n-1}. We add
-#   Gn with newly-dynamic dim d_n and exclusion d_n != S[d_n].
-#
-#   For any input X that passes Gn's shape guards, exactly one of two cases:
-#
-#   Case A — exclusion passes (X[d_n] != S[d_n]):
-#     Dim d_n is static in all G0, ..., G_{n-1} with value S[d_n], so X
-#     fails all prior graphs on that dim. Only Gn accepts X.
-#
-#   Case B — exclusion rejects (X[d_n] == S[d_n]):
-#     X matches Gn's shape guards on all other dims, and matches the static
-#     value for d_n. So X satisfies G_{n-1}'s shape guards. By the inductive
-#     hypothesis, exactly one of G0, ..., G_{n-1} accepts X. Gn rejects X.
-#
-#   Corollary: Evaluation order does not affect correctness.
 automatic_dynamic_exclusion_guard = False
 
 # log graph in/out metadata
