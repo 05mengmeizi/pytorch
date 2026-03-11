@@ -125,34 +125,18 @@ def run_with_nativert(ep):
                     *pytree.tree_leaves((ep_args, ep_kwargs))
                 )
             flat_results = pytree.tree_leaves(results)
-            if len(flat_results) != len(flat_expected):
-                raise AssertionError(
-                    f"Expected {len(flat_expected)} results, got {len(flat_results)}"
-                )
+            assert len(flat_results) == len(flat_expected)
             for result, expected in zip(flat_results, flat_expected):
-                if type(result) is not type(expected):
-                    raise AssertionError(
-                        f"Expected type {type(expected)}, got {type(result)}"
-                    )
+                assert type(result) is type(expected)
                 if isinstance(result, torch.Tensor) and isinstance(
                     expected, torch.Tensor
                 ):
-                    if result.shape != expected.shape:
-                        raise AssertionError(
-                            f"Expected shape {expected.shape}, got {result.shape}"
-                        )
-                    if result.dtype != expected.dtype:
-                        raise AssertionError(
-                            f"Expected dtype {expected.dtype}, got {result.dtype}"
-                        )
-                    if result.device != expected.device:
-                        raise AssertionError(
-                            f"Expected device {expected.device}, got {result.device}"
-                        )
+                    assert result.shape == expected.shape
+                    assert result.dtype == expected.dtype
+                    assert result.device == expected.device
                     torch.testing.assert_close(result, expected, equal_nan=True)
                 else:
-                    if result != expected:
-                        raise AssertionError(f"Expected {expected}, got {result}")
+                    assert result == expected
         except RuntimeError as e:
             # User need to register pytree type on the cpp side, which
             # cannot be tested in python unittest.
@@ -336,34 +320,18 @@ class TestNativeRT(TestCase):
                         *pytree.tree_leaves((ep_args, ep_kwargs))
                     )
                 flat_results = pytree.tree_leaves(results)
-                if len(flat_results) != len(flat_expected):
-                    raise AssertionError(
-                        f"Expected {len(flat_expected)} results, got {len(flat_results)}"
-                    )
+                assert len(flat_results) == len(flat_expected)
                 for result, expected in zip(flat_results, flat_expected):
-                    if type(result) is not type(expected):
-                        raise AssertionError(
-                            f"Expected type {type(expected)}, got {type(result)}"
-                        )
+                    assert type(result) is type(expected)
                     if isinstance(result, torch.Tensor) and isinstance(
                         expected, torch.Tensor
                     ):
-                        if result.shape != expected.shape:
-                            raise AssertionError(
-                                f"Expected shape {expected.shape}, got {result.shape}"
-                            )
-                        if result.dtype != expected.dtype:
-                            raise AssertionError(
-                                f"Expected dtype {expected.dtype}, got {result.dtype}"
-                            )
-                        if result.device != expected.device:
-                            raise AssertionError(
-                                f"Expected device {expected.device}, got {result.device}"
-                            )
+                        assert result.shape == expected.shape
+                        assert result.dtype == expected.dtype
+                        assert result.device == expected.device
                         torch.testing.assert_close(result, expected, equal_nan=True)
                     else:
-                        if result != expected:
-                            raise AssertionError(f"Expected {expected}, got {result}")
+                        assert result == expected
             except RuntimeError as e:
                 # User need to register pytree type on the cpp side, which
                 # cannot be tested in python unittest.

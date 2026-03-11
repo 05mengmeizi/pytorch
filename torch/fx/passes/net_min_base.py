@@ -2,7 +2,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 import torch
 import torch.fx
@@ -110,12 +110,12 @@ class _MinimizerBase:
             [TensorOrTensors, TensorOrTensors, Names], tuple[float, bool]
         ],
         settings: _MinimizerSettingBase,
-        module_exporter: Callable[[Tensors, torch.fx.GraphModule, str], None]
-        | None = None,
-        exclusion_fn: Callable[[NodeList, int, int], None] | None = None,
+        module_exporter: Optional[
+            Callable[[Tensors, torch.fx.GraphModule, str], None]
+        ] = None,
+        exclusion_fn: Optional[Callable[[NodeList, int, int], None]] = None,
     ):
-        if not isinstance(module, torch.fx.GraphModule):
-            raise AssertionError(f"Expected GraphModule, got {type(module)}")
+        assert isinstance(module, torch.fx.GraphModule)
 
         self.module = module
         self.sample_input = sample_input
@@ -149,11 +149,7 @@ class _MinimizerBase:
         placeholders = [
             node.name for node in self.module.graph.nodes if node.op == "placeholder"
         ]
-        if len(placeholders) != len(self.sample_input):
-            raise AssertionError(
-                f"Placeholder count ({len(placeholders)}) does not match "
-                f"sample_input count ({len(self.sample_input)})"
-            )
+        assert len(placeholders) == len(self.sample_input)
 
         # Store sample_input
         for i, name in enumerate(placeholders):
@@ -548,7 +544,7 @@ class _MinimizerBase:
 
     def _block_traverse_impl(
         self, nodes: NodeList, start_idx: int, end_idx: int, find_last_node: bool
-    ) -> int | None:
+    ) -> Optional[int]:
         """
         Recursive block search implementation.
         find_last_node: If True, search for the last node which result in numerics difference
@@ -652,7 +648,9 @@ class _MinimizerBase:
             else:
                 return self._block_traverse_impl(nodes, start_idx, mid, find_last_node)
 
-    def _block_traverse(self, nodes: NodeList, find_last_node: bool | None) -> NodeSet:
+    def _block_traverse(
+        self, nodes: NodeList, find_last_node: Optional[bool]
+    ) -> NodeSet:
         """
         Traverse topologically sorted node list
         Find minimum block (start_idx, end_idx) which contains the culprit
@@ -672,8 +670,8 @@ class _MinimizerBase:
         start_idx = 0
         end_idx = len(nodes) - 1
 
-        final_start_idx: int | None = start_idx
-        final_end_idx: int | None = end_idx
+        final_start_idx: Optional[int] = start_idx
+        final_end_idx: Optional[int] = end_idx
 
         run_both = find_last_node is None
 
@@ -777,8 +775,9 @@ class _MinimizerBase:
             node_name = node.name
             if node_name is not None and isinstance(node_name, tuple):
                 node_name = node_name[0]
-            if node_name is None or not isinstance(node_name, str):
-                raise AssertionError(f"minimize: node_name: {node_name}")
+            assert node_name is not None and isinstance(node_name, str), (
+                f"minimize: node_name: {node_name}"
+            )
 
             report.append(f"Add node: {node_name}")
 
@@ -857,7 +856,7 @@ class _MinimizerBase:
 
         return culprits
 
-    def _collect_nodes(self, start: str | None, end: str | None) -> NodeList:
+    def _collect_nodes(self, start: Optional[str], end: Optional[str]) -> NodeList:
         """
         Collect nodes in the model that between nodes with name of `start` and `end`.
         These two nodes are also included.
@@ -880,7 +879,7 @@ class _MinimizerBase:
 
         return nodes
 
-    def run_nodes(self, start: str | None = None, end: str | None = None):
+    def run_nodes(self, start: Optional[str] = None, end: Optional[str] = None):
         """
         Run part of the model from `start` node to `end` node. If `start` is None
         then we start from the beginning of the model. If `end` is None then we
@@ -927,10 +926,10 @@ class _MinimizerBase:
 
     def minimize(
         self,
-        start: str | None = None,
-        end: str | None = None,
-        skip_nodes: list | None = None,
-        find_last_node: bool | None = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        skip_nodes: Optional[list] = None,
+        find_last_node: Optional[bool] = None,
     ) -> NodeSet:
         """
         Minimizing the model from node with name `start` to node with name `end` base

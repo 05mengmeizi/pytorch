@@ -265,9 +265,8 @@ class OrderedDictTests:
 
     def test_sorted_iterators(self):
         OrderedDict = self.OrderedDict
-        with torch._dynamo.error_on_graph_break(False):
-            with self.assertRaises(TypeError):
-                OrderedDict([('a', 1), ('b', 2)], None)
+        with self.assertRaises(TypeError):
+            OrderedDict([('a', 1), ('b', 2)], None)
         pairs = [('a', 1), ('b', 2), ('c', 3), ('d', 4), ('e', 5)]
         od = OrderedDict(pairs)
         self.assertEqual(sorted(od), [t[0] for t in pairs])

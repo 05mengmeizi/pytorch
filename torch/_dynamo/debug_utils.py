@@ -34,7 +34,7 @@ import tempfile
 import textwrap
 from collections import Counter
 from importlib import import_module
-from typing import Any, TYPE_CHECKING, TypeVar
+from typing import Any, Optional, TYPE_CHECKING, TypeVar
 
 import torch
 import torch._prims_common as utils
@@ -69,7 +69,6 @@ if use_buck:
     import libfb.py.build_info
 
 
-# pyrefly: ignore [implicit-any]
 extra_deps = []
 extra_imports = ""
 cur_target = ""
@@ -298,7 +297,7 @@ def generate_env_vars_string(*, stable_output: bool = False) -> str:
         return any(string in key for string in allow_list) and key not in skip_list
 
     config_lines = [
-        f"""os.environ['{key}'] = '{value.replace("'", '"')}'"""
+        f"os.environ['{key}'] = '{value}'"
         for key, value in os.environ.items()
         if filter(key)
     ]
@@ -544,14 +543,14 @@ def backend_accuracy_fails(
 
 
 def _stride_or_default(
-    stride: torch._prims_common.StrideType | None,
+    stride: Optional[torch._prims_common.StrideType],
     *,
     shape: torch._prims_common.ShapeType,
 ) -> torch._prims_common.StrideType:
     return stride if stride is not None else utils.make_contiguous_strides_for(shape)
 
 
-def _mk_defaulter(d: T) -> Callable[[T | None], T]:
+def _mk_defaulter(d: T) -> Callable[[Optional[T]], T]:
     return lambda x: x if x is not None else d
 
 
@@ -568,28 +567,19 @@ class NopInputReader:
 
     def storage(
         self,
-        storage_hash: str | None,
+        storage_hash: Optional[str],
         nbytes: int,
         *,
-        device: torch._prims_common.DeviceLikeType | None = None,
-        dtype_hint: torch.dtype | None = None,
+        device: Optional[torch._prims_common.DeviceLikeType] = None,
+        dtype_hint: Optional[torch.dtype] = None,
     ) -> None:
         self.total += 1
 
-    def tensor(self, *args: Any, **kwargs: Any) -> torch.Tensor | None:
+    def tensor(self, *args: Any, **kwargs: Any) -> Optional[torch.Tensor]:
         pass
 
-    def symint(self, *args: Any, **kwargs: Any) -> int | None:
+    def symint(self, *args: Any, **kwargs: Any) -> Optional[int]:
         pass
-
-    def const(self, name: str) -> None:
-        pass
-
-    def unsupported(self, name: str) -> None:
-        pass
-
-    def opaque(self, script_class_name: str) -> None:
-        self.total += 1
 
 
 # TODO: Support bundling the entire repro into a zip file for ease of
@@ -610,11 +600,11 @@ class InputReader:
 
     def storage(
         self,
-        storage_hash: str | None,
+        storage_hash: Optional[str],
         nbytes: int,
         *,
-        device: torch._prims_common.DeviceLikeType | None = None,
-        dtype_hint: torch.dtype | None = None,
+        device: Optional[torch._prims_common.DeviceLikeType] = None,
+        dtype_hint: Optional[torch.dtype] = None,
     ) -> UntypedStorage:
         if self.pbar is not None:
             self.pbar.update(1)
@@ -641,12 +631,12 @@ class InputReader:
         self,
         storage: UntypedStorage,
         shape: torch._prims_common.ShapeType,
-        stride: torch._prims_common.StrideType | None = None,
+        stride: Optional[torch._prims_common.StrideType] = None,
         *,
-        storage_offset: int | None = None,
-        dtype: torch.dtype | None = None,
-        requires_grad: bool | None = None,
-        is_leaf: bool | None = None,
+        storage_offset: Optional[int] = None,
+        dtype: Optional[torch.dtype] = None,
+        requires_grad: Optional[bool] = None,
+        is_leaf: Optional[bool] = None,
         **metadata: Any,
     ) -> torch.Tensor:
         stride = _stride_or_default(stride, shape=shape)
@@ -674,15 +664,6 @@ class InputReader:
         self.args.append(val)
         return val  # for BC
 
-    def const(self, name: str) -> None:
-        self.args.append(None)
-
-    def unsupported(self, name: str) -> None:
-        self.args.append(None)
-
-    def opaque(self, script_class_name: str) -> None:
-        self.args.append(None)
-
 
 # Here is our writer strategy:
 #  1. We will stream all of the inputs to disk
@@ -697,7 +678,7 @@ class InputReader:
 
 
 class InputWriter:
-    def __init__(self, save_dir: str | None, *, stable_hash: bool = False) -> None:
+    def __init__(self, save_dir: Optional[str], *, stable_hash: bool = False) -> None:
         self._lines: list[str] = []
         # TODO: consider ensuring tensor and storage counters line up?
         self.storage_counter = itertools.count()
@@ -728,8 +709,8 @@ class InputWriter:
         self,
         untyped_storage: UntypedStorage,
         *,
-        device_hint: torch._prims_common.DeviceLikeType | None = None,
-        dtype_hint: torch.dtype | None = None,
+        device_hint: Optional[torch._prims_common.DeviceLikeType] = None,
+        dtype_hint: Optional[torch.dtype] = None,
     ) -> str:
         ws = StorageWeakRef(untyped_storage)
         v = self.seen_storages.get(ws)
@@ -792,9 +773,7 @@ class InputWriter:
 
     def unsupported(self, name: str, arg: Any) -> None:
         # NB: Try hard not to /print/ a tensor, that will be very slow
-        self._lines.append(
-            f"reader.unsupported({name!r})  # unsupported type for dumping: {type(arg)}"
-        )
+        self._lines.append(f"# {name} was unsupported type for dumping: {type(arg)}")
         # Best effort dump as much useful stuff we can lol, in case you want
         # to repair the repro
         if isinstance(arg, (list, tuple)):
@@ -821,15 +800,12 @@ class InputWriter:
             val = val.node.hint
         self._lines.append(f"reader.symint({val!r})  # {name}")
 
-    def opaque(self, name: str, script_class_name: str) -> None:
-        self._lines.append(f"reader.opaque({script_class_name!r})  # {name}")
-
 
 def aot_graph_input_parser(
     func: Callable[[list[Tensor]], list[Tensor]],
     device: str = "cuda",
-    sym_shapes: dict[str, int] | None = None,
-    default_sym_shape: int | None = None,
+    sym_shapes: Optional[dict[str, int]] = None,
+    default_sym_shape: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Takes in a function which has been printed with print_readable() and constructs kwargs to run it.

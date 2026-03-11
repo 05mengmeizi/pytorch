@@ -17,8 +17,7 @@ class Event:
         self.time = time.perf_counter()
 
     def elapsed_time(self, end_event):
-        if not isinstance(end_event, Event):
-            raise AssertionError(f"Expected Event, but got {type(end_event)}")
+        assert isinstance(end_event, Event)
         return end_event.time - self.time
 
 

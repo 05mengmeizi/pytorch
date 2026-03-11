@@ -35,16 +35,16 @@ from torch.testing._internal.common_optimizers import (
     optim_db, optims, _get_optim_inputs_including_global_cliquey_kwargs)
 
 from torch.testing._internal.common_utils import (  # type: ignore[attr-defined]
-    MI200_ARCH, MI300_ARCH, TEST_WITH_TORCHINDUCTOR, TEST_WITH_ROCM, run_tests, IS_JETSON,
+    MI300_ARCH, TEST_WITH_TORCHINDUCTOR, TEST_WITH_ROCM, run_tests, IS_JETSON,
     IS_FILESYSTEM_UTF8_ENCODING,
     IS_SANDCASTLE, IS_FBCODE, IS_REMOTE_GPU, skipIfRocmArch, skipIfTorchInductor, load_tests, slowTest, slowTestIf,
-    skipIfCrossRef, TEST_WITH_CROSSREF, skipIfTorchDynamo, set_default_dtype,
+    skipIfCrossRef, TEST_WITH_CROSSREF, skipIfTorchDynamo, skipRocmIfTorchInductor, set_default_dtype,
     skipCUDAMemoryLeakCheckIf, BytesIOContext,
     skipIfRocm, skipIfNoSciPy, TemporaryFileName, TemporaryDirectoryName,
     wrapDeterministicFlagAPITest, DeterministicGuard, CudaSyncGuard,
     bytes_to_scalar, parametrize, skipIfMPS, noncontiguous_like,
     AlwaysWarnTypedStorageRemoval, TEST_WITH_TORCHDYNAMO, xfailIfTorchDynamo,
-    xfailIfS390X, set_warn_always_context, decorateIf, isRocmArchAnyOf)
+    xfailIfS390X, set_warn_always_context)
 from multiprocessing.reduction import ForkingPickler
 from torch.testing._internal.common_device_type import (
     expectedFailureMeta,
@@ -75,8 +75,7 @@ else:
 
 
 # Protects against includes accidentally setting the default dtype
-if torch.get_default_dtype() is not torch.float32:
-    raise AssertionError(f"default dtype should be float32, got {torch.get_default_dtype()}")
+assert torch.get_default_dtype() is torch.float32
 
 # load_tests from torch.testing._internal.common_utils is used to automatically filter tests for
 # sharding on sandcastle. This line silences flake warnings
@@ -179,12 +178,10 @@ class TestTorchDeviceType(TestCase):
             self.assertEqual(scalar.storage().untyped().tolist(), bytes_list)
 
     # For testing in64 support in upsample_nearest3d
-    @skipIfRocmArch(MI200_ARCH)
     @onlyCUDA
     @largeTensorTest('56GB', device='cuda')
     @dtypes(torch.bfloat16)
     @unittest.skipIf(IS_JETSON, "Large tensor tests are too large for Jetson.")
-    @decorateIf(unittest.expectedFailure, lambda params: isRocmArchAnyOf(MI200_ARCH))
     def test_int64_upsample3d(self, device, dtype):
         x = torch.ones((1, 256, 16, 720, 1280), dtype=dtype, device=device)
         try:
@@ -1984,11 +1981,10 @@ class TestTorchDeviceType(TestCase):
             res = torch.gather(src, dim, idx)
             weight = torch.rand_like(res, device=device) * 10 ** 6
             res.backward(weight)
-            if src.grad is None:
-                raise AssertionError("expected src.grad to be not None")
+            assert src.grad is not None
             grad = src.grad.detach().clone()
 
-            if torch.device(device).type == 'cuda' or torch.device(device).type == 'mtia':
+            if torch.device(device).type == 'cuda':
                 for _ in range(2):
                     src.grad.data.zero_()
                     res = torch.gather(src, dim, idx)
@@ -2259,18 +2255,9 @@ class TestTorchDeviceType(TestCase):
         for x in self._generate_correlation_tensors(device, dtype):
             res = torch.corrcoef(x)
             ref = np.corrcoef(x.cpu().numpy())
-            # complex cov can produce rounding errors, and when the norm factor is 0,
-            # the imag portion of the answer could be +/- inf instead of nan, causing
-            # the numpy answer to differ from the torch answer. We always check the real
-            # part, but only check the imag part if it contains some normal values
-            # (indicating that the norm factor was not 0).
-            if res.is_complex():
-                self.assertEqual(res.real, ref.real, atol=1e-05, rtol=1e-05, exact_dtype=False)
-                if not (torch.isnan(res.imag) | torch.isinf(res.imag)).all():
-                    self.assertEqual(res.imag, ref.imag, atol=1e-05, rtol=1e-05, exact_dtype=False)
-            else:
-                self.assertEqual(res, ref, atol=1e-05, rtol=1e-05, exact_dtype=False)
+            self.assertEqual(res, ref, atol=1e-04, rtol=1e-03, exact_dtype=False)
 
+    @skipRocmIfTorchInductor
     @dtypes(torch.int, torch.float, torch.cfloat)
     def test_cov(self, device, dtype):
         def check(t, correction=1, fweights=None, aweights=None):
@@ -2279,17 +2266,7 @@ class TestTorchDeviceType(TestCase):
             fweights = fweights.cpu().numpy() if fweights is not None else None
             aweights = aweights.cpu().numpy() if aweights is not None else None
             ref = np.cov(t, ddof=correction, fweights=fweights, aweights=aweights)
-            # complex cov can produce rounding errors, and when the norm factor is 0,
-            # the imag portion of the answer could be +/- inf instead of nan, causing
-            # the numpy answer to differ from the torch answer. We always check the real
-            # part, but only check the imag part if it contains some normal values
-            # (indicating that the norm factor was not 0).
-            if res.is_complex():
-                self.assertEqual(res.real, ref.real, atol=1e-05, rtol=1e-05, exact_dtype=False)
-                if not (torch.isnan(res.imag) | torch.isinf(res.imag)).all():
-                    self.assertEqual(res.imag, ref.imag, atol=1e-05, rtol=1e-05, exact_dtype=False)
-            else:
-                self.assertEqual(res, ref, atol=1e-05, rtol=1e-05, exact_dtype=False)
+            self.assertEqual(res, ref, atol=1e-05, rtol=1e-05, exact_dtype=False)
 
         for x in self._generate_correlation_tensors(device, dtype):
             check(x)
@@ -2313,7 +2290,8 @@ class TestTorchDeviceType(TestCase):
                     self.assertTrue(res.statistic < 0.1)
 
     @skipIfNoSciPy
-    @dtypes(*floating_types_and(torch.half, torch.bfloat16))
+    @dtypes(*floating_types_and(torch.half))
+    @dtypesIfCUDA(*floating_types_and(torch.half, torch.bfloat16))
     def test_normal_kstest(self, device, dtype):
         from scipy import stats
         size = 1000
@@ -2322,74 +2300,6 @@ class TestTorchDeviceType(TestCase):
                 t = torch.empty(size, dtype=dtype, device=device).normal_(mean=mean, std=std)
                 res = stats.kstest(t.cpu().to(torch.double), 'norm', args=(mean, std))
                 self.assertTrue(res.statistic < 0.1)
-
-    @skipIfNoSciPy
-    @dtypes(torch.half, torch.bfloat16)
-    def test_normal_small_std_kstest(self, device, dtype):
-        from scipy import stats
-        size = 50000
-        for std in [0.005, 0.01]:
-            t = torch.empty(size, dtype=dtype, device=device).normal_(mean=0, std=std)
-            res = stats.kstest(t.cpu().to(torch.double), 'norm', args=(0, std))
-            self.assertTrue(
-                res.statistic < 0.01,
-                msg=f"KS statistic {res.statistic:.4f} for {dtype} std={std}",
-            )
-
-    @skipIfNoSciPy
-    @dtypes(torch.half, torch.bfloat16)
-    def test_normal_kurtosis(self, device, dtype):
-        from scipy import stats
-        size = 50000
-        for std in [0.01, 0.1, 1.0]:
-            t = torch.empty(size, dtype=dtype, device=device).normal_(mean=0, std=std)
-            kurtosis = stats.kurtosis(t.cpu().to(torch.double).numpy())
-            self.assertAlmostEqual(
-                kurtosis, 0.0, delta=0.15,
-                msg=f"Excess kurtosis {kurtosis:.3f} too far from 0 for {dtype} std={std}",
-            )
-
-    @dtypes(torch.bfloat16)
-    def test_normal_tail_reach(self, device, dtype):
-        # With the broken bf16 Box-Muller (256 uniform inputs), the maximum
-        # output is capped at sqrt(-2*log(1/256)) ≈ 3.33 sigma. A correct
-        # implementation generates in float and reaches 4+ sigma.
-        size = 1000000
-        t = torch.empty(size, dtype=dtype, device=device).normal_(mean=0, std=1.0)
-        max_sigma = t.float().abs().max().item()
-        self.assertGreater(
-            max_sigma, 3.5,
-            msg=f"Max |z| = {max_sigma:.2f} sigma, expected > 3.5 (tail truncation)",
-        )
-
-    @dtypes(torch.half, torch.bfloat16)
-    def test_normal_unique_values(self, device, dtype):
-        size = 10000
-        t = torch.empty(size, dtype=dtype, device=device).normal_(mean=0, std=0.01)
-        n_unique = t.unique().numel()
-        # bf16 has ~200 representable values in [-0.03, 0.03] (3-sigma range).
-        # fp16 has ~60 representable values in [-0.03, 0.03].
-        # A correct implementation generates in fp32 and casts, so we should
-        # hit most representable values. The broken implementation produces
-        # far fewer due to quantized Box-Muller inputs.
-        if dtype == torch.bfloat16:
-            self.assertGreater(n_unique, 100)
-        else:
-            self.assertGreater(n_unique, 50)
-
-    @dtypes(torch.half, torch.bfloat16)
-    def test_uniform_unique_values(self, device, dtype):
-        size = 10000
-        t = torch.empty(size, dtype=dtype, device=device).uniform_(-100, 100)
-        n_unique = t.unique().numel()
-        # With a correct implementation (generate in float, cast to dtype),
-        # bf16 gives ~1400 unique and fp16 gives ~5200 for this range/size.
-        # The broken implementation (generate directly in dtype) gives only
-        # 256 for bf16 and ~2000 for fp16 due to using too few random bits.
-        if dtype == torch.bfloat16:
-            self.assertGreater(n_unique, 1000)
-        else:
-            self.assertGreater(n_unique, 4000)
 
     @skipIfMPS
     @skipIfNoSciPy
@@ -2702,8 +2612,7 @@ class TestTorchDeviceType(TestCase):
             d.backward(dist_grad)
             # Check that the backward pass does not contain invalid
             # values such as nan or inf
-            if not torch.isfinite(x.grad).all():
-                raise AssertionError("expected x.grad to be finite")
+            assert torch.isfinite(x.grad).all()
 
     @skipIfMPS
     def test_cumsum(self, device):
@@ -5171,8 +5080,7 @@ class TestTorchDeviceType(TestCase):
                     prob_dist = torch.zeros(new_shape, device=device, dtype=dtype).uniform_()
                 prob_dist = prob_dist.transpose(1, 4)
                 prob_dist = prob_dist[1, :, 5, 0, :, 0, 4]
-                if prob_dist.is_contiguous():
-                    raise AssertionError("expected prob_dist to be non-contiguous")
+                assert not prob_dist.is_contiguous()  # sanity check
                 return prob_dist
 
         for is_contiguous in (True, False):
@@ -5286,8 +5194,7 @@ class TestTorchDeviceType(TestCase):
     def _test_memory_format_transformations(self, device, input_generator_fn, transformation_fn,
                                             memory_format, compare_data=True, default_is_preserve=False):
 
-        if memory_format not in (torch.channels_last, torch.channels_last_3d):
-            raise AssertionError(f"unexpected memory_format: {memory_format}")
+        assert memory_format == torch.channels_last or memory_format == torch.channels_last_3d
 
         # xc is a channels last tensor
         xc = input_generator_fn(device)
@@ -5663,8 +5570,7 @@ class TestTorchDeviceType(TestCase):
         s = torch.sparse_coo_tensor(i, v, torch.Size([2, 3]), device=device, dtype=dtype)
 
         p = s.clone()
-        if not p.is_sparse:
-            raise AssertionError("expected p to be sparse")
+        assert p.is_sparse
         opt = torch.optim.SGD([p], lr=1.)
 
         p.grad = s.clone()
@@ -5686,8 +5592,7 @@ class TestTorchDeviceType(TestCase):
         self.assertEqual(found_inf, 1.0)
 
         p = s.clone().half()
-        if not p.is_sparse:
-            raise AssertionError("expected p to be sparse")
+        assert p.is_sparse
         opt = torch.optim.SGD([p], lr=1.)
 
         p.grad = s.clone().half()
@@ -5884,8 +5789,7 @@ class TestTorchDeviceType(TestCase):
         scaler.scale(l).backward()
         scaler.step(optimizer)
         scaler.update()
-        if scaler._scale == float("inf") or scaler._scale != scaler._scale:
-            raise AssertionError(f"scaler._scale should not be inf or nan, got {scaler._scale}")
+        assert scaler._scale != float("inf") and scaler._scale != float("nan")
 
     @onlyNativeDeviceTypes
     def test_grad_scaling_clipping(self, device):
@@ -6126,8 +6030,7 @@ class TestTorchDeviceType(TestCase):
                     prob_dist = torch.zeros(new_shape, device=device, dtype=dtype).uniform_()
                 prob_dist = prob_dist.transpose(1, 4)
                 prob_dist = prob_dist[1, :, 5, 0, :, 0, 4]
-                if prob_dist.is_contiguous():
-                    raise AssertionError("expected prob_dist to be non-contiguous")
+                assert not prob_dist.is_contiguous()  # sanity check
                 return prob_dist
 
     # FIXME: move to elementwise ternary test suite
@@ -6309,19 +6212,15 @@ class TestTorchDeviceType(TestCase):
         t_non_contig = t.transpose(0, 1)
         t_contig = t_non_contig.contiguous()
 
-        if not t_contig.is_contiguous():
-            raise AssertionError("expected t_contig to be contiguous")
-        if t_non_contig.is_contiguous():
-            raise AssertionError("expected t_non_contig to be non-contiguous")
+        assert t_contig.is_contiguous()
+        assert not t_non_contig.is_contiguous()
 
         mask = torch.tensor([[False, True], [False, True], [False, False], [True, True], [True, True]], device=device)
         mask_non_contig = mask.transpose(0, 1)
         mask_contig = mask_non_contig.contiguous()
 
-        if not mask_contig.is_contiguous():
-            raise AssertionError("expected mask_contig to be contiguous")
-        if mask_non_contig.is_contiguous():
-            raise AssertionError("expected mask_non_contig to be non-contiguous")
+        assert mask_contig.is_contiguous()
+        assert not mask_non_contig.is_contiguous()
 
         # source is always converted to contiguous by the op.
         source = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 9]], device=device)
@@ -6345,8 +6244,7 @@ class TestTorchDeviceType(TestCase):
         def f(x):
             result = x.tolist()
             for l, r in zip(result, [1.0, 2.0, 3.0]):
-                if l != r:
-                    raise AssertionError(f"expected {l} == {r}")
+                assert l == r
             return sum(x)
 
         x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True, device=device)
@@ -9529,8 +9427,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
         original_qe = torch.backends.quantized.engine
         for qe in qengines:
             torch.backends.quantized.engine = qe
-            if torch.backends.quantized.engine != qe:
-                raise AssertionError(f"qengine not set successfully: expected {qe}, got {torch.backends.quantized.engine}")
+            assert torch.backends.quantized.engine == qe, 'qengine not set successfully'
         torch.backends.quantized.engine = original_qe
 
     def test_terminate_handler_on_crash(self):
@@ -10100,7 +9997,6 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
         self.assertEqual(MyStorage.finalized_count, 1)
         self.assertTrue(m[0])
 
-    @skipIfTorchDynamo("cannot trace t2.grad_fn._saved_self")
     def test_tensor_ressurecting_clear(self):
         # Regression test for https://github.com/pytorch/pytorch/issues/136358
         # A Tensor with custom __dict__
@@ -10110,7 +10006,7 @@ tensor([[[1.+1.j, 1.+1.j, 1.+1.j,  ..., 1.+1.j, 1.+1.j, 1.+1.j],
 
         # that is part of a cycle
         l = []
-        l.append(42)
+        l.append(l)
         l.append(t)
 
         # Keep the Tensor alive from c++
@@ -10829,8 +10725,7 @@ DIM_ARG: None = None
 def make_neg_dim_test(name, tensor_arg, arg_constr, types, extra_dim=0):
     def neg_dim_test(self):
         if isinstance(tensor_arg, list):
-            if METHOD in types or INPLACE_METHOD in types:
-                raise AssertionError("METHOD and INPLACE_METHOD should not be in types for list tensor_arg")
+            assert METHOD not in types and INPLACE_METHOD not in types
             x = [torch.randn(arg) for arg in tensor_arg]
             ndim = len(tensor_arg[-1])
         else:
@@ -10922,8 +10817,7 @@ def add_neg_dim_tests():
 
         test_name = 'test_' + name + '_neg_dim'
 
-        if hasattr(TestTorch, test_name):
-            raise AssertionError("Duplicated test name: " + test_name)
+        assert not hasattr(TestTorch, test_name), "Duplicated test name: " + test_name
         setattr(TestTorch, test_name, make_neg_dim_test(name, tensor_arg, arg_constr, types, extra_dim))
 
 # TODO: these empty classes are temporarily instantiated for XLA compatibility

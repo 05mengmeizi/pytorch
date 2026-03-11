@@ -89,7 +89,6 @@ framework, RRef framework and distributed autograd.
 ```{eval-rst}
 .. automodule:: torch.distributed.rpc
 .. autofunction:: init_rpc
-.. autofunction:: is_available
 ```
 
 The following APIs allow users to remotely execute functions as well as create
@@ -259,8 +258,6 @@ using RPC. For more details see {ref}`distributed-autograd-design`.
 ```{eval-rst}
 .. automodule:: torch.distributed.autograd
     :members: context, backward, get_gradients
-
-.. autofunction:: torch.distributed.autograd.is_available
 ```
 
 ```{toctree}

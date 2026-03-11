@@ -415,11 +415,9 @@ class TestMin(TestCase):
         )
 
         r = [id(x) for x in torch.rand_like(A[i, k]).dims]
-        if not (id(i) in r and id(k) in r):
-            raise AssertionError("Expected i and k to be in dims")
+        assert id(i) in r and id(k) in r
         r = [id(x) for x in torch.nn.functional.dropout(A[i, k]).dims]
-        if not (id(i) in r and id(k) in r):
-            raise AssertionError("Expected i and k to be in dims")
+        assert id(i) in r and id(k) in r
 
     def test_simple(self):
         i, j, k = dims()
@@ -505,14 +503,11 @@ class TestMin(TestCase):
 
     def test_dim_args(self):
         a = dimlists()
-        if not isinstance(a, DimList):
-            raise AssertionError(f"Expected DimList, got {type(a)}")
+        assert isinstance(a, DimList)
         a = dims()
         b = dimlists()
-        if not isinstance(a, Dim):
-            raise AssertionError(f"Expected Dim, got {type(a)}")
-        if not isinstance(b, DimList):
-            raise AssertionError(f"Expected DimList, got {type(b)}")
+        assert isinstance(a, Dim)
+        assert isinstance(b, DimList)
         self.assertEqual(str(a), "a")
         a, b = dims(sizes=[3, 4])
         self.assertEqual(a.size, 3)
@@ -609,8 +604,7 @@ class TestMin(TestCase):
     def test_dims_with_size(self):
         x = dims(3)
         self.assertEqual(len(x), 3)
-        if not isinstance(x[0], Dim):
-            raise AssertionError(f"Expected Dim, got {type(x[0])}")
+        assert isinstance(x[0], Dim)
 
         class Foo:
             pass

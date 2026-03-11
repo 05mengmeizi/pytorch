@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 import sympy
 
@@ -25,9 +25,9 @@ class CppWrapperMps(CppWrapperGpu):
     @staticmethod
     def create(
         is_subgraph: bool,
-        subgraph_name: str | None,
-        parent_wrapper: PythonWrapperCodegen | None,
-        partition_signatures: GraphPartitionSignature | None = None,
+        subgraph_name: Optional[str],
+        parent_wrapper: Optional[PythonWrapperCodegen],
+        partition_signatures: Optional[GraphPartitionSignature] = None,
     ) -> "CppWrapperMps":
         return CppWrapperMps()
 
@@ -36,15 +36,14 @@ class CppWrapperMps(CppWrapperGpu):
         kernel_name: str,
         call_args: list[str],
         *,
-        device: torch.device | None = None,
+        device: Optional[torch.device] = None,
         triton: bool = True,
-        arg_types: tuple[Any, ...] | None = None,
-        raw_keys: tuple[Any, ...] | None = None,
-        raw_args: tuple[Any, ...] | None = None,
-        triton_meta: dict[str, Any] | None = None,
-        inductor_meta: dict[str, Any] | None = None,
+        arg_types: Optional[tuple[Any, ...]] = None,
+        raw_keys: Optional[tuple[Any, ...]] = None,
+        raw_args: Optional[tuple[Any, ...]] = None,
+        triton_meta: Optional[dict[str, Any]] = None,
         graph_name: str = "",
-        original_fxnode_name: str | None = None,
+        original_fxnode_name: Optional[str] = None,
     ) -> None:
         """
         Generates MPS kernel call code. It should look something like:
@@ -74,7 +73,6 @@ class CppWrapperMps(CppWrapperGpu):
                 raw_keys=raw_keys,
                 raw_args=raw_args,
                 triton_meta=triton_meta,
-                inductor_meta=inductor_meta,
             )
 
         assert device.type == "mps"

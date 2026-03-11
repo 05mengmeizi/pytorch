@@ -131,8 +131,7 @@ class WeightOnlyInt8Linear(torch.nn.Module):
         dtype=None,
         target_dtype=None,
     ) -> None:
-        if target_dtype is None:
-            raise AssertionError("target_dtype must not be None")
+        assert target_dtype is not None
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features

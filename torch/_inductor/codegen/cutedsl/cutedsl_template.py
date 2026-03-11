@@ -2,7 +2,7 @@
 import functools
 import itertools
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Optional
 from unittest.mock import patch
 
 from torch._inductor.utils import Placeholder
@@ -29,8 +29,8 @@ class CuteDSLTemplate(KernelTemplate):
         self,
         name: str,
         source: str,
-        subgraph_fn: Any | None = None,
-        mask_fn: Any | None = None,
+        subgraph_fn: Optional[Any] = None,
+        mask_fn: Optional[Any] = None,
     ) -> None:
         super().__init__(name)
         self.source = source
@@ -48,7 +48,7 @@ class CuteDSLTemplate(KernelTemplate):
 
     def maybe_append_choice(
         self, choices: list[Any], **kwargs: Any
-    ) -> NotImplementedError | None:
+    ) -> Optional[NotImplementedError]:
         """
         Maybe generates a new ChoiceCaller and appends it into existing choices.
         Returns None if success, otherwise returns the error.
@@ -69,7 +69,6 @@ class CuteDSLTemplate(KernelTemplate):
         layout = kwargs.pop("layout")
         mutated_inputs = kwargs.pop("mutated_inputs", None)
         subgraphs = kwargs.pop("subgraphs", None)
-        template_kwargs = dict(kwargs)
 
         kernel_name = f"cutedsl_{self.name}_{next(self.index_counter)}"
 
@@ -99,7 +98,7 @@ class CuteDSLTemplate(KernelTemplate):
                 source_code=code,
             )
 
-            def make_kernel_render(out_node, hint_override: int | None = None):
+            def make_kernel_render(out_node, hint_override: Optional[int] = None):
                 """
                 Factory function that creates a kernel renderer for the final output.
 
@@ -127,7 +126,6 @@ class CuteDSLTemplate(KernelTemplate):
                 bmreq=bmreq,
                 template=self,
                 mutated_inputs=mutated_inputs,
-                template_kwargs=template_kwargs,
             )
 
 
@@ -142,28 +140,18 @@ class CuteDSLTemplateCaller(ChoiceCaller):
         make_kernel_render: Any,
         bmreq: CuteDSLBenchmarkRequest,
         template: "CuteDSLTemplate",
-        mutated_inputs: Iterable[IRNode] | None = None,
-        template_kwargs: dict[str, Any] | None = None,
+        mutated_inputs: Optional[Iterable[IRNode]] = None,
     ):
-        description = self._build_description(name, template_kwargs)
         super().__init__(
             name=name,
             input_nodes=input_nodes,
             layout=layout,
-            description=description,
+            description=f"CuteDSL template {name}",
         )
         self.make_kernel_render = make_kernel_render
         self.bmreq = bmreq
         self.template = template
         self.mutated_inputs = mutated_inputs
-
-    def _build_description(
-        self, name: str, template_kwargs: dict[str, Any] | None
-    ) -> str:
-        if not template_kwargs:
-            return f"CuteDSL template {name}"
-        kwargs_desc = ", ".join(f"{k}={v}" for k, v in template_kwargs.items())
-        return f"CuteDSL template {name} ({kwargs_desc})"
 
     def __str__(self) -> str:
         return f"CuteDSLTemplateCaller({self.name})"

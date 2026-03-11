@@ -1,3 +1,4 @@
+# mypy: allow-untyped-defs
 """
 Utils for caching the outputs of AOTAutograd
 """
@@ -16,7 +17,7 @@ import shutil
 import time
 import traceback
 from copy import copy
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING, Union
 from typing_extensions import override
 
 import torch
@@ -37,14 +38,9 @@ from torch._inductor.codecache import (
     sha256_hash,
     write_atomic,
 )
-from torch._inductor.custom_graph_pass import (
-    CustomKnapsackSolver,
-    CustomRuntimeEstimator,
-)
 from torch._inductor.output_code import OutputCode
 from torch._inductor.runtime.runtime_utils import cache_dir
 from torch._inductor.utils import BoxedBool, should_use_remote_fx_graph_cache
-from torch._library.fake_class_registry import FakeScriptObject
 from torch._logging import LazyString
 from torch._utils_internal import log_cache_bypass
 from torch.compiler._cache import (
@@ -53,7 +49,6 @@ from torch.compiler._cache import (
     CacheArtifactManager,
 )
 from torch.fx.experimental.symbolic_shapes import size_hint
-from torch.fx.node import Node
 from torch.utils._triton import has_triton_package
 
 from .aot_autograd_result import (
@@ -76,11 +71,12 @@ from .schemas import AOTAutogradCacheInfo, AOTConfig, ViewAndMutationMeta  # noq
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
+    from collections.abc import Callable
 
     from torch._inductor.compile_fx import _CompileFxKwargs
     from torch._inductor.cudagraph_utils import BoxedDeviceIndex
     from torch._inductor.remote_cache import JsonDataTy, RemoteCache
+    from torch.fx.node import Node
 
 
 log = logging.getLogger(__name__)
@@ -95,7 +91,7 @@ class FXGraphCacheMiss(BypassAOTAutogradCache):
     pass
 
 
-def should_use_remote_autograd_cache() -> bool:
+def should_use_remote_autograd_cache():
     if torch.compiler.config.force_disable_caches:
         return False
     if config.enable_remote_autograd_cache is not None:
@@ -116,17 +112,17 @@ def should_use_remote_autograd_cache() -> bool:
     return REMOTE_CACHE_VERSION >= torch._utils_internal.justknobs_getval_int(jk_name)
 
 
-def should_use_local_autograd_cache() -> bool:
+def should_use_local_autograd_cache():
     if torch.compiler.config.force_disable_caches:
         return False
     return config.enable_autograd_cache
 
 
-def should_bundle_autograd_cache() -> bool:
+def should_bundle_autograd_cache():
     return config.bundled_autograd_cache or torch._dynamo.config.caching_precompile
 
 
-def check_node_safe(node: Node) -> None:
+def check_node_safe(node: Node):
     """
     Checks that the node only uses supported operators. We are starting with very
     conservative cacheability constraints, and incrementally adding more support as we expand.
@@ -154,14 +150,13 @@ def check_node_safe(node: Node) -> None:
         "torch.sym_float",
         "torch.sym_sum",
         "torch.autograd.grad",
-        "torch.distributed.tensor._api.from_local",
     )
     SAFE_NON_TORCH_FUNCTIONS = (
         "einops.einops.rearrange",
         "einops.einops.repeat",
     )
 
-    def is_public_torch_api(target: Callable[..., Any]) -> bool:
+    def is_public_torch_api(target):
         # Don't blindly allow private functions in the torch namespace
         is_private = target.__name__.startswith("_")
 
@@ -169,7 +164,7 @@ def check_node_safe(node: Node) -> None:
             getattr(target, "__module__", None) in SAFE_TORCH_MODULES and not is_private
         )
 
-    def is_safe_torch_function(target: Callable[..., Any]) -> bool:
+    def is_safe_torch_function(target):
         """Allowlisted torch functions"""
         function_name = f"{target.__module__}.{target.__name__}"
         # Allow torch.autograd.function.FunctionCtx if custom autograd functions are allowed
@@ -187,7 +182,7 @@ def check_node_safe(node: Node) -> None:
             or function_name in torch._inductor.config.unsafe_marked_cacheable_functions
         )
 
-    def is_cacheable_function(target: Callable[..., Any]) -> bool:
+    def is_cacheable_function(target):
         if isinstance(target, (torch._ops.OpOverload, torch._ops.OpOverloadPacket)):
             return True
         if is_public_torch_api(target):
@@ -206,7 +201,7 @@ def check_node_safe(node: Node) -> None:
             return True
         return False
 
-    def is_tensor(target: Node) -> bool:
+    def is_tensor(target):
         # Tensors always have example values in meta field
         return "example_value" in target.meta
 
@@ -218,10 +213,7 @@ def check_node_safe(node: Node) -> None:
             # But if user explicitly specified cache hash - allow to cache it.
             if node.meta.get("user_cache_hash", None):
                 return
-        if isinstance(node.target, str):
-            raise AssertionError(
-                f"expected node.target to not be a string, got {node.target}"
-            )
+
         if not is_cacheable_function(node.target):
             module = getattr(node.target, "__module__", None)
             name = getattr(node.target, "__name__", None)
@@ -232,10 +224,6 @@ def check_node_safe(node: Node) -> None:
         method_name = node.target
         method_target = node.args[0]
         # Only support method calls on base tensors
-        if not isinstance(method_target, Node):
-            raise AssertionError(
-                f"expected method_target to be Node, got {type(method_target)}"
-            )
         if not is_tensor(method_target):
             module = getattr(method_target, "__module__", None)
             name = getattr(method_target, "__name__", None)
@@ -262,7 +250,7 @@ def check_node_safe(node: Node) -> None:
         raise BypassAOTAutogradCache(f"Unsupported node op {node.op}")
 
 
-def check_cacheable(gm: torch.fx.GraphModule) -> None:
+def check_cacheable(gm: torch.fx.GraphModule):
     """
     Checks that the graph module only uses supported operators
     """
@@ -293,7 +281,7 @@ def check_cacheable(gm: torch.fx.GraphModule) -> None:
         check_cacheable(gm.saved_tensors_hooks_unpack_0)  # type: ignore[arg-type]
 
 
-def _get_context_fn_cache_hash(context_fn: Callable[..., Any]) -> str | None:
+def _get_context_fn_cache_hash(context_fn):
     """
     Extract a cache hash from a context_fn used for selective activation checkpointing (SAC).
 
@@ -315,7 +303,7 @@ def _get_context_fn_cache_hash(context_fn: Callable[..., Any]) -> str | None:
     return None
 
 
-def _collect_context_fn_hashes(gm: torch.fx.GraphModule) -> list[str]:
+def _collect_context_fn_hashes(gm: torch.fx.GraphModule) -> list:
     """
     Collect cache hashes from all context_fn used in SAC HOPs within the graph module.
 
@@ -342,59 +330,6 @@ def _collect_context_fn_hashes(gm: torch.fx.GraphModule) -> list[str]:
     return hashes
 
 
-def _get_custom_estimator_solver_uuids(
-    autograd_config: Any,
-) -> tuple[object | None, object | None]:
-    """
-    Extract uuid values from custom runtime estimator and solver configs if they have uuid() methods.
-
-    Returns a tuple of (runtime_estimator_uuid, solver_uuid).
-
-    Returns None for each component if:
-    - The config field value is None
-    - The config field value is a string (built-in option like "flops", "greedy")
-
-    Raises BypassAOTAutogradCache if:
-    - The config field value is a raw callable without uuid() method (caching not supported)
-    - The CustomRuntimeEstimator/CustomKnapsackSolver's uuid() method returns None
-    (caching explicitly disabled by implementation)
-    """
-
-    runtime_estimator = getattr(
-        autograd_config, "activation_memory_budget_runtime_estimator", None
-    )
-    solver = getattr(autograd_config, "activation_memory_budget_solver", None)
-
-    runtime_estimator_uuid = None
-    solver_uuid = None
-
-    if isinstance(runtime_estimator, CustomRuntimeEstimator):
-        runtime_estimator_uuid = runtime_estimator.uuid()
-        if runtime_estimator_uuid is None:
-            raise BypassAOTAutogradCache(
-                "CustomRuntimeEstimator.uuid() returned None, bypassing cache"
-            )
-    elif callable(runtime_estimator) and not isinstance(runtime_estimator, str):
-        raise BypassAOTAutogradCache(
-            "activation_memory_budget_runtime_estimator is a raw callable without uuid() method, "
-            "bypassing cache. Use CustomRuntimeEstimator for cache support."
-        )
-
-    if isinstance(solver, CustomKnapsackSolver):
-        solver_uuid = solver.uuid()
-        if solver_uuid is None:
-            raise BypassAOTAutogradCache(
-                "CustomKnapsackSolver.uuid() returned None, bypassing cache"
-            )
-    elif callable(solver) and not isinstance(solver, str):
-        raise BypassAOTAutogradCache(
-            "activation_memory_budget_solver is a raw callable without uuid() method, "
-            "bypassing cache. Use CustomKnapsackSolver for cache support."
-        )
-
-    return runtime_estimator_uuid, solver_uuid
-
-
 class AOTAutogradCacheDetails(FxGraphHashDetails):
     """
     Object to capture all the details for a dynamo graph module relevant to computing
@@ -404,9 +339,8 @@ class AOTAutogradCacheDetails(FxGraphHashDetails):
     def get_triton_source_codes_from_gm(
         self,
         gm: torch.fx.GraphModule,
-    ) -> list[str]:
-        if not has_triton_package():
-            raise AssertionError("Triton is not available")
+    ):
+        assert has_triton_package(), "Triton is not available"
 
         triton_kernels = []
         for module in gm.modules():
@@ -448,10 +382,10 @@ class AOTAutogradCacheDetails(FxGraphHashDetails):
     def __init__(
         self,
         gm: torch.fx.GraphModule,
-        example_inputs: Sequence[Any],
+        example_inputs,
         aot_config: AOTConfig,
         fx_config: _CompileFxKwargs,
-    ) -> None:
+    ):
         # FxGraphHashDetails contains all the keys related to inductor. Also includes some system info
         self.aot_config = aot_config
         self.grad_enabled = torch.is_grad_enabled()
@@ -467,31 +401,21 @@ class AOTAutogradCacheDetails(FxGraphHashDetails):
 
         if hasattr(gm, "saved_tensors_hooks_pack_0"):
 
-            def _add_wrapped_user_cache_hashes(
-                _gm: torch.fx.GraphModule, _l: list[str]
-            ) -> None:
+            def _add_wrapped_user_cache_hashes(_gm, _l):
                 for node in _gm.graph.nodes:
                     if node.meta and node.meta.get("is_wrapped", False):
                         _l.append(node.meta["user_cache_hash"])
 
             _add_wrapped_user_cache_hashes(
-                # pyrefly: ignore[bad-argument-type]
                 gm.saved_tensors_hooks_pack_0,
                 self.saved_tensors_hooks_fx_wrap_cache_hashes[0],
             )
             _add_wrapped_user_cache_hashes(
-                # pyrefly: ignore[bad-argument-type]
                 gm.saved_tensors_hooks_unpack_0,
                 self.saved_tensors_hooks_fx_wrap_cache_hashes[1],
             )
 
-        self.sac_context_fn_hashes: list[str] = _collect_context_fn_hashes(gm)
-
-        # Note: We use the live config module, not self.autograd_config (the saved config),
-        # because activation_memory_budget_runtime_estimator and activation_memory_budget_solver
-        # are excluded from save_config (in _save_config_ignore) since they're not serializable.
-        # We must access the config module directly to get the patched runtime values.
-        self.custom_estimator_solver_uuids = _get_custom_estimator_solver_uuids(config)
+        self.sac_context_fn_hashes: list = _collect_context_fn_hashes(gm)
 
         try:
             # FXGraphCache has constraints on what can be pickled in its inductor
@@ -505,20 +429,18 @@ class AOTAutogradCacheDetails(FxGraphHashDetails):
 
 
 class AOTAutogradCachePickler(FxGraphCachePickler):
-    def __init__(self, gm: torch.fx.GraphModule) -> None:
+    def __init__(self, gm: torch.fx.GraphModule):
         super().__init__(gm)
-        # pyrefly: ignore[missing-attribute]
+        # pyrefly: ignore [bad-override]
+        self.dispatch_table: dict
         self.dispatch_table.update(
             {
                 AOTConfig: functools.partial(self._reduce_aot_config),
                 torch.Tensor: functools.partial(self._reduce_tensor),
-                FakeScriptObject: functools.partial(self._reduce_fake_script_object),
             }
         )
 
-    def _reduce_aot_config(
-        self, aot_config: AOTConfig
-    ) -> tuple[Callable[..., Any], tuple[Any, ...]]:
+    def _reduce_aot_config(self, aot_config: AOTConfig):
         """
         Reduce the config to a stable key for caching.
         """
@@ -536,18 +458,16 @@ class AOTAutogradCachePickler(FxGraphCachePickler):
             ),
         )
 
-    def _reduce_tensor(self, t: torch.Tensor) -> tuple[Callable[..., Any], tuple[Any]]:
+    def _reduce_tensor(self, tensor):
         """
         Reduce the tensor to a stable key for caching.
         """
-        metadata = extract_tensor_metadata_for_cache_key(t)
+        metadata = extract_tensor_metadata_for_cache_key(tensor)
         return (_ident, (metadata,))
 
 
 @contextlib.contextmanager
-def normalize_placeholder_names(
-    gm: torch.fx.GraphModule,
-) -> Generator[None, None, None]:
+def normalize_placeholder_names(gm: torch.fx.GraphModule):
     """
     Context manager that normalizes the placeholder names in the graph module.
     This is used while generating a cache key for AOTAutogradCache, so that two graphs
@@ -591,10 +511,7 @@ def normalize_placeholder_names(
                 n.target = target
                 n._rename(name)
                 i += 1
-        if i != len(old_placeholder_names):
-            raise AssertionError(
-                f"i={i} != len(old_placeholder_names)={len(old_placeholder_names)}"
-            )
+        assert i == len(old_placeholder_names)
         # Now restore the old namespace's used names
         gm.graph._graph_namespace._used_names = old_used_names
         gm.recompile()
@@ -602,7 +519,7 @@ def normalize_placeholder_names(
 
 def autograd_cache_key(
     gm: torch.fx.GraphModule,
-    example_inputs: Sequence[Any],
+    example_inputs,
     config: AOTConfig,
     fx_config: _CompileFxKwargs,
     # TODO: add args and parameters
@@ -652,9 +569,7 @@ def autograd_cache_key(
 
 
 @contextlib.contextmanager
-def sanitize_gm_for_cache(
-    gm: torch.fx.GraphModule,
-) -> Generator[None, None, None]:
+def sanitize_gm_for_cache(gm: torch.fx.GraphModule):
     """
     Clears a few fields in a dynamo supplied Graph Module that are not stable between graph inputs, but don't
     affect inductor or aotdispatch correctness.
@@ -688,16 +603,16 @@ def sanitize_gm_for_cache(
 @CacheArtifactFactory.register
 class AOTAutogradCacheArtifact(CacheArtifact):
     @override
-    def populate_cache(self) -> None:
+    def populate_cache(self):
         AOTAutogradCache._write_to_local_cache(self.key, self.content)
 
     @override
     @staticmethod
-    def type() -> str:
+    def type():
         return "aot_autograd"
 
 
-class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
+class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult]):
     """
     Caches the results of running AOTAutograd. This class mostly handles the save and load logic, whereas
     AOTAutogradResult handles the wrapping/unwrapping logic.
@@ -734,7 +649,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
     """
 
     @staticmethod
-    def clear() -> None:
+    def clear():
         """Clear the cache"""
         try:
             shutil.rmtree(AOTAutogradCache._get_tmp_dir())
@@ -743,14 +658,14 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
 
     @staticmethod
     def try_load(
-        mod: torch.fx.GraphModule | torch._dynamo.utils.GmWrapper,
-        args: list[Any],
+        mod: Union[torch.fx.GraphModule, torch._dynamo.utils.GmWrapper],
+        args,
         aot_config: AOTConfig,
         cudagraphs: BoxedBool,
-        boxed_forward_device_index: BoxedDeviceIndex | None,
+        boxed_forward_device_index: Optional[BoxedDeviceIndex],
         local: bool,
         remote: bool,
-    ) -> Callable[..., Any] | None:
+    ) -> Optional[Callable]:
         """
         Load a result from the cache, and reconstruct a runtime wrapper around the object
         """
@@ -770,7 +685,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
                 cache_key, debug_lines = autograd_cache_key(
                     gm, args, aot_config, fx_config
                 )
-                result: tuple[GenericAOTAutogradResult[Any, Any], bytes] | None = (
+                result: Optional[tuple[GenericAOTAutogradResult, bytes]] = (
                     AOTAutogradCache._lookup(
                         cache_key, local, remote, args, cache_info, aot_config
                     )
@@ -904,7 +819,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
     @classmethod
     def generate_guards_expression(
         cls: type[AOTAutogradCache], cache_info: AOTAutogradCacheInfo
-    ) -> str | None:
+    ) -> Optional[str]:
         shape_env = cls._get_shape_env()
 
         if shape_env is None:
@@ -922,16 +837,16 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
         return os.path.join(cache_dir(), "aotautograd")
 
     @classmethod
-    def _get_tmp_dir_for_key(cls: type[AOTAutogradCache], _key: str) -> str:
+    def _get_tmp_dir_for_key(cls: type[AOTAutogradCache], key) -> str:
         """
         Get the toplevel temporary directory for storing compiled graphs.
         """
-        return os.path.join(cls._get_tmp_dir(), _key)
+        return os.path.join(cls._get_tmp_dir(), key)
 
     @classmethod
     def _record_result(
         cls: type[AOTAutogradCache],
-        key: str,
+        _key: str,
         local_hit: bool,
         local_miss: bool,
         remote_hit: bool,
@@ -962,12 +877,11 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
             )
 
     @staticmethod
-    def evaluate_guards(guard_expr: str, hints: list[int] | list[torch.SymInt]) -> bool:
+    def evaluate_guards(guard_expr: str, hints: Union[list[int], list[torch.SymInt]]):
         if torch._inductor.config.unsafe_skip_cache_dynamic_shape_guards:
             return True
         shape_env = AOTAutogradCache._get_shape_env()
-        if shape_env is None:
-            raise AssertionError("shape_env must not be None")
+        assert shape_env is not None
         result = shape_env.evaluate_guards_expression(guard_expr, hints)
         return result
 
@@ -978,10 +892,10 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
         remote: bool,
         args: list[Any],
         cache_info: dict[str, Any],
-        aot_config: AOTConfig | None,
-    ) -> tuple[GenericAOTAutogradResult[Any, Any], bytes] | None:
+        aot_config: Optional[AOTConfig],
+    ) -> Optional[tuple[GenericAOTAutogradResult, bytes]]:
         """Given a key generated by AOTAutogradCachePickler, look up its location in the cache."""
-        remote_cache: RemoteCache[JsonDataTy] | None = None
+        remote_cache: Optional[RemoteCache[JsonDataTy]] = None
         if remote:
             remote_cache = AOTAutogradCache.get_remote_cache()
 
@@ -1023,16 +937,13 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
             if config.strict_autograd_cache:
                 raise e
         if entry is not None:
-            if pickled_content is None:
-                raise AssertionError(
-                    "pickled_content must not be None when entry is not None"
-                )
+            assert pickled_content is not None
             return (entry, pickled_content)
         else:
             return None
 
     @staticmethod
-    def _write_to_local_cache(key: str, content: bytes) -> None:
+    def _write_to_local_cache(key: str, content: bytes):
         """Write an entry to the local cache."""
         subdir = AOTAutogradCache._get_tmp_dir_for_key(key)
         if not os.path.exists(subdir):
@@ -1046,75 +957,11 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
         write_atomic(path, content)
 
     @staticmethod
-    def _find_unpicklable_field(
-        entry: GenericAOTAutogradResult[Any, Any],
-    ) -> str | None:
-        """Find which field of entry is causing pickle to fail."""
-        # pyrefly: ignore [implicit-any]
-        fields = []
-        if hasattr(entry, "__dataclass_fields__"):
-            fields = list(entry.__dataclass_fields__.keys())
-        elif hasattr(entry, "__dict__"):
-            fields = list(entry.__dict__.keys())
-
-        for name in fields:
-            try:
-                pickle.dumps(getattr(entry, name))
-            except Exception:
-                return name
-        return None
-
-    @staticmethod
-    def _pickle_entry(
-        entry: GenericAOTAutogradResult[Any, Any], remote: bool
-    ) -> bytes | None:
-        """Pickle entry, returning None on failure."""
-        try:
-            return pickle.dumps(entry)
-        except (pickle.PicklingError, TypeError, AttributeError) as e:
-            bad_field = AOTAutogradCache._find_unpicklable_field(entry)
-            error_str = str(e)
-            log.warning("AOTAutograd cache unable to serialize compiled graph: %s", e)  # noqa: G200
-            torch._logging.trace_structured(
-                "artifact",
-                metadata_fn=lambda: {
-                    "name": "aotautograd_cache_pickle_failure",
-                    "encoding": "json",
-                },
-                payload_fn=lambda: json.dumps({"error": error_str, "field": bad_field}),
-            )
-            if remote:
-                log_cache_bypass(
-                    "bypass_aot_autograd", "Unable to serialize: " + str(e)
-                )
-            if config.strict_autograd_cache:
-                raise
-            return None
-
-    @staticmethod
-    def _handle_save_error(e: Exception, remote: bool, is_bypass: bool) -> None:
-        """Handle exceptions during save, re-raising if strict mode is enabled."""
-        if is_bypass:
-            counters["aot_autograd"]["autograd_cache_bypass"] += 1
-            log.info("Bypassing autograd cache due to: %s", e)  # noqa: G200
-            bypass_reason = str(e)
-        else:
-            log.warning("AOTAutograd cache unable to serialize compiled graph: %s", e)  # noqa: G200
-            bypass_reason = "Unable to serialize: " + str(e)
-        if remote:
-            log_cache_bypass("bypass_aot_autograd", bypass_reason)
-        if config.strict_autograd_cache:
-            raise e
-
-    @staticmethod
-    def save(key: str, entry: GenericAOTAutogradResult[Any, Any], remote: bool) -> None:
+    def save(key: str, entry: GenericAOTAutogradResult, remote: bool):
         """Save a single entry into the cache."""
-        content: bytes | None = None
         try:
             entry.pre_save()
-            content = AOTAutogradCache._pickle_entry(entry, remote)
-            if content is None:
-                return None
+            content = pickle.dumps(entry)
             CacheArtifactManager.record_artifact(
                 AOTAutogradCacheArtifact.type(), key, content
             )
@@ -1124,19 +971,34 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
             ):
                 precompile_key = entry.sanitized_aot_config.precompile_backend_id
                 artifact = BundledAOTAutogradCacheArtifact(precompile_key, entry)
+                # Now that we're saving it, the precompile_backend_id field is no longer
+                # useful, remove it from the entry.
                 entry.sanitized_aot_config.precompile_backend_id = None
                 PrecompileContext.record_artifact(artifact)
             AOTAutogradCache._write_to_local_cache(key, content)
             counters["aot_autograd"]["autograd_cache_saved"] += 1
         except BypassAOTAutogradCache as e:
-            AOTAutogradCache._handle_save_error(e, remote, is_bypass=True)
+            if config.strict_autograd_cache:
+                raise
+            counters["aot_autograd"]["autograd_cache_bypass"] += 1
+            log.info("Bypassing autograd cache due to: %s", e)  # noqa: G200
+            if remote:
+                log_cache_bypass("bypass_aot_autograd", str(e))
             return None
         except Exception as e:
-            AOTAutogradCache._handle_save_error(e, remote, is_bypass=False)
+            log.info("AOTAutograd cache unable to serialize compiled graph: %s", e)  # noqa: G200
+            if remote:
+                log_cache_bypass(
+                    "bypass_aot_autograd", "Unable to serialize: " + str(e)
+                )
+            if config.strict_autograd_cache:
+                raise
             return None
 
         if remote:
-            remote_cache = AOTAutogradCache.get_remote_cache()
+            remote_cache: Optional[RemoteCache[JsonDataTy]] = (
+                AOTAutogradCache.get_remote_cache()
+            )
             if remote_cache is not None:
                 time_taken_ms = int(
                     (entry.forward_time_taken_ns + entry.backward_time_taken_ns) // 1e6
@@ -1149,7 +1011,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
 
     @staticmethod
     @functools.cache
-    def get_remote_cache() -> RemoteCache[JsonDataTy] | None:
+    def get_remote_cache() -> Optional[RemoteCache[JsonDataTy]]:
         """
         Attempts to load the remote cache, returns None on error.
         """
@@ -1164,41 +1026,38 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
     @staticmethod
     def make_entry(
         compiled_fw_func: OutputCode,
-        compiled_bw_func: OutputCode | None,
-        aot_joint_graph_str: str | None,
-        aot_forward_graph_str: str | None,
-        aot_backward_graph_str: str | None,
+        compiled_bw_func: Optional[OutputCode],
+        aot_joint_graph_str: Optional[str],
+        aot_forward_graph_str: Optional[str],
+        aot_backward_graph_str: Optional[str],
         runtime_metadata: ViewAndMutationMeta,
         dispatch_wrappers: list[CompilerWrapper],
-        maybe_subclass_meta: SubclassMeta | None,
-        num_fw_outs_saved_for_bw: int | None,
+        maybe_subclass_meta: Optional[SubclassMeta],
+        num_fw_outs_saved_for_bw: Optional[int],
         indices_of_inps_to_detach: list[int],
         forward_time_taken_ns: int,
         backward_time_taken_ns: int,
         sanitized_aot_config: AOTConfig,
-        guards_expr: str | None,
-        backward_state_indices: list[int] | None,
-        num_symints_saved_for_bw: int | None,
-        serialized_bw_module: SerializedGraphModule | None,
-    ) -> GenericAOTAutogradResult[Any, Any]:
+        guards_expr: Optional[str],
+        backward_state_indices: Optional[list[int]],
+        num_symints_saved_for_bw: Optional[int],
+        serialized_bw_module: Optional[SerializedGraphModule],
+    ) -> GenericAOTAutogradResult:
         if should_bundle_autograd_cache():
             # Helper function to unwrap all the wrappers we added during aotdispatch
             # They get reapplied on cache load
-            def unwrap_output_code(obj: object) -> OutputCode:
+            def unwrap_output_code(obj):
                 while hasattr(obj, "__wrapped__"):
                     obj = obj.__wrapped__
-                if not isinstance(obj, OutputCode):
-                    raise AssertionError(f"expected OutputCode, got {type(obj)}")
+                assert isinstance(obj, OutputCode)
                 return obj
 
             compiled_fw_graph = unwrap_output_code(compiled_fw_func)
             bundled_compiled_forward = BundledCompiledForward(compiled_fw_graph)
             bundled_compiled_backward = None
             if compiled_bw_func is not None:
-                if backward_state_indices is None:
-                    raise AssertionError("backward_state_indices must not be None")
-                if num_symints_saved_for_bw is None:
-                    raise AssertionError("num_symints_saved_for_bw must not be None")
+                assert backward_state_indices is not None
+                assert num_symints_saved_for_bw is not None
                 compiled_bw_graph = unwrap_output_code(compiled_bw_func)
                 bundled_compiled_backward = BundledCompiledBackward(
                     compiled_bw_graph, backward_state_indices, num_symints_saved_for_bw
@@ -1228,8 +1087,7 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
                 compiled_fw_func, "_fx_graph_cache_debug_lines", []
             )
 
-            if fw_key is None:
-                raise AssertionError("fw_key must not be None")
+            assert fw_key is not None
             compiled_forward = CompiledForward(
                 fx_graph_cache_info=(fw_key, fw_debug_lines),
                 fx_graph_guard_expr=getattr(compiled_fw_func, "guards_expr", None),
@@ -1240,12 +1098,9 @@ class AOTAutogradCache(GuardedCache[GenericAOTAutogradResult[Any, Any]]):
                 bw_debug_lines = getattr(
                     compiled_bw_func, "_fx_graph_cache_debug_lines", []
                 )
-                if bw_key is None:
-                    raise AssertionError("bw_key must not be None")
-                if backward_state_indices is None:
-                    raise AssertionError("backward_state_indices must not be None")
-                if num_symints_saved_for_bw is None:
-                    raise AssertionError("num_symints_saved_for_bw must not be None")
+                assert bw_key is not None
+                assert backward_state_indices is not None
+                assert num_symints_saved_for_bw is not None
                 compiled_backward = CompiledBackward(
                     fx_graph_cache_info=(bw_key, bw_debug_lines),
                     fx_graph_guard_expr=getattr(compiled_bw_func, "guards_expr", None),

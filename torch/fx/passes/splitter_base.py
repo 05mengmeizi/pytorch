@@ -6,7 +6,7 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, Optional
 
 import torch
 from torch._logging import trace_structured
@@ -158,7 +158,7 @@ class NodeEvent:
     """
 
     def __init__(
-        self, source: torch.fx.Node, desc: str, dep: torch.fx.Node | None = None
+        self, source: torch.fx.Node, desc: str, dep: Optional[torch.fx.Node] = None
     ):
         self.source = source
         self.desc = desc
@@ -187,7 +187,7 @@ class NodeEventTracker:
         self.node_events = {}
         self.writer = print
 
-    def add(self, node: torch.fx.Node, desc: str, dep: torch.fx.Node | None = None):
+    def add(self, node: torch.fx.Node, desc: str, dep: Optional[torch.fx.Node] = None):
         """
         Add a new event to the tracker.
         """
@@ -411,7 +411,7 @@ class FxNetSplitterInternalError(Exception):
 class Subgraph:
     is_acc: bool
     nodes: NodeList
-    device_ordinal: int | None = None
+    device_ordinal: Optional[int] = None
 
 
 @compatibility(is_backward_compatible=False)
@@ -534,7 +534,7 @@ class _SplitterBase:
         settings: _SplitterSettingBase,
         non_acc_submodule_name: str = "_run_on_cpu_",
         return_tuple: bool = False,
-        nodes_finder: FxNetAccNodesFinder | None = None,
+        nodes_finder: Optional[FxNetAccNodesFinder] = None,
     ):
         """
         Preprocesses graph before splitting:
@@ -544,8 +544,7 @@ class _SplitterBase:
         - builds a map of fused nodes to their fusions.
         As a result we get self.acc_nodes, self.deps and self.fusions.
         """
-        if not isinstance(module, torch.fx.GraphModule):
-            raise AssertionError(f"Expected GraphModule, got {type(module)}")
+        assert isinstance(module, torch.fx.GraphModule)
 
         self.module = module
         ShapeProp(self.module).propagate(*sample_input)
@@ -850,7 +849,7 @@ class _SplitterBase:
     # ===============================================================
 
     def find_reverse_deps(
-        self, tag_id: int | None = None
+        self, tag_id: Optional[int] = None
     ) -> dict[torch.fx.Node, NodeSet]:
         """
         Builds reversed topological node dependencies, if tag_id is specified,

@@ -176,9 +176,5 @@ class CreateBackendTest(TestCase):
         get_thread.join()
         set_thread.join()
 
-        if result_dict["get_result"] != "foo":
-            raise AssertionError(
-                f"Expected get_result == 'foo', got {result_dict['get_result']}"
-            )
-        if not (result_dict["time"] >= 2):
-            raise AssertionError(f"Expected time >= 2, got {result_dict['time']}")
+        assert result_dict["get_result"] == "foo"
+        assert result_dict["time"] >= 2

@@ -20,6 +20,7 @@ from torch.testing._internal.common_methods_invocations import (
     spectral_funcs, SpectralFuncType)
 from torch._prims_common import corresponding_complex_dtype
 
+from typing import Optional
 from packaging import version
 
 
@@ -598,7 +599,7 @@ class TestFFT(TestCase):
                 else:
                     numpy_fn = getattr(np.fft, fname)
 
-                def fn(t: torch.Tensor, s: list[int] | None, dim: list[int] = (-2, -1), norm: str | None = None):
+                def fn(t: torch.Tensor, s: Optional[list[int]], dim: list[int] = (-2, -1), norm: Optional[str] = None):
                     return torch_fn(t, s, dim, norm)
 
                 torch_fns = (torch_fn, torch.jit.script(fn))

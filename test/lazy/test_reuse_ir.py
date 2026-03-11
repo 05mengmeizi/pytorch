@@ -41,11 +41,7 @@ class TestLazyReuseIr(TestCase):
             torch._lazy.mark_step()
 
         torch.testing.assert_close(z.cpu(), z_lazy.cpu())
-        reused = metrics.counter_value("IrNodeReused_torch::lazy::AddTensor")
-        if reused < 14:
-            raise AssertionError(
-                f"Expected at least 14 reused AddTensor nodes, got {reused}"
-            )
+        assert metrics.counter_value("IrNodeReused_torch::lazy::AddTensor") >= 14
         metrics.reset()
         torch._lazy.ir_cache.reset()
 
@@ -74,11 +70,7 @@ class TestLazyReuseIr(TestCase):
             torch._lazy.mark_step()
 
         torch.testing.assert_close(z.cpu(), z_lazy.cpu())
-        reused = metrics.counter_value("IrNodeReused_torch::lazy::AddTensor")
-        if reused < 8:
-            raise AssertionError(
-                f"Expected at least 8 reused AddTensor nodes, got {reused}"
-            )
+        assert metrics.counter_value("IrNodeReused_torch::lazy::AddTensor") >= 8
         metrics.reset()
         torch._lazy.ir_cache.reset()
 
@@ -108,11 +100,7 @@ class TestLazyReuseIr(TestCase):
             torch._lazy.mark_step()
 
         torch.testing.assert_close(z.cpu(), z_lazy.cpu())
-        reused = metrics.counter_value("IrNodeReused_torch::lazy::AddTensor")
-        if reused < 8:
-            raise AssertionError(
-                f"Expected at least 8 reused AddTensor nodes, got {reused}"
-            )
+        assert metrics.counter_value("IrNodeReused_torch::lazy::AddTensor") >= 8
         metrics.reset()
         torch._lazy.ir_cache.reset()
         torch._lazy.config.set_force_fallback("")
@@ -148,11 +136,7 @@ class TestLazyReuseIr(TestCase):
 
         torch.testing.assert_close(z.cpu(), z_lazy.cpu())
         torch.testing.assert_close(z_legit.cpu(), z_legit_lazy.cpu())
-        reused = metrics.counter_value("IrNodeReused_torch::lazy::NativeBatchNorm")
-        if reused < 7:
-            raise AssertionError(
-                f"Expected at least 7 reused NativeBatchNorm nodes, got {reused}"
-            )
+        assert metrics.counter_value("IrNodeReused_torch::lazy::NativeBatchNorm") >= 7
         metrics.reset()
         torch._lazy.ir_cache.reset()
 

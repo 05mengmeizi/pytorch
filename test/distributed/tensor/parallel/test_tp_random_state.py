@@ -20,8 +20,7 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
 class TensorParallelRandomStateTests(DTensorTestBase):
     def get_tensor_slice(self, idx, n, large_tensor):
         shape = large_tensor.shape
-        if shape[0] % n != 0:
-            raise AssertionError(f"Expected shape[0] % n == 0, got {shape[0]} % {n}")
+        assert shape[0] % n == 0
         local_shape = [shape[0] // n, shape[1]]
         slice_idx = (
             slice(idx * local_shape[0], (idx + 1) * local_shape[0]),
@@ -84,10 +83,7 @@ class TensorParallelRandomStateTests(DTensorTestBase):
                 # check within the TP group
                 # the 1d mesh represents the TP group
                 _1d_mesh = dtensor.device_mesh
-                if _1d_mesh.ndim != 1:
-                    raise AssertionError(
-                        f"Expected _1d_mesh.ndim == 1, got {_1d_mesh.ndim}"
-                    )
+                assert _1d_mesh.ndim == 1
                 self.assertEqual(_1d_mesh, tp_mesh)
 
                 tensor_local = dtensor.to_local()

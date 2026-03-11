@@ -47,10 +47,8 @@ class LonelyRankProcessGroup(dist.ProcessGroup):
 
     def __init__(self, rank, world, use_wrapper):
         super().__init__(rank, world)
-        if rank != 0:
-            raise AssertionError(f"Expected rank == 0, got {rank}")
-        if world != 1:
-            raise AssertionError(f"Expected world == 1, got {world}")
+        assert rank == 0
+        assert world == 1
 
         self._rank = rank
         self._world = world

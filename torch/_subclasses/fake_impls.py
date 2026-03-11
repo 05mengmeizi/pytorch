@@ -6,7 +6,7 @@ import math
 import operator
 import sys
 from functools import reduce
-from typing import Any, cast as typing_cast, TYPE_CHECKING, TypeVar
+from typing import Any, TYPE_CHECKING, TypeVar, Union
 from typing_extensions import ParamSpec
 
 import torch
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from torch.types import IntLikeType
 
 
-FakeTensorLike = FakeTensor | torch.Tensor
+FakeTensorLike = Union[FakeTensor, torch.Tensor]
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _T = TypeVar("_T")
@@ -61,9 +61,7 @@ __all__ = [
     "has_meta",
 ]
 
-# pyrefly: ignore [implicit-any]
 op_implementations_dict = {}
-# pyrefly: ignore [implicit-any]
 op_implementations_checks = []
 
 
@@ -639,7 +637,7 @@ def _compute_stride(
 
 
 def _view_has_unbacked_input(
-    a: torch.Tensor, shape: ShapeType | tuple[ShapeType]
+    a: FakeTensor, shape: ShapeType | tuple[ShapeType]
 ) -> bool:
     from torch.fx.experimental.symbolic_shapes import has_hint
 
@@ -653,11 +651,10 @@ def _view_has_unbacked_input(
 
 
 def _view_unbacked_meta(
-    a: torch.Tensor,
+    a: FakeTensor,
     shape: ShapeType | tuple[ShapeType],
     size_oblivious_enabled: bool = True,
-    allow_copy: bool = False,
-) -> torch.Tensor:
+) -> FakeTensor:
     from torch._prims import view_of
     from torch.fx.experimental.symbolic_shapes import guard_or_false, sym_eq
 
@@ -720,16 +717,7 @@ def _view_unbacked_meta(
         torch.fx.experimental._config.backed_size_oblivious
         or _view_has_unbacked_input(a, shape)
     ):
-        return _view_unbacked_meta(
-            a, shape, size_oblivious_enabled=False, allow_copy=allow_copy
-        )
-
-    # When allow_copy=True (i.e., view_copy), define unbacked semantics
-    # as "materialize": clone the input to break aliasing, then reshape.
-    if allow_copy:
-        strides = make_contiguous_strides_for(shape)
-        # pyrefly: ignore[bad-return]
-        return a.clone(memory_format=torch.contiguous_format).as_strided(shape, strides)
+        return _view_unbacked_meta(a, shape, size_oblivious_enabled=False)
 
     msg = f"Cannot view a tensor with shape {a.shape} and strides {a.stride()} as a tensor with shape {shape}!"
     raise ValueError(msg)
@@ -746,14 +734,15 @@ def _reshape_copy(
     shape = utils.infer_size(*shape, a.numel())
     if is_contiguous_or_false(a):
         view = _view_meta(fake_mode, func, a, *shape)
-        return typing_cast(
-            FakeTensor, view.clone(memory_format=torch.contiguous_format)
+        return view.clone(  # pyrefly: ignore[bad-return]
+            memory_format=torch.contiguous_format
         )
     else:
         return _view_meta(
             fake_mode,
             func,
-            typing_cast(FakeTensor, a.clone(memory_format=torch.contiguous_format)),
+            # pyrefly: ignore[bad-argument-type]
+            a.clone(memory_format=torch.contiguous_format),
             *shape,
         )
 
@@ -761,23 +750,14 @@ def _reshape_copy(
 @register_op_impl(aten.view.default)
 @register_op_impl(aten._unsafe_view.default)
 def _view_meta(
-    fake_mode: FakeTensorMode,
-    func: OpOverload,
-    a: FakeTensor,
-    *shape: Any,
-    allow_copy: bool = False,
+    fake_mode: FakeTensorMode, func: OpOverload, a: FakeTensor, *shape: Any
 ) -> FakeTensor:
     if torch.fx.experimental._config.backed_size_oblivious or _view_has_unbacked_input(
         a, shape
     ):
-        return typing_cast(
-            FakeTensor, _view_unbacked_meta(a, shape, allow_copy=allow_copy)
-        )
+        return _view_unbacked_meta(a, shape)
     else:
-        return typing_cast(
-            FakeTensor,
-            torch._refs._reshape_view_helper(a, *shape, allow_copy=allow_copy),
-        )
+        return torch._refs._reshape_view_helper(a, *shape, allow_copy=False)  # type: ignore[return-value]
 
 
 @register_op_impl(aten.view_copy.default)
@@ -788,11 +768,7 @@ def _view_meta_copy(
     *shape: IntLikeType,
     out: FakeTensor | None = None,
 ) -> FakeTensor:
-    # view_copy is the non-aliasing counterpart of view. Eager may succeed on
-    # cases where a pure view is impossible (e.g. expand -> flatten) by
-    # materializing the result. Match eager by allowing copy-if-needed in meta.
-    result = _view_meta(fake_mode, func, a, *shape, allow_copy=True)
-
+    result = _view_meta(fake_mode, func, a, *shape)
     if out is not None:
         return result
 
@@ -1334,15 +1310,12 @@ def conv(
     with fake_mode:
         # if the input is unsqueezed is done in Convolution.cpp we get segfault
         k = new_kwargs["weight"].ndim
+        batch = new_kwargs["input"].shape[0]
 
         # Avoid importing sympy at a module level
         from torch.fx.experimental.symbolic_shapes import has_hint
 
-        all_hinted = all(has_hint(s) for s in new_kwargs["input"].shape) and all(
-            has_hint(s) for s in new_kwargs["weight"].shape
-        )
-
-        if not all_hinted:
+        if not has_hint(batch):
             # TODO: We can make this a little more faithful with best effort
             # channels last detection (but only if it's statically obvious!)
             mem_fmt = None
@@ -1476,7 +1449,6 @@ def _pack_padded_sequence(
     return (packed_data, batch_size)  # type: ignore[return]
 
 
-# pyrefly: ignore [implicit-any]
 FAST_OP_IMPLEMENTATIONS = {}
 
 

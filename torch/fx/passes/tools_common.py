@@ -4,7 +4,7 @@ import heapq
 import operator
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional, Union
 
 import torch
 import torch.fx
@@ -21,8 +21,8 @@ __all__ = [
     "stable_topological_sort",
 ]
 
-Tensors = tuple[torch.Tensor] | list[torch.Tensor]
-TensorOrTensors = torch.Tensor | Tensors
+Tensors = Union[tuple[torch.Tensor], list[torch.Tensor]]
+TensorOrTensors = Union[torch.Tensor, Tensors]
 NodeList = list[torch.fx.Node]
 NodeSet = set[torch.fx.Node]
 Names = list[str]
@@ -60,16 +60,12 @@ def get_node_target(
     "torch". e.g. _VariableFunctionsClass.relu would become torch.relu.
     """
 
-    if node.op not in CALLABLE_NODE_OPS:
-        raise AssertionError(
-            "Expect op types of "
-            + ", ".join(CALLABLE_NODE_OPS)
-            + f", but found {node.op}"
-        )
+    assert node.op in CALLABLE_NODE_OPS, (
+        "Expect op types of " + ", ".join(CALLABLE_NODE_OPS) + f", but found {node.op}"
+    )
 
     if node.op == "call_module":
-        if not isinstance(node.target, str):
-            raise AssertionError(f"Expected str target, got {type(node.target)}")
+        assert isinstance(node.target, str)
         submod = submodules[node.target]
         submod_type = getattr(submod, "_base_class_origin", type(submod))
         return get_acc_ops_name(submod_type)
@@ -81,8 +77,7 @@ def get_node_target(
             else _get_qualified_name(target)
         )
     else:
-        if not isinstance(node.target, str):
-            raise AssertionError(f"Expected str target, got {type(node.target)}")
+        assert isinstance(node.target, str)
         return node.target
 
 
@@ -109,7 +104,6 @@ class FxNetAccFusionsFinder:
         self.module = module
         self.nodes = list(module.graph.nodes)
         self.acc_nodes = acc_nodes
-        self.node_index = {node: i for i, node in enumerate(self.nodes)}
 
     @dataclass
     class FusionGroup:
@@ -146,8 +140,8 @@ class FxNetAccFusionsFinder:
     def recursive_add_node(
         self,
         fusion_group: "FxNetAccFusionsFinder.FusionGroup",
-        inputs: NodeSet | NodeList,
-        visited: NodeSet | None = None,
+        inputs: Union[NodeSet, NodeList],
+        visited: Optional[NodeSet] = None,
     ):
         """
         Start from inputs and going reverse topological order. If any upstream node
@@ -166,7 +160,7 @@ class FxNetAccFusionsFinder:
 
             # If the node has smaller idx, it's already an upstream node of the fusion
             # group. We don't need to check it anymore.
-            if self.node_index[arg] < fusion_group.top_node_idx:
+            if self.nodes.index(arg) < fusion_group.top_node_idx:
                 continue
 
             # If the node is in the fusion group, return True.
@@ -196,7 +190,7 @@ class FxNetAccFusionsFinder:
                 continue
 
             fusion_group: FxNetAccFusionsFinder.FusionGroup = self.FusionGroup(
-                top_node_idx=self.node_index[node],
+                top_node_idx=self.nodes.index(node),
                 nodes={node},
                 inputs=set(node.all_input_nodes),
                 nodes_need_process={node},
@@ -235,7 +229,7 @@ class FxNetAccFusionsFinder:
 
                     fusion_group.add_node(arg)
                     fusion_group.top_node_idx = min(
-                        fusion_group.top_node_idx, self.node_index[arg]
+                        fusion_group.top_node_idx, self.nodes.index(arg)
                     )
                     self.recursive_add_node(
                         fusion_group,
@@ -387,10 +381,9 @@ def stable_topological_sort(gm: torch.fx.GraphModule) -> torch.fx.GraphModule:
                 heapq.heappush(ready_queue, (node_to_id[user], user))
 
     # Check if all nodes were processed
-    if len(new_graph.nodes) != len(gm.graph.nodes):
-        raise AssertionError(
-            f"Input graph has cycles, unable to add {[node for node in indeg if indeg[node] != 0]}"
-        )
+    assert len(new_graph.nodes) == len(gm.graph.nodes), (
+        f"Input graph has cycles, unable to add {[node for node in indeg if indeg[node] != 0]}"
+    )
 
     new_graph._codegen = gm.graph._codegen
     gm.graph = new_graph

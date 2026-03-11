@@ -87,8 +87,7 @@ def generate_configs(**configs):
                       ({'M': 2}, {'N' : 4}),
                       ({'M': 2}, {'N' : 5}))
     """
-    if "sample_func" not in configs:
-        raise AssertionError("Missing sample_func to generate configs")
+    assert "sample_func" in configs, "Missing sample_func to generate configs"
     result = []
     for key, values in configs.items():
         if key == "sample_func":
@@ -129,10 +128,7 @@ def _validate(configs):
     """Validate inputs from users."""
     if "device" in configs:
         for v in configs["device"]:
-            if v not in _supported_devices:
-                raise AssertionError(
-                    f"Device must be one of {_supported_devices}, got {v}"
-                )
+            assert v in _supported_devices, "Device needs to be a string."
 
 
 def config_list(**configs):
@@ -219,18 +215,12 @@ class RandomSample:
     def _random_sample(self, key, values, weights):
         """given values and weights, this function randomly sample values based their weights"""
         # TODO(mingzhe09088): cache the results to avoid recalculation overhead
-        if len(values) != len(weights):
-            raise AssertionError(
-                f"values and weights must have same length, got {len(values)} and {len(weights)}"
-            )
+        assert len(values) == len(weights)
         _distribution_func_vals = self._distribution_func(key, weights)
         x = random.random()
         idx = bisect.bisect(_distribution_func_vals, x)
 
-        if idx > len(values):
-            raise AssertionError(
-                f"Wrong index value is returned: idx={idx}, len(values)={len(values)}"
-            )
+        assert idx <= len(values), "Wrong index value is returned"
         # Due to numerical property, the last value in cumsum could be slightly
         # smaller than 1, and lead to the (index == len(values)).
         if idx == len(values):

@@ -8,7 +8,6 @@
 #include <ATen/native/cuda/thread_constants.h>
 #include <ATen/native/cuda/MemoryAccess.cuh>
 
-#include <c10/util/C++17.h>
 #include <tuple>
 
 

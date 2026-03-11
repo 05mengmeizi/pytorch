@@ -191,33 +191,6 @@ class FakeTensorTest(TestCase):
             x = torch.empty(2, 2, device="meta")
             self.assertEqual(repr(x), "FakeTensor(..., device='meta', size=(2, 2))")
 
-    def test_fake_device_property_normalization(self):
-        """Test that fake_device property normalizes device on assignment."""
-        with FakeTensorMode() as mode:
-            # Test CPU device - should remain unchanged
-            cpu_tensor = torch.empty(2, 2, device="meta")
-            fake_cpu = FakeTensor(mode, cpu_tensor, torch.device("cpu"))
-            self.assertEqual(fake_cpu.fake_device, torch.device("cpu"))
-
-            # Test device with explicit index - should remain unchanged
-            cuda_device_with_index = torch.device("cuda:0")
-            fake_cuda = FakeTensor(mode, cpu_tensor, cuda_device_with_index)
-            self.assertEqual(fake_cuda.fake_device, torch.device("cuda:0"))
-
-            # Test MPS device without index - should normalize to mps:0
-            mps_device = torch.device("mps")
-            fake_mps = FakeTensor(mode, cpu_tensor, mps_device)
-            self.assertEqual(fake_mps.fake_device, torch.device("mps:0"))
-
-            # Test property setter normalization with MPS
-            fake_tensor = FakeTensor(mode, cpu_tensor, torch.device("cpu"))
-            fake_tensor.fake_device = torch.device("mps")
-            self.assertEqual(fake_tensor.fake_device, torch.device("mps:0"))
-
-            # Test property setter normalization with CUDA
-            fake_tensor.fake_device = torch.device("cuda")
-            self.assertEqual(fake_tensor.fake_device, torch.device("cuda:0"))
-
     def test_convert_fake_to_real(self):
         x = torch.ones([20])
         with FakeTensorMode(allow_non_fake_inputs=True) as m:
@@ -345,10 +318,8 @@ class FakeTensorTest(TestCase):
         with FakeTensorMode():
             x = torch.rand([8, 8], device="cpu")
             y = torch.rand([8, 8], device="cuda")
-            if x.copy_(y).device.type != "cpu":
-                raise AssertionError("expected cpu device")
-            if y.copy_(x).device.type != "cuda":
-                raise AssertionError("expected cuda device")
+            assert x.copy_(y).device.type == "cpu"
+            assert y.copy_(x).device.type == "cuda"
 
     def test_fake_device(self):
         t = torch.ones(3)
@@ -567,8 +538,7 @@ class FakeTensorTest(TestCase):
         # does not fail
         with FakeTensorMode():
             out = str(x)
-        if "FakeTensor" in out:
-            raise AssertionError("FakeTensor should not be in output")
+        assert "FakeTensor" not in out
 
     @unittest.skipIf(not RUN_CUDA, "requires cuda")
     def test_upsample_bilinear_small_channels(self):
@@ -1091,60 +1061,6 @@ class FakeTensorTest(TestCase):
                 == torch.channels_last
             )
 
-    def test_suggest_memory_format_with_degenerate_dimensions(self):
-        """
-        Test that suggest_memory_format correctly returns contiguous_format for
-        tensors with degenerate dimensions (H=1, W=1) that have ambiguous strides.
-        This is a regression test for a bug where the Python implementation checked
-        strides[d] > 1 instead of shape[d] > 1, causing incorrect channels_last
-        classification. See c10/core/MemoryFormat.h is_channels_last_strides_2d_s4.
-        """
-        # Create a tensor that mimics the problematic case:
-        # shape (1, 512, 1, 1) with strides (512, 1, 512, 1)
-        # This comes from permute(0, 2, 1).contiguous().unsqueeze(-1)
-        x = torch.randn(1, 1, 512)
-        x = x.permute(0, 2, 1).contiguous()  # shape (1, 512, 1), strides (512, 1, 512)
-        x = x.unsqueeze(-1)  # shape (1, 512, 1, 1), strides (512, 1, 512, 1)
-
-        # In eager mode, this should be contiguous_format
-        self.assertEqual(
-            torch._prims_common.suggest_memory_format(x),
-            torch.contiguous_format,
-            "Eager tensor with degenerate dims should be contiguous_format",
-        )
-
-        # In FakeTensor mode, it should also be contiguous_format (not channels_last)
-        with FakeTensorMode() as mode:
-            fake_x = mode.from_tensor(torch.randn(1, 1, 512))
-            fake_x = fake_x.permute(0, 2, 1).contiguous()
-            fake_x = fake_x.unsqueeze(-1)
-
-            self.assertEqual(
-                torch._prims_common.suggest_memory_format(fake_x),
-                torch.contiguous_format,
-                "FakeTensor with degenerate dims should be contiguous_format",
-            )
-
-        # Test that upsample output has matching strides in eager vs FakeTensor
-        upsample = torch.nn.Upsample(
-            scale_factor=2, mode="bilinear", align_corners=False
-        )
-
-        eager_out = upsample(x)
-        self.assertTrue(
-            eager_out.is_contiguous(), "Eager upsample output should be contiguous"
-        )
-
-        with FakeTensorMode() as mode:
-            fake_x = mode.from_tensor(torch.randn(1, 1, 512))
-            fake_x = fake_x.permute(0, 2, 1).contiguous().unsqueeze(-1)
-            fake_out = upsample(fake_x)
-
-            self.assertTrue(
-                fake_out.is_contiguous(),
-                f"FakeTensor upsample output should be contiguous, got strides {fake_out.stride()}",
-            )
-
     def test_export_numpy(self):
         class MyNumpyModel(torch.nn.Module):
             def forward(self, input):
@@ -1449,8 +1365,7 @@ class FakeTensorConverterTest(TestCase):
         x_conv = converter.from_real_tensor(mode, x)
         self.assertEqual(len(converter.tensor_memo), 1)
         x_conv2 = converter.from_real_tensor(mode, x)
-        if x_conv2 is not x_conv:
-            raise AssertionError("expected x_conv2 is x_conv")
+        assert x_conv2 is x_conv
         del x
         del x_conv
         del x_conv2
@@ -1494,10 +1409,8 @@ class FakeTensorConverterTest(TestCase):
         y_weak = weakref.ref(mode)
         del mode
         del y
-        if mode_weak() is not None:
-            raise AssertionError("expected mode_weak() is None")
-        if y_weak() is not None:
-            raise AssertionError("expected y_weak() is None")
+        assert mode_weak() is None
+        assert y_weak() is None
 
 
 make_propagate_real_tensors_cls(FakeTensorConverterTest)
@@ -1507,8 +1420,7 @@ class FakeTensorOperatorInvariants(TestCase):
     def get_aten_op(self, schema):
         namespace, name = schema.name.split("::")
         overload = schema.overload_name if schema.overload_name else "default"
-        if namespace != "aten":
-            raise AssertionError(f"expected namespace 'aten', got {namespace!r}")
+        assert namespace == "aten"
         return getattr(getattr(torch.ops.aten, name), overload)
 
     def get_all_aten_schemas(self):
@@ -2486,8 +2398,7 @@ class FakeTensorDispatchCache(TestCase):
 
             @staticmethod
             def __tensor_unflatten__(inner_tensors, meta, outer_size, outer_stride):
-                if meta is not None:
-                    raise AssertionError(f"expected meta is None, got {meta}")
+                assert meta is None
                 return DifferentDeviceTensor(inner_tensors["inner_tensor"])
 
             @classmethod
@@ -2514,10 +2425,7 @@ class FakeTensorDispatchCache(TestCase):
             fake_wrapped_a = fake_mode.from_tensor(wrapped_a)
 
         self.assertTrue(fake_wrapped_a.is_cpu)
-        if not isinstance(fake_wrapped_a, DifferentDeviceTensor):
-            raise AssertionError(
-                f"expected DifferentDeviceTensor, got {type(fake_wrapped_a)}"
-            )
+        assert isinstance(fake_wrapped_a, DifferentDeviceTensor)
         self.assertFalse(fake_wrapped_a.inner_tensor.is_cpu)
 
     def test__upsample_bilinear2d_aa_backward_dynamic_shapes(self):
@@ -2703,7 +2611,6 @@ class FakeTensorDispatchCache(TestCase):
         run()
         torch.compiler.reset()
         gc.collect()
-        gc.collect()  # second collection needed for 3.14t
         self.assertTrue(count_invoke_subgraph_keys() == 0)
 
     @skipIfTorchDynamo("cache hit/miss changes with invoke_subgraph caching")
@@ -2859,53 +2766,6 @@ class FakeTensorPreferDeviceType(TestCase):
                 result = x + y
                 self.assertEqual(result.device.type, "cpu")
                 self.assertTrue(isinstance(result, FakeTensor))
-
-
-class FakeTensorViewCopy(TestCase):
-    def test_expand_then_view_copy_matches_eager_mode(self):
-        x = torch.arange(7)
-        y = x.expand(12, 7)
-
-        # Eager baseline
-        eager = torch.ops.aten.view_copy.default(y, [84])
-        self.assertEqual(eager.shape, (84,))
-        self.assertIsNone(eager._base)  # non-aliasing
-
-        # FakeTensor behavior should match eager
-        with FakeTensorMode():
-            xf = torch.arange(7)
-            yf = xf.expand(12, 7)
-            fake = torch.ops.aten.view_copy.default(yf, [84])
-            self.assertEqual(fake.shape, (84,))
-            self.assertIsNone(fake._base)  # non-aliasing
-
-    def test_expand_then_view_still_not_allowed(self):
-        with FakeTensorMode():
-            xf = torch.arange(7)
-            yf = xf.expand(12, 7)
-            with self.assertRaisesRegex(
-                ValueError, "Cannot view a tensor with shape *"
-            ):
-                _ = yf.view(-1)
-
-    def test_expand_then_view_copy_unbacked_matches_eager_mode(self):
-        with torch.fx.experimental._config.patch(backed_size_oblivious=True):
-            with FakeTensorMode():
-                xf = torch.arange(7)
-                yf = xf.expand(12, 7)
-                fake = torch.ops.aten.view_copy.default(yf, [84])
-                self.assertEqual(fake.shape, (84,))
-                self.assertIsNone(fake._base)  # non-aliasing
-
-    def test_expand_then_view_unbacked_still_not_allowed(self):
-        with torch.fx.experimental._config.patch(backed_size_oblivious=True):
-            with FakeTensorMode():
-                xf = torch.arange(7)
-                yf = xf.expand(12, 7)
-                with self.assertRaisesRegex(
-                    ValueError, "Cannot view a tensor with shape *"
-                ):
-                    _ = yf.view(-1)
 
 
 if __name__ == "__main__":

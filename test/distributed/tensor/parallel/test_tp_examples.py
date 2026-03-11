@@ -3,7 +3,7 @@
 
 import itertools
 from copy import deepcopy
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import torch
 import torch.distributed as dist
@@ -55,9 +55,9 @@ reduce_scatter, all_gather, all_reduce = (
 
 
 class ExpCommCounts(NamedTuple):
-    fwd: dict | None = None
-    bwd: dict | None = None
-    optim: dict | None = None
+    fwd: Optional[dict] = None
+    bwd: Optional[dict] = None
+    optim: Optional[dict] = None
 
 
 class DistTensorParallelExampleTest(DTensorTestBase):
@@ -311,10 +311,7 @@ class DistTensorParallelExampleTest(DTensorTestBase):
         # Initialize input and make sure all ranks have the same input.
         inp_size = [8, 8]  # [batch_size, seq_len]
         if is_seq_parallel:
-            if inp_size[1] % self.world_size != 0:
-                raise AssertionError(
-                    f"Expected inp_size[1] % world_size == 0, got {inp_size[1]} % {self.world_size}"
-                )
+            assert inp_size[1] % self.world_size == 0
 
         torch.manual_seed(0)
         steps = 10 if type(model) is torch.float64 else 1
@@ -442,10 +439,7 @@ class DistTensorParallelExampleTest(DTensorTestBase):
         # Initialize input and make sure all ranks have the same input.
         inp_size = [8, 8]  # [batch_size, seq_len]
         if is_seq_parallel:
-            if inp_size[1] % self.world_size != 0:
-                raise AssertionError(
-                    f"Expected inp_size[1] % world_size == 0, got {inp_size[1]} % {self.world_size}"
-                )
+            assert inp_size[1] % self.world_size == 0
 
         torch.manual_seed(0)
         inp = torch.randint(model_args.vocab_size, inp_size, device=self.device_type)

@@ -1808,16 +1808,8 @@ class TestDistributions(DistributionsTestCase):
             probs=torch.tensor(0.5).to(device_type),
         ).sample(torch.Size((10000,)))
         # vals should be roughly half zeroes, half ones
-        zeros_count = (vals == 0.0).sum()
-        ones_count = (vals == 1.0).sum()
-        if zeros_count <= 4000:
-            raise AssertionError(
-                f"Expected (vals == 0.0).sum() > 4000, got {zeros_count}"
-            )
-        if ones_count <= 4000:
-            raise AssertionError(
-                f"Expected (vals == 1.0).sum() > 4000, got {ones_count}"
-            )
+        assert (vals == 0.0).sum() > 4000
+        assert (vals == 1.0).sum() > 4000
 
     def test_torch_binomial_dtype_errors(self):
         dtypes = [torch.int, torch.long, torch.short]
@@ -2514,9 +2506,7 @@ class TestDistributions(DistributionsTestCase):
         # TODO: Once _check_log_prob works with multidimensional distributions,
         #       add proper testing of the log probabilities.
         dist = LogisticNormal(mean, std)
-        shape = dist.log_prob(dist.sample()).detach().cpu().numpy().shape
-        if shape != (5,):
-            raise AssertionError(f"Expected log_prob shape (5,), got {shape}")
+        assert dist.log_prob(dist.sample()).detach().cpu().numpy().shape == (5,)
 
     def _get_logistic_normal_ref_sampler(self, base_dist):
         def _sampler(num_samples):
@@ -6226,8 +6216,7 @@ class TestNumericalStability(DistributionsTestCase):
 
     def test_continuous_bernoulli_gradient(self):
         def expec_val(x, probs=None, logits=None):
-            if probs is None and logits is None:
-                raise AssertionError("At least one of probs or logits must be provided")
+            assert not (probs is None and logits is None)
             if logits is not None:
                 probs = 1.0 / (1.0 + math.exp(-logits))
             bern_log_lik = x * math.log(probs) + (1.0 - x) * math.log1p(-probs)
@@ -6244,8 +6233,7 @@ class TestNumericalStability(DistributionsTestCase):
             return log_lik
 
         def expec_grad(x, probs=None, logits=None):
-            if probs is None and logits is None:
-                raise AssertionError("At least one of probs or logits must be provided")
+            assert not (probs is None and logits is None)
             if logits is not None:
                 probs = 1.0 / (1.0 + math.exp(-logits))
             grad_bern_log_lik = x / probs - (1.0 - x) / (1.0 - probs)

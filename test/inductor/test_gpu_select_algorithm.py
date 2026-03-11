@@ -75,12 +75,7 @@ def patches(fn):
 class TestSelectAlgorithmGpu(BaseTestSelectAlgorithm):
     common = check_model
 
-    @inductor_config.patch(
-        {
-            "freezing": True,
-            "shape_padding": False,
-        }
-    )
+    @inductor_config.patch({"freezing": True})
     @patches
     @torch.no_grad
     @dtypes(torch.bfloat16)

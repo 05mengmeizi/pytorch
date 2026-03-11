@@ -311,10 +311,7 @@ class TestCollectivesWithBaseClass(MultiThreadedTestCase):
                 result = rank * 2
 
                 ctx.save_for_backward(result, rank)
-                if int(rank.item()) != dist.get_rank():
-                    raise AssertionError(
-                        f"Expected rank.item() == dist.get_rank(), got {int(rank.item())} vs {dist.get_rank()}"
-                    )
+                assert int(rank.item()) == dist.get_rank()
                 return result
 
             @staticmethod

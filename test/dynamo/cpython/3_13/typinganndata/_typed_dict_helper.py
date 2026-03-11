@@ -24,7 +24,7 @@ class Foo(TypedDict):
 T = TypeVar("T")
 
 class FooGeneric(TypedDict, Generic[T]):
-    a: T | None
+    a: Optional[T]
 
 class VeryAnnotated(TypedDict, total=False):
     a: Annotated[Annotated[Annotated[Required[int], "a"], "b"], "c"]

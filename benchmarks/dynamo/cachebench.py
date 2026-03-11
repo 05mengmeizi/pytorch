@@ -100,8 +100,9 @@ def _run_torchbench_model(
     torchbench_file = os.path.join(
         os.path.dirname(cur_file), BENCHMARK_FILE[cmd_args.benchmark]
     )
-    if not os.path.exists(torchbench_file):
-        raise AssertionError(f"Torchbench does not exist at {torchbench_file}")
+    assert os.path.exists(torchbench_file), (
+        f"Torchbench does not exist at {torchbench_file}"
+    )
 
     dynamic = cmd_args.dynamic
     dynamic_args = ["--dynamic-shapes", "--dynamic-batch-only"] if dynamic else []

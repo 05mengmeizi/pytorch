@@ -448,7 +448,6 @@ DEFINE_DISPATCH(nansum_stub);
 DEFINE_DISPATCH(std_var_stub);
 DEFINE_DISPATCH(prod_stub);
 DEFINE_DISPATCH(norm_stub);
-DEFINE_DISPATCH(powsum_stub);
 DEFINE_DISPATCH(mean_stub);
 DEFINE_DISPATCH(and_stub);
 DEFINE_DISPATCH(or_stub);
@@ -840,7 +839,7 @@ std::tuple<Tensor, Tensor> cummax(const Tensor& self, int64_t dim) {
   auto values = at::empty(self.sizes(), self.options());
   auto indices = at::empty(self.sizes(), self.options().dtype(at::kLong));
   at::cummax_out(values, indices, self, dim);
-  return std::make_tuple(std::move(values), std::move(indices));
+  return std::make_tuple(values, indices);
 }
 
 void cummin_helper_cpu(const Tensor& self, Tensor& values, Tensor& indices, int64_t dim) {
@@ -879,7 +878,7 @@ std::tuple<Tensor, Tensor> cummin(const Tensor& self, int64_t dim) {
   auto values = at::empty(self.sizes(), self.options());
   auto indices = at::empty(self.sizes(), self.options().dtype(at::kLong));
   at::cummin_out(values, indices, self, dim);
-  return std::make_tuple(std::move(values), std::move(indices));
+  return std::make_tuple(values, indices);
 }
 
 Tensor cummaxmin_backward(const Tensor& grad, const Tensor& input, const Tensor& indices, int64_t dim) {

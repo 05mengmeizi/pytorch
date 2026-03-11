@@ -173,7 +173,7 @@ class VllmTestRunner(BaseRunner):
             "-o test.txt "
             "--index-strategy unsafe-best-match "
             "--constraint snapshot_constraint.txt "
-            "--torch-backend cu129"
+            "--torch-backend cu128"
         )
         pip_install_packages(requirements="test.txt", prefer_uv=True)
         logger.info("Done. installed requirements for test dependencies")
@@ -234,6 +234,7 @@ def preprocess_test_in(
         "torch",
         "torchvision",
         "torchaudio",
+        "mamba_ssm",
     ] + additional_package_to_move
     # Read current requirements
     target_path = Path(target_file)

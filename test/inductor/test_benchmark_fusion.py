@@ -195,8 +195,7 @@ class BenchmarkFusionTestTemplate:
             return y + 1
 
         x = torch.randn(1024, 1024, device=self.device)
-        # Disable lowp check due to non-deterministic kernel fusion strategies affecting fp16 precision.
-        self.common(f, (x,), check_lowp=False)
+        self.common(f, (x,))
 
 
 if HAS_GPU_AND_TRITON:
@@ -293,12 +292,7 @@ if HAS_GPU_AND_TRITON:
             return code, code2
 
         @fresh_cache()
-        @config.patch(
-            {
-                "max_autotune_gemm_backends": "TRITON",
-                "benchmark_epilogue_fusion": False,
-            }
-        )
+        @config.patch(max_autotune_gemm_backends="TRITON")
         def test_equivalent_template_code(self):
             code, code2 = self._equivalent_output_code_impl(256)
             for out_code in [code, code2]:

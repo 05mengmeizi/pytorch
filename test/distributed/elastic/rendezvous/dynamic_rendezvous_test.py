@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from base64 import b64encode
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from typing import cast, Optional
 from unittest import TestCase
 from unittest.mock import call, MagicMock, Mock, patch, PropertyMock
 
@@ -176,7 +176,7 @@ class RendezvousStateTest(TestCase):
 
 
 class FakeRendezvousBackend(RendezvousBackend):
-    _state: bytes | None
+    _state: Optional[bytes]
     _token: int
 
     def __init__(self) -> None:
@@ -187,15 +187,15 @@ class FakeRendezvousBackend(RendezvousBackend):
     def name(self) -> str:
         return "fake_backend"
 
-    def get_state(self) -> tuple[bytes, Token] | None:
+    def get_state(self) -> Optional[tuple[bytes, Token]]:
         if self._token == 0:
             return None
 
         return self._state, self._token  # type: ignore[return-value]
 
     def set_state(
-        self, state: bytes, token: Token | None = None
-    ) -> tuple[bytes, Token, bool] | None:
+        self, state: bytes, token: Optional[Token] = None
+    ) -> Optional[tuple[bytes, Token, bool]]:
         if token is None:
             token = 0
 
@@ -253,7 +253,7 @@ class BackendRendezvousStateHolderTest(TestCase, CustomAssertMixin):
         )
 
         mock_datetime = self._datetime_patch.start()
-        mock_datetime.now.return_value = self._now
+        mock_datetime.utcnow.return_value = self._now
 
     def tearDown(self) -> None:
         self._datetime_patch.stop()
@@ -513,7 +513,7 @@ class BackendRendezvousStateHolderTest(TestCase, CustomAssertMixin):
 
 class FakeRendezvousStateHolder(_RendezvousStateHolder):
     _state: _RendezvousState
-    _dirty: bool | None
+    _dirty: Optional[bool]
 
     def __init__(self) -> None:
         self._state = _RendezvousState()
@@ -527,7 +527,7 @@ class FakeRendezvousStateHolder(_RendezvousStateHolder):
     def state(self, value) -> None:
         self._state = value
 
-    def sync(self) -> bool | None:
+    def sync(self) -> Optional[bool]:
         self._dirty, dirty = None, self._dirty
 
         return dirty
@@ -566,7 +566,7 @@ class DistributedRendezvousOpExecutorTest(TestCase, CustomAssertMixin):
         )
 
         mock_datetime = self._datetime_patch.start()
-        mock_datetime.now.return_value = self._now
+        mock_datetime.utcnow.return_value = self._now
 
     def tearDown(self) -> None:
         self._datetime_patch.stop()
@@ -582,7 +582,7 @@ class DistributedRendezvousOpExecutorTest(TestCase, CustomAssertMixin):
         )
 
     def _create_op_executor(
-        self, settings: RendezvousSettings | None = None
+        self, settings: Optional[RendezvousSettings] = None
     ) -> _DistributedRendezvousOpExecutor:
         self._state_holder.state = self._state
 
@@ -879,7 +879,7 @@ class AbstractTestRendezvousOp(ABC):
         )
 
         mock_datetime = self._datetime_patch.start()
-        mock_datetime.now.return_value = self._now
+        mock_datetime.utcnow.return_value = self._now
 
         self._time_patch = patch(
             "torch.distributed.elastic.rendezvous.dynamic_rendezvous.time"
@@ -1156,9 +1156,9 @@ class DynamicRendezvousHandlerTest(TestCase):
         self._min_nodes = 1
         self._max_nodes = 1
 
-        self._join_timeout: timedelta | None = None
-        self._close_timeout: timedelta | None = None
-        self._heartbeat_timeout: timedelta | None = None
+        self._join_timeout: Optional[timedelta] = None
+        self._close_timeout: Optional[timedelta] = None
+        self._heartbeat_timeout: Optional[timedelta] = None
 
         self._keep_alive_interval = timedelta(seconds=30)
 
@@ -1412,7 +1412,7 @@ class DynamicRendezvousHandlerTest(TestCase):
     def test_keep_alive_updates_last_heartbeat(self, mock_datetime) -> None:
         now = datetime(2000, 1, 1, hour=0, minute=0)
 
-        mock_datetime.now.return_value = now
+        mock_datetime.utcnow.return_value = now
 
         self._state.last_heartbeats[self._node] = now - (self._keep_alive_interval * 2)
 
@@ -1505,7 +1505,7 @@ class DynamicRendezvousHandlerFromBackendTest(TestCase):
         self._backend = DummyRendezvousBackend()
         self._min_nodes = 3
         self._max_nodes = 6
-        self._timeout: RendezvousTimeout | None = RendezvousTimeout()
+        self._timeout: Optional[RendezvousTimeout] = RendezvousTimeout()
 
     def _create_handler(self) -> DynamicRendezvousHandler:
         return DynamicRendezvousHandler.from_backend(

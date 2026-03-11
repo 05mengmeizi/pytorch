@@ -154,9 +154,9 @@ class CtxManagerTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
                     x = torch.mul(x, 5)
                     torch._dynamo.graph_break()
                     x = torch.sqrt(x)
-                    assert torch.is_grad_enabled()  # noqa: S101
-                assert not torch.is_grad_enabled()  # noqa: S101
-            assert torch.is_grad_enabled() == before  # noqa: S101
+                    assert torch.is_grad_enabled()
+                assert not torch.is_grad_enabled()
+            assert torch.is_grad_enabled() == before
             return x
 
         a = torch.randn([3, 4])
@@ -596,15 +596,13 @@ class CtxManagerTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
 
         if torch.autograd._profiler_enabled():
             torch.autograd._disable_profiler()
-        if torch.autograd._profiler_enabled():
-            raise AssertionError("Expected profiler to be disabled")
+        assert not torch.autograd._profiler_enabled()
         ref = fn(x)
         res = opt_fn(x)
         self.assertTrue(same(ref, res))
 
         with torch.autograd.profiler.profile():
-            if not torch.autograd._profiler_enabled():
-                raise AssertionError("Expected profiler to be enabled")
+            assert torch.autograd._profiler_enabled()
             ref = fn(x)
             res = opt_fn(x)
             self.assertTrue(same(ref, res))
@@ -817,7 +815,7 @@ class CtxManagerTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
                     # We remember to exit the inner autocast correctly to outer
                     # even after graph breaks
                     f_float16 = self.mm_breaks(a_float32, b_float32)
-                    assert f_float16.dtype == f_float16_1.dtype  # noqa: S101
+                    assert f_float16.dtype == f_float16_1.dtype
                 return f_float16, g_float32
 
         module = MyModule()
@@ -863,7 +861,7 @@ class CtxManagerTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
                         g_float32 = torch.mm(a_float32, b_float32)
                     f_float16 = self.mm_breaks(a_float32, b_float32)
 
-                    assert (  # noqa: S101
+                    assert (
                         f_float16[0][0] == self.mm_not_break(a_float32, b_float32)[0][0]
                     )
                 return f_float16, g_float32
@@ -1468,7 +1466,7 @@ class GraphModule(torch.nn.Module):
                             inner_func = ctx_wrapper(inner_func)
 
                         # Calling no_grad or enabled_grad should not mutate global state
-                        assert torch.is_grad_enabled() == mode_inverse  # noqa: S101
+                        assert torch.is_grad_enabled() == mode_inverse
 
                     with ctx_wrapper_inverse():
                         return inner_func(x)
@@ -1503,7 +1501,7 @@ class GraphModule(torch.nn.Module):
                                 return x.sin()
 
                         # Calling no_grad or enabled_grad should not mutate global state
-                        assert torch.is_grad_enabled() == mode_inverse  # noqa: S101
+                        assert torch.is_grad_enabled() == mode_inverse
 
                     with ctx_wrapper_inverse():
                         return inner_func(x)
@@ -1539,7 +1537,7 @@ class GraphModule(torch.nn.Module):
 
                         # Consuming set_grad_enabled by calling it on a function
                         # should not mutate global state
-                        assert torch.is_grad_enabled() == mode_inverse  # noqa: S101
+                        assert torch.is_grad_enabled() == mode_inverse
 
                     with torch.set_grad_enabled(mode_inverse):
                         return inner_func(x)

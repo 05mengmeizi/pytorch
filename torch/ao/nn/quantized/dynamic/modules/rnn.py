@@ -167,7 +167,6 @@ class RNNBase(torch.nn.Module):
                     )
                     packed_ih = torch.ops.quantized.linear_prepack(w_ih, b_ih)
                     packed_hh = torch.ops.quantized.linear_prepack(w_hh, b_hh)
-                    # pyrefly: ignore [unnecessary-comparison]
                     if self.version is None or self.version < 2:
                         cell_params = (
                             torch.ops.quantized.make_quantized_cell_params_dynamic(
@@ -525,6 +524,7 @@ class LSTM(RNNBase):
         >>> output, (hn, cn) = rnn(input, (h0, c0))
     """
 
+    # pyrefly: ignore [bad-override]
     _FLOAT_MODULE = nn.LSTM
 
     __overloads__ = {"forward": ["forward_packed", "forward_tensor"]}
@@ -813,6 +813,7 @@ class GRU(RNNBase):
         >>> output, hn = rnn(input, h0)
     """
 
+    # pyrefly: ignore [bad-override]
     _FLOAT_MODULE = nn.GRU
 
     __overloads__ = {"forward": ["forward_packed", "forward_tensor"]}

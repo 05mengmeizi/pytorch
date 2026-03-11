@@ -91,13 +91,6 @@ if triton is not None:
             triton_key,  # type: ignore[attr-defined,no-redef]
         )
 
-    try:
-        from triton.runtime.errors import IntelGPUError
-    except ImportError:
-
-        class IntelGPUError(Exception):  # type: ignore[no-redef]
-            pass
-
     builtins_use_semantic_kwarg = (
         "_semantic" in inspect.signature(triton.language.core.view).parameters
     )
@@ -111,9 +104,6 @@ else:
         pass
 
     class PTXASError(Exception):  # type: ignore[no-redef]
-        pass
-
-    class IntelGPUError(Exception):  # type: ignore[no-redef]
         pass
 
     Config = object
@@ -150,10 +140,11 @@ else:
 
 def cc_warp_size(cc: str | int) -> int:
     if torch.version.hip:
-        if "gfx9" in str(cc):
-            return 64
-        else:
+        cc_str = str(cc)
+        if "gfx10" in cc_str or "gfx11" in cc_str:
             return 32
+        else:
+            return 64
     else:
         return 32
 
@@ -172,7 +163,6 @@ __all__ = [
     "OutOfResources",
     "KernelInterface",
     "PTXASError",
-    "IntelGPUError",
     "ASTSource",
     "GPUTarget",
     "tl",

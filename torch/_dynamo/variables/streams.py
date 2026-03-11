@@ -16,7 +16,7 @@ from ..graph_bytecode_inputs import (
 )
 from ..source import CurrentStreamSource
 from .base import VariableTracker
-from .constant import CONSTANT_VARIABLE_NONE, ConstantVariable
+from .constant import ConstantVariable
 from .ctx_manager import FxTracebackAnnotateVariable
 from .lazy import LazyVariableTracker
 
@@ -229,7 +229,7 @@ class SymbolicStreamState:
     def exit_stream(self) -> None:
         self.cur_stream_stack.pop()
 
-    def cur_stream(self, device: torch.device | None = None) -> "StreamVariable":
+    def cur_stream(self, device: Optional[torch.device] = None) -> "StreamVariable":
         if device is not None:
             for stream in reversed(self.cur_stream_stack):
                 if stream.device == device:
@@ -294,7 +294,7 @@ class StreamVariable(StreamContextVariable):
         self,
         proxy: Proxy,
         value: torch.Stream,
-        user_object_index: int | None = None,
+        user_object_index: Optional[int] = None,
         **kwargs: Any,
     ) -> None:
         # Index into the user object table
@@ -304,6 +304,7 @@ class StreamVariable(StreamContextVariable):
 
         self.proxy = proxy
         self.value = value
+        # pyrefly: ignore [read-only]
         self.device = value.device
 
         self.user_object_index = user_object_index
@@ -328,7 +329,7 @@ class StreamVariable(StreamContextVariable):
             tx.output.create_proxy(
                 "call_method", name, *proxy_args_kwargs([self] + args, kwargs)
             )
-            return CONSTANT_VARIABLE_NONE
+            return ConstantVariable(None)
         elif name == "query":
             return wrap_fx_proxy_cls(
                 target_cls=ConstantVariable,
@@ -355,14 +356,13 @@ class StreamVariable(StreamContextVariable):
             # constant values
             other = args[0]
             if not isinstance(other, StreamVariable):
-                return VariableTracker.build(tx, NotImplemented)
+                return ConstantVariable.create(NotImplemented)
 
             if other.source:
                 assert self.source is not None
                 install_guard(self.source.make_guard(GuardBuilder.EQUALS_MATCH))
-            return VariableTracker.build(
-                tx,
-                cmp_name_to_op_mapping[name](self.value, other.value),  # type: ignore[arg-type]
+            return ConstantVariable.create(
+                cmp_name_to_op_mapping[name](self.value, other.value)  # type: ignore[arg-type]
             )
 
         return super().call_method(tx, name, args, kwargs)
@@ -427,7 +427,7 @@ class EventVariable(VariableTracker):
         self,
         proxy: Proxy,
         value: torch.Event,
-        user_object_index: int | None,
+        user_object_index: Optional[int],
         **kwargs: Any,
     ) -> None:
         if proxy is not None and "example_value" in proxy.node.meta:
@@ -457,7 +457,7 @@ class EventVariable(VariableTracker):
                 ),
                 {},
             )
-            return CONSTANT_VARIABLE_NONE
+            return ConstantVariable(None)
         elif name == "record":
             tx.output.create_proxy(
                 "call_function",
@@ -468,12 +468,12 @@ class EventVariable(VariableTracker):
                 ),
                 {},
             )
-            return CONSTANT_VARIABLE_NONE
+            return ConstantVariable(None)
         elif name == "synchronize":
             tx.output.create_proxy(
                 "call_method", name, *proxy_args_kwargs([self] + args, kwargs)
             )
-            return CONSTANT_VARIABLE_NONE
+            return ConstantVariable(None)
         elif name == "query":
             return wrap_fx_proxy_cls(
                 target_cls=ConstantVariable,

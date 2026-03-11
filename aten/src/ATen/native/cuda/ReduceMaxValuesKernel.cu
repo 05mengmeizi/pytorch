@@ -15,8 +15,6 @@
 #include <ATen/NumericUtils.h>
 #include <ATen/cuda/NumericLimits.cuh>
 
-#include <thrust/pair.h>
-
 namespace at::native {
 
 template <typename acc_t>

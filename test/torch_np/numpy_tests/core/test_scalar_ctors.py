@@ -93,27 +93,15 @@ class TestArrayFromScalar(TestCase):
         arr = np.array(x, dtype=t2)
         # type should be preserved exactly
         if t2 is None:
-            if arr.dtype.type is not t1:
-                raise AssertionError(
-                    f"Expected arr.dtype.type is {t1}, got {arr.dtype.type}"
-                )
+            assert arr.dtype.type is t1
         else:
-            if arr.dtype.type is not t2:
-                raise AssertionError(
-                    f"Expected arr.dtype.type is {t2}, got {arr.dtype.type}"
-                )
+            assert arr.dtype.type is t2
 
         arr1 = np.asarray(x, dtype=t2)
         if t2 is None:
-            if arr1.dtype.type is not t1:
-                raise AssertionError(
-                    f"Expected arr1.dtype.type is {t1}, got {arr1.dtype.type}"
-                )
+            assert arr1.dtype.type is t1
         else:
-            if arr1.dtype.type is not t2:
-                raise AssertionError(
-                    f"Expected arr1.dtype.type is {t2}, got {arr1.dtype.type}"
-                )
+            assert arr1.dtype.type is t2
 
     @parametrize("t1", int_types + uint_types)
     @parametrize("t2", int_types + uint_types + [None])

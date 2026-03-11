@@ -21,7 +21,7 @@ import operator
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Generator, Sequence
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING, Union
 
 import torch
 import torch.utils._pytree as pytree
@@ -91,7 +91,7 @@ def snapshot_cudagraph_enabled() -> bool:
     return torch._inductor.config.triton.cudagraphs
 
 
-def maybe_clone(x: torch.Tensor | None) -> torch.Tensor | None:
+def maybe_clone(x: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     if x is not None:
         return clone_preserve_strides(x)
     return x
@@ -295,9 +295,9 @@ class AutogradCompilerInstance:
         )
         self.fx_tracer = PythonKeyTracer()
         self.proxy_mode = ProxyTorchDispatchMode(self.fx_tracer, "symbolic")
-        self.hooks_proxy: Proxy | None = None
+        self.hooks_proxy: Optional[Proxy] = None
 
-    def wrap_fake(self, x: torch.Tensor, source: Source | None) -> FakeTensor:
+    def wrap_fake(self, x: torch.Tensor, source: Optional[Source]) -> FakeTensor:
         assert isinstance(x, torch.Tensor)
         return self.fake_tensor_mode.from_tensor(x, source=source)
 
@@ -309,7 +309,7 @@ class AutogradCompilerInstance:
         self,
         inputs: list[torch.Tensor],
         sizes: list[int],
-        scalars: list[int | float],
+        scalars: list[Union[int, float]],
         origins: list[list[tuple[int, str]]],
         accumulate_grad: bool,
         check_nans: bool,
@@ -448,8 +448,7 @@ class AutogradCompilerInstance:
         saved_tensors: Sequence[torch.Tensor],
         pctx: Any,
         ctx: Any,
-        maybe_backward_state_idx: int | None,
-        opaque_object_indices: list[int],
+        maybe_backward_state_idx: Optional[int],
     ) -> Sequence[Any]:
         # The AOTBackward call consists of three things: the prologue, the
         # backward graph, and the epilogue.
@@ -463,11 +462,6 @@ class AutogradCompilerInstance:
         # into the CA graph and have Dynamo trace into it.
 
         psymints = [self.to_proxy(e) for e in ctx._get_compiled_autograd_symints()]
-
-        popaque_objects = [
-            self.hooks_proxy[idx]  # type: ignore[index]
-            for idx in opaque_object_indices
-        ]
 
         # NOTE: we should only close over constants
         CompiledFunction = ctx._forward_cls
@@ -488,13 +482,11 @@ class AutogradCompilerInstance:
         def call_aot_bwd_prologue(
             ctx_saved_tensors: Sequence[torch.Tensor],
             ctx_symints: Sequence[IntLikeType],
-            ctx_opaque_objs: Sequence[Any],
             *flat_args: Sequence[Any],
         ) -> Any:
             out = torch._functorch._aot_autograd.runtime_wrappers._backward_prologue_functional(
                 ctx_saved_tensors,
                 ctx_symints,
-                ctx_opaque_objs,
                 metadata,
                 maybe_subclass_metadata,
                 *flat_args,
@@ -507,7 +499,6 @@ class AutogradCompilerInstance:
             args=(
                 psaved_tensors,
                 psymints,
-                popaque_objects,
                 *pinputs,
             ),
             kwargs={},
@@ -547,9 +538,8 @@ class AutogradCompilerInstance:
             # run over all nodes of the aot_backward graph.
             # copy and paste them all into the compiled autograd graph.
             args_idx = 0
-            # pyrefly: ignore [implicit-any]
             value_remap = {}
-            poutputs: list[torch.fx.Proxy] | None = None
+            poutputs: Optional[list[torch.fx.Proxy]] = None
 
             # names of nodes must appear only once in the fx.Graph
             # dedup AOT backwards that appear multiple times
@@ -658,9 +648,8 @@ class AutogradCompilerInstance:
         saved_tensors: Sequence[torch.Tensor],
         backward_idx: int,
         ctx: torch.autograd.function.BackwardCFunction,
-        maybe_backward_state_idx: int | None,
-        opaque_object_indices: list[int],
-    ) -> tuple[torch.Tensor | None, ...]:
+        maybe_backward_state_idx: Optional[int],
+    ) -> tuple[Optional[torch.Tensor], ...]:
         assert self.hooks_proxy is not None
         pctx = self.hooks_proxy[backward_idx]  # type: ignore[index]
         pinputs = self.to_proxy(inputs)
@@ -674,7 +663,6 @@ class AutogradCompilerInstance:
                 pctx,
                 ctx,
                 maybe_backward_state_idx,
-                opaque_object_indices,
             )
         else:
             proxies = self.fx_tracer.create_proxy(
@@ -691,7 +679,7 @@ class AutogradCompilerInstance:
 
         with disable_proxy_modes_tracing():
             # create fake Tensors
-            grad_ins: list[torch.Tensor | None] = []
+            grad_ins: list[Optional[torch.Tensor]] = []
             for idx, output_metadata in enumerate(output_metadatas):
                 if output_metadata is None or proxies[idx] is None:
                     grad_ins.append(None)
@@ -1361,7 +1349,6 @@ class AutogradCompilerInstance:
             if len(output_nodes) > 0:
                 continue
 
-            # pyrefly: ignore [implicit-any]
             input_nodes_and_users = []
             input_nodes_and_users.extend(list(input_nodes))
             for input_node in input_nodes:
@@ -1416,7 +1403,7 @@ class AutogradCompilerInstance:
         self,
         objects: Sequence[Any],
         proxies: Any,
-        origins: list[tuple[int, str]] | None = None,
+        origins: Optional[list[tuple[int, str]]] = None,
     ) -> Sequence[Any]:
         if isinstance(proxies, torch.fx.Proxy):
             if origins:
@@ -1445,7 +1432,7 @@ class AutogradCompilerInstance:
         self,
         node_name: str,
         nodecall_index: int,
-        pyobj: torch.autograd.Function | None,
+        pyobj: Optional[torch.autograd.Function],
     ) -> None:
         maybe_aot_id = ""
         if pyobj is not None:
@@ -1616,10 +1603,10 @@ def copy_slices_prologue(
 def copy_slices_epilogue(
     needs_input_grad: Sequence[bool],
     result: torch.Tensor,
-    res: Sequence[torch.Tensor | None],
+    res: Sequence[Optional[torch.Tensor]],
     grad_slice: torch.Tensor,
-) -> list[torch.Tensor | None]:
-    grad_inputs: list[torch.Tensor | None] = [None] * len(needs_input_grad)
+) -> list[Optional[torch.Tensor]]:
+    grad_inputs: list[Optional[torch.Tensor]] = [None] * len(needs_input_grad)
     for i in range(len(needs_input_grad)):
         if needs_input_grad[i]:
             if res[i] is None:

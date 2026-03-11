@@ -11,7 +11,7 @@ from abc import abstractmethod
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from tabulate import tabulate
 from tqdm import tqdm
@@ -125,7 +125,7 @@ class CutlassExperimentConfig(ExperimentConfig):
     def to_options(self) -> dict[str, Any]:
         return {
             **super().to_options(),
-            "cutlass.cutlass_instantiation_level": self.cutlass_instantiation_level,
+            "cuda.cutlass_instantiation_level": self.cutlass_instantiation_level,
         }
 
 
@@ -363,14 +363,11 @@ def generate_experiment_configs(
 
 def calculate_table_data(results: list[ExperimentResults]) -> dict:
     table_data = defaultdict(list)
-    aten_perf: float | None = None
+    aten_perf: Optional[float] = None
 
     for experiment_result in results:
         for key, value in experiment_result.asdict().items():
-            if key not in UNITS:
-                raise AssertionError(
-                    f"Unknown key '{key}'. Expected one of: {list(UNITS.keys())}"
-                )
+            assert key in UNITS, f"Unknown key {key}"
             table_data[key + UNITS[key]].append(value)
 
         if experiment_result.name == "aten":

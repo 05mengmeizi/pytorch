@@ -182,18 +182,11 @@ def _getDefaultRtolAndAtol(dtype0, dtype1):
 
 
 def op_assert_ref(test_case, op, test_dtype, i, orig, decomp, ref, args, kwargs):
-    if orig.dtype != decomp.dtype:
-        raise AssertionError(
-            f"{i} Operation: {op} dtype mismatch: {orig.dtype} != {decomp.dtype}"
-        )
+    assert orig.dtype == decomp.dtype, f"{i} Operation:  {op}"
     if orig.numel() == 0 or decomp.numel() == 0:
-        if orig.numel() != decomp.numel():
-            raise AssertionError(f"numel mismatch: {orig.numel()} != {decomp.numel()}")
+        assert orig.numel() == decomp.numel()
         return
-    if orig.shape != decomp.shape:
-        raise AssertionError(
-            f"{i} Operation: {op} shape mismatch: {orig.shape} != {decomp.shape}"
-        )
+    assert orig.shape == decomp.shape, f"{i} Operation:  {op}"
     tol_table = {
         (torch.bfloat16, torch.ops.aten.native_layer_norm.default): 1e-5,
         (torch.float16, torch.ops.aten.native_layer_norm.default): 1e-5,
@@ -228,13 +221,12 @@ def op_assert_ref(test_case, op, test_dtype, i, orig, decomp, ref, args, kwargs)
         (torch.float16, torch.ops.aten.reflection_pad3d_backward.default): 5e-3,
         (torch.bfloat16, torch.ops.aten.reflection_pad3d_backward.default): 5e-2,
         (torch.float16, torch.ops.aten._batch_norm_with_update.default): 2e-7,
-        (torch.bfloat16, torch.ops.aten._batch_norm_with_update.default): 5e-7,
+        (torch.bfloat16, torch.ops.aten._batch_norm_with_update.default): 2e-7,
         # see https://github.com/pytorch/pytorch/pull/96264
-        (torch.float16, torch.ops.aten.mv.default): 2e-5,
+        (torch.float16, torch.ops.aten.mv.default): 1e-5,
         (torch.bfloat16, torch.ops.aten.mv.default): 1e-5,
-        (torch.float16, torch.ops.aten.dot.default): 2e-6,
+        (torch.float16, torch.ops.aten.log_sigmoid_backward.default): 2e-5,
         (torch.float16, torch.ops.aten._softmax_backward_data.default): 3e-7,
-        (torch.bfloat16, torch.ops.aten._softmax_backward_data.default): 2e-7,
     }
     if ref.is_floating_point():
         orig_diff = (orig - ref).abs().max()
@@ -328,8 +320,7 @@ def normalize_op_input_output2(
         for i, arg in enumerate(flat_args)
         if diff_arg(arg, requires_grad=requires_grad)
     )
-    if len(diff_argnums) <= 0:
-        raise AssertionError("expected diff_argnums to be non-empty")
+    assert len(diff_argnums) > 0
     primals = tuple(flat_args[i] for i in diff_argnums)
 
     @functools.wraps(f)
@@ -348,8 +339,7 @@ def normalize_op_input_output2(
                 for r in result
                 if isinstance(r, Tensor) and (r.is_floating_point() or r.is_complex())
             )
-            if len(result) <= 0:
-                raise AssertionError("expected result to be non-empty")
+            assert len(result) > 0
         return result
 
     return wrapped, primals
@@ -871,10 +861,7 @@ def forward(self, scores_1, mask_1, value_1):
             real_out_unflat = func(*args, **kwargs)
             real_out = pytree.tree_leaves(real_out_unflat)
 
-            if len(real_out) != len(decomp_out):
-                raise AssertionError(
-                    f"output length mismatch: {len(real_out)} != {len(decomp_out)}"
-                )
+            assert len(real_out) == len(decomp_out)
 
             if do_relative_check:
                 device_arg = kwargs.get("device", None)
@@ -894,12 +881,8 @@ def forward(self, scores_1, mask_1, value_1):
                     zip(real_out, decomp_out, real_out_double)
                 ):
                     if not isinstance(orig, torch.Tensor):
-                        if type(orig) is not type(decomp):
-                            raise AssertionError(
-                                f"type mismatch: {type(orig)} != {type(decomp)}"
-                            )
-                        if orig != decomp:
-                            raise AssertionError(f"value mismatch: {orig} != {decomp}")
+                        assert type(orig) is type(decomp)
+                        assert orig == decomp
                         continue
                     op_assert_ref(
                         self.test_case,
@@ -915,12 +898,8 @@ def forward(self, scores_1, mask_1, value_1):
             else:
                 for orig, decomp in zip(real_out, decomp_out):
                     if not isinstance(orig, torch.Tensor):
-                        if type(orig) is not type(decomp):
-                            raise AssertionError(
-                                f"type mismatch: {type(orig)} != {type(decomp)}"
-                            )
-                        if orig != decomp:
-                            raise AssertionError(f"value mismatch: {orig} != {decomp}")
+                        assert type(orig) is type(decomp)
+                        assert orig == decomp
                         continue
                     op_assert_equal(
                         self.test_case,
@@ -1057,8 +1036,7 @@ def forward(self, scores_1, mask_1, value_1):
                 if not run_all:
                     self.check_decomposed(aten_name, mode)
             else:
-                if not op.supports_autograd:
-                    raise AssertionError("expected op.supports_autograd")
+                assert op.supports_autograd
                 self.skipTest(
                     "only backwards is decomposed, but dtype doesn't support AD"
                 )
@@ -1327,10 +1305,7 @@ class HasDecompTest(TestCase):
                     packet_name, overload_name = name, "default"
 
                 packet = getattr(aten, packet_name)
-                if not isinstance(packet, torch._ops.OpOverloadPacket):
-                    raise AssertionError(
-                        f"expected OpOverloadPacket, got {type(packet)}"
-                    )
+                assert isinstance(packet, torch._ops.OpOverloadPacket)
                 op = getattr(packet, overload_name)
                 yield op
 

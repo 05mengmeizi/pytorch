@@ -1,15 +1,17 @@
 #include <c10/hip/HIPCachingAllocator.h>
+#include <ATen/hip/impl/HIPAllocatorMasqueradingAsCUDA.h>
 #include <ATen/hip/impl/HIPCachingAllocatorMasqueradingAsCUDA.h>
 
 namespace c10 { namespace hip {
 namespace HIPCachingAllocatorMasqueradingAsCUDA {
 
-c10::cuda::CUDACachingAllocator::CUDAAllocator* get() {
-  return c10::cuda::CUDACachingAllocator::get();
+HIPCachingAllocator::HIPAllocator* get() {
+  static HIPAllocatorMasqueradingAsCUDA allocator(HIPCachingAllocator::get());
+  return &allocator;
 }
 
 void recordStreamMasqueradingAsCUDA(const DataPtr& ptr, HIPStreamMasqueradingAsCUDA stream) {
-  c10::cuda::CUDACachingAllocator::recordStream(ptr, stream);
+  HIPCachingAllocator::recordStream(ptr, stream.hip_stream());
 }
 
 } // namespace HIPCachingAllocatorMasqueradingAsCUDA

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence, TYPE_CHECKING  # noqa: UP035
+from typing import Optional, Sequence, TYPE_CHECKING  # noqa: UP035
 
 from onnxscript.onnx_opset import (  # type: ignore[attr-defined]
     opset20 as op20,
@@ -39,8 +39,8 @@ def aten_gelu_opset20(
 def aten_group_norm(
     input: TFloat,
     num_groups: int,
-    weight: TFloat | None = None,
-    bias: TFloat | None = None,
+    weight: Optional[TFloat] = None,
+    bias: Optional[TFloat] = None,
     eps: float = 1e-05,
     cudnn_enabled: bool = True,
 ) -> TFloat:
@@ -60,8 +60,8 @@ def aten_group_norm(
 def aten_rms_norm(
     input: TFloat,
     normalized_shape: Sequence[int],
-    weight: TFloat | None = None,
-    eps: float | None = None,
+    weight: Optional[TFloat] = None,
+    eps: Optional[float] = None,
 ) -> TFloat:
     """rms_norm(Tensor input, SymInt[] normalized_shape, Tensor? weight=None, float? eps=None) -> Tensor"""
 
@@ -92,10 +92,10 @@ def aten_scaled_dot_product_attention_23(
     query: TFloat,
     key: TFloat,
     value: TFloat,
-    attn_mask: TFloat | None = None,
+    attn_mask: Optional[TFloat] = None,
     dropout_p: float = 0.0,
     is_causal: bool = False,
-    scale: float | None = None,
+    scale: Optional[float] = None,
     enable_gqa: bool = False,
 ) -> TFloat:
     """scaled_dot_product_attention(Tensor query, Tensor key, Tensor value, Tensor? attn_mask=None, float dropout_p=0.0, bool is_causal=False, *, float? scale=None, bool enable_gqa=False) -> Tensor
@@ -125,25 +125,26 @@ def aten_scaled_dot_product_attention_23(
     where Q, K, V are the query, key, and value tensors, respectively.
     L is the target sequence length, S is the source sequence length, and E is the embedding size.
     """
-    if is_causal and attn_mask is not None:
-        raise AssertionError("is_causal and attn_mask cannot be set at the same time")
-    if not (len(query.shape) == 4 and len(key.shape) == 4 and len(value.shape) == 4):
-        raise AssertionError("only 4D query, key, and value are supported")
+    assert (not is_causal) or (is_causal and attn_mask is None), (
+        "is_causal and attn_mask cannot be set at the same time"
+    )
+    assert len(query.shape) == 4 and len(key.shape) == 4 and len(value.shape) == 4, (
+        "only 4D query, key, and value are supported"
+    )
 
     # Attention onnx op can only handle non-training scenarios where dropout is disabled.
     if dropout_p == 0:
         if enable_gqa:
-            if not (
+            assert (
                 query.shape[1] > key.shape[1] == value.shape[1]
                 and query.shape[1] % key.shape[1] == 0
-            ):
-                raise AssertionError(
-                    "SDPA (GQA or MQA) requires q_num_heads > kv_num_heads & "
-                    "q_num_heads % kv_num_heads == 0"
-                )
+            ), (
+                "SDPA (GQA or MQA) requires q_num_heads > kv_num_heads & q_num_heads % kv_num_heads == 0"
+            )
         else:
-            if not (query.shape[1] == key.shape[1] == value.shape[1]):
-                raise AssertionError("SDPA (MHA) requires q_num_heads = kv_num_heads")
+            assert query.shape[1] == key.shape[1] == value.shape[1], (
+                "SDPA (MHA) requires q_num_heads = kv_num_heads"
+            )
 
         # NOTE: num_heads attributes (q_num_heads/kv_num_heads) should not be specified for 4D.
         # They are not populated with 4D inputs because this information directly comes from input shapes:
@@ -200,14 +201,12 @@ def _attention_repeat_kv_for_group_query(
             - expanded_value: Tensor of shape [B, q_num_heads, kv_S, E]
     """
 
-    if not (
+    assert (
         query.shape[1] > key.shape[1] == value.shape[1]
         and query.shape[1] % key.shape[1] == 0
-    ):
-        raise AssertionError(
-            "SDPA (GQA or MQA) requires q_num_heads > kv_num_heads & "
-            "q_num_heads % kv_num_heads == 0"
-        )
+    ), (
+        "SDPA (GQA or MQA) requires q_num_heads > kv_num_heads & q_num_heads % kv_num_heads == 0"
+    )
 
     # NOTE: QKV are expected to be 4D tensors
 

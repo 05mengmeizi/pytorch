@@ -110,8 +110,7 @@ class TestOptimizations(torch._dynamo.test_case.TestCase):
 
             def boxed_assert(gm, *example_args):
                 fn = lookup_backend(backend)(gm, *example_args)
-                if not fn._boxed_call:
-                    raise AssertionError("Expected fn._boxed_call to be True")
+                assert fn._boxed_call
                 return fn
 
             compiled_model = torch.compile(model, backend=boxed_assert, options=options)
@@ -340,8 +339,7 @@ class TestCustomBackendAPI(torch._dynamo.test_case.TestCase):
         mock_3_10.load.return_value = lambda: "mocked 3.10"
 
         def mock_eps(group=None):
-            if group != backends_group:
-                raise AssertionError(f"Expected group {backends_group}, got {group}")
+            assert group == backends_group, group
             mock_group = MagicMock()
             mock_group.names = [name]
             mock_group[name] = mock_3_10
@@ -367,8 +365,7 @@ class TestCustomBackendAPI(torch._dynamo.test_case.TestCase):
             registry._discover_entrypoint_backends.cache_clear()
 
             backends = list_backends()
-            if name not in backends:
-                raise AssertionError(f"Expected {name} in backends, got {backends}")
+            assert name in backends, (name, backends)
 
     def test_backend_recompilation(self):
         def fn(x):

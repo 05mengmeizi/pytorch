@@ -3,6 +3,7 @@ import cmath
 import math
 import warnings
 from collections import OrderedDict
+from typing import Optional
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -15,7 +16,7 @@ from torch.nn.modules.utils import (
 )
 
 
-_builtin_table: dict[int, str] | None = None
+_builtin_table: Optional[dict[int, str]] = None
 
 _modules_containing_builtins = (
     torch,

@@ -60,10 +60,7 @@ class BatchedBinaryOpBenchmark(op_bench.TorchBenchmarkBase):
         batch2 = self.inputs["batch2"]
         B, M, N = batch1.shape
         B_check, N_check, K = batch2.shape
-        if B != B_check or N != N_check:
-            raise AssertionError(
-                f"Batch dimensions must match for bmm: B={B} vs {B_check}, N={N} vs {N_check}"
-            )
+        assert B == B_check and N == N_check, "Batch dimensions must match for bmm"
 
         bytes_per_element = batch1.element_size()
         total_elements = B * (M * N + N * K + M * K)
@@ -117,14 +114,10 @@ class BatchedTernaryOpBenchmark(op_bench.TorchBenchmarkBase):
         B, M, K = input_.shape
         B_check1, M_check, N = batch1.shape
         B_check2, N_check, K_check = batch2.shape
-        if not (B == B_check1 == B_check2):
-            raise AssertionError(
-                f"Batch dimensions must match: B={B}, B_check1={B_check1}, B_check2={B_check2}"
-            )
-        if not (M == M_check and K == K_check and N == N_check):
-            raise AssertionError(
-                f"Matrix dimensions must match: M={M} vs {M_check}, K={K} vs {K_check}, N={N} vs {N_check}"
-            )
+        assert B == B_check1 == B_check2, "Batch dimensions must match"
+        assert M == M_check and K == K_check and N == N_check, (
+            "Matrix dimensions must match"
+        )
 
         bytes_per_element = input_.element_size()
         total_elements = B * (M * K + M * N + N * K + M * K)

@@ -1,3 +1,4 @@
+# mypy: allow-untyped-defs
 """
 This module provides result classes for AOT Autograd compilation.
 
@@ -21,10 +22,10 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
-from typing import Any, Generic, TYPE_CHECKING, TypeVar
+from typing import Any, Generic, Optional, TYPE_CHECKING, TypeVar
 
 import torch
 from torch._dynamo.precompile_context import BackendCacheArtifact
@@ -35,7 +36,6 @@ from torch._inductor.output_code import (
     OutputCode,
 )
 from torch._inductor.utils import should_use_remote_fx_graph_cache
-from torch._logging import getArtifactLogger
 
 from .runtime_wrappers import (
     AOTDispatchAutograd,
@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from .schemas import AOTConfig, ViewAndMutationMeta
 
 log = logging.getLogger(__name__)
-aot_graphs_log = getArtifactLogger(__name__, "aot_graphs")
 
 
 TOut = TypeVar("TOut", bound=OutputCode)
@@ -73,7 +72,7 @@ class InductorOutput(ABC, Generic[TOut]):
     def pre_save(self) -> None: ...
 
     @abstractmethod
-    def load(self, example_inputs: Sequence[Any]) -> TOut: ...
+    def load(self, example_inputs) -> TOut: ...
 
     @abstractmethod
     def post_compile(self, result: TOut, fx_config: _CompileFxKwargs) -> TOut: ...
@@ -99,7 +98,7 @@ class BundledOutputCodeLoadable(InductorOutput[TOutputCode], Generic[TOutputCode
         self.result = disk_result
         return
 
-    def load(self, example_inputs: Sequence[Any]) -> TOutputCode:
+    def load(self, example_inputs) -> TOutputCode:
         self.example_inputs = example_inputs
         return self.result
 
@@ -139,15 +138,15 @@ CompiledFxGraphLoadable: type[BundledOutputCodeLoadable[CompiledFxGraph]] = (
 @dataclass
 class FxGraphCacheLoadable(InductorOutput[CompiledFxGraph]):
     fx_graph_cache_info: tuple[str, list[str]]
-    fx_graph_guard_expr: str | None
+    fx_graph_guard_expr: Optional[str]
 
-    def pre_save(self) -> None:
+    def pre_save(self):
         return
 
     def _is_backward(self) -> bool:
         return False
 
-    def load(self, example_inputs: Sequence[Any]) -> CompiledFxGraph:
+    def load(self, example_inputs) -> CompiledFxGraph:
         from .autograd_cache import FXGraphCacheMiss
 
         # [Note: AOTAutogradCache and FXGraphCache Guard interactions]
@@ -168,7 +167,7 @@ class FxGraphCacheLoadable(InductorOutput[CompiledFxGraph]):
             remote_cache = FxGraphCache.get_remote_cache()
         (cache_key, debug_lines) = self.fx_graph_cache_info
 
-        def check_exact_guard_match(guard_expr: str, _hints: Any) -> bool:
+        def check_exact_guard_match(guard_expr, _hints):
             """
             AOTAutogradCache tracks its own guards, so we just need to treat these guard expressions as a second
             cache key of sorts: we just check for equality, i.e. the FXGraphCache entry with
@@ -299,13 +298,12 @@ class SerializedGraphModule:
     fn: Callable[[dict[Any, Any], str], torch.nn.Module]
     args: tuple[Any, ...]
 
-    def __init__(self, gm: torch.fx.GraphModule) -> None:
+    def __init__(self, gm: torch.fx.GraphModule):
         self.fn, self.args = gm.__reduce__()
 
     def deserialize(self) -> torch.fx.GraphModule:
         gm = self.fn(*self.args)
-        if not isinstance(gm, torch.fx.GraphModule):
-            raise AssertionError(f"expected fx.GraphModule, got {type(gm)}")
+        assert isinstance(gm, torch.fx.GraphModule)
         return gm
 
 
@@ -313,13 +311,12 @@ def serialize_graph_module(gm: torch.fx.GraphModule) -> SerializedGraphModule:
     # NOTE: mutates the graph module
     gm.meta = {}
     for node in gm.graph.nodes:
-        # pyrefly: ignore [implicit-any]
         node.meta = {}
     return SerializedGraphModule(gm)
 
 
-TForward = TypeVar("TForward", bound="InductorOutput[Any]")
-TBackward = TypeVar("TBackward", bound="GenericCompiledBackward[Any]")
+TForward = TypeVar("TForward", bound=InductorOutput)
+TBackward = TypeVar("TBackward", bound=GenericCompiledBackward)
 
 
 @dataclass
@@ -339,13 +336,13 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
 
     # Forward and Backward info
     compiled_fw: TForward
-    compiled_bw: TBackward | None
+    compiled_bw: Optional[TBackward]
 
     # Code of the joint graph using print_readable()
     # Used for logging purposes
-    aot_joint_graph_str: str | None
-    aot_forward_graph_str: str | None
-    aot_backward_graph_str: str | None
+    aot_joint_graph_str: Optional[str]
+    aot_forward_graph_str: Optional[str]
+    aot_backward_graph_str: Optional[str]
 
     # Runtime_metadata saved right before compilation
     runtime_metadata: ViewAndMutationMeta
@@ -354,8 +351,8 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
     dispatch_wrappers: list[CompilerWrapper]
 
     # Used by AOTSubclassWrapper
-    maybe_subclass_meta: SubclassMeta | None
-    num_fw_outs_saved_for_bw: int | None
+    maybe_subclass_meta: Optional[SubclassMeta]
+    num_fw_outs_saved_for_bw: Optional[int]
 
     # Used by RuntimeWrapper
     indices_of_inps_to_detach: list[int]
@@ -369,12 +366,12 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
     # Used by standalone_compile
     sanitized_aot_config: AOTConfig
 
-    guards_expr: str | None
+    guards_expr: Optional[str]
 
     # Used by Compiled Autograd
-    serialized_bw_module: SerializedGraphModule | None
+    serialized_bw_module: Optional[SerializedGraphModule]
 
-    def pre_save(self) -> None:
+    def pre_save(self):
         """
         Perform any preparations to make the result ready for serialization.
         """
@@ -388,7 +385,6 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
         args: list[torch.Tensor],
         aot_config: AOTConfig,
         fx_config: _CompileFxKwargs,
-        # pyrefly: ignore [implicit-any]
     ) -> Callable:
         """
         This function takes a result and carefully reconstructs the original callable
@@ -410,12 +406,12 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
 
         # Log the output of AOTAutogradCache
         if aot_config.enable_log:
+            # TODO: maybe also log to aot_graphs_log
+            # Unfortunately aot_graphs_log uses
+            # slightly different formatting though
             if self.aot_joint_graph_str is not None:
                 torch._logging.trace_structured(
                     "aot_joint_graph", payload_fn=lambda: self.aot_joint_graph_str
-                )
-                aot_graphs_log.info(
-                    "Joint graph (from cache)\n\n%s", self.aot_joint_graph_str
                 )
 
             if self.aot_forward_graph_str is not None:
@@ -440,23 +436,18 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
                     )
 
                 # It's called an inference graph if not running with autograd
-                has_backward = self.aot_backward_graph_str is not None
-                torch._logging.trace_structured(
-                    "aot_forward_graph" if has_backward else "aot_inference_graph",
-                    payload_fn=lambda: self.aot_forward_graph_str,
+                name = (
+                    "aot_forward_graph"
+                    if self.aot_backward_graph_str is not None
+                    else "aot_inference_graph"
                 )
-                aot_graphs_log.info(
-                    "Forward graph (from cache)\n\n%s",
-                    self.aot_forward_graph_str,
+                torch._logging.trace_structured(
+                    name, payload_fn=lambda: self.aot_forward_graph_str
                 )
 
             if self.aot_backward_graph_str is not None:
                 torch._logging.trace_structured(
                     "aot_backward_graph", payload_fn=lambda: self.aot_backward_graph_str
-                )
-                aot_graphs_log.info(
-                    "Backward graph (from cache)\n\n%s",
-                    self.aot_backward_graph_str,
                 )
         with dynamo_timed("AOTAutogradCache.inductor_load"):
             compiled_fw_func = self.compiled_fw.load(args)
@@ -520,13 +511,11 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
         ).post_compile(
             compiled_fw_func, aot_config, runtime_metadata=self.runtime_metadata
         )
-        # pyrefly: ignore [missing-attribute]
         compiled_fw_func._boxed_call = True
         disable_amp = torch._C._is_any_autocast_enabled()
 
         if needs_autograd:
-            if self.compiled_bw is None:
-                raise AssertionError("compiled_bw must not be None when needs_autograd")
+            assert self.compiled_bw is not None
 
             cached_lazy_backward = None
             if self.serialized_bw_module is not None:
@@ -576,8 +565,7 @@ class GenericAOTAutogradResult(Generic[TForward, TBackward]):
 
             symints = AOTAutogradCache._filter_backed_symints(args)
             check = bool(AOTAutogradCache.evaluate_guards(self.guards_expr, symints))
-            if check is not True:
-                raise AssertionError(f"guards check failed: {check}")
+            assert check is True
 
         return compiled_function
 
@@ -631,9 +619,7 @@ class BundledAOTAutogradResult(
     """
 
 
-def deserialize_bundled_cache_entry(
-    entry: BundledAOTAutogradResult[Any],
-) -> Callable[..., Any]:
+def deserialize_bundled_cache_entry(entry: BundledAOTAutogradResult) -> Callable:
     from copy import deepcopy
 
     from torch._inductor.cudagraph_utils import BoxedDeviceIndex
@@ -675,19 +661,16 @@ def deserialize_bundled_cache_entry(
     # TODO: this ignores flat_params, which can exist
     # if inline_builtin_nn_modules=False
     @simple_wraps(compiled_fn)
-    def forward(*runtime_args: Any) -> Any:
+    def forward(*runtime_args: tuple[Any]):
         return compiled_fn(list(runtime_args))
 
-    if not hasattr(compiled_fn, "serialize"):
-        raise AssertionError("compiled_fn must have serialize attribute")
+    assert hasattr(compiled_fn, "serialize")
     forward.serialize = compiled_fn.serialize  # type: ignore[attr-defined]
 
     return forward
 
 
 @dataclass
-# pyrefly: ignore [implicit-any]
 class BundledAOTAutogradCacheArtifact(BackendCacheArtifact[Callable]):
-    # pyrefly: ignore [implicit-any]
     def after_deserialization(self) -> Callable:
         return deserialize_bundled_cache_entry(self.content)

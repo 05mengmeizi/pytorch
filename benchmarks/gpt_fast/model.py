@@ -1,5 +1,6 @@
 # flake8: noqa: E266, C417, B950
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -50,10 +51,9 @@ class ModelArgs:
         # take longer name (as it have more symbols matched)
         if len(config) > 1:
             config.sort(key=len, reverse=True)
-            if len(config[0]) == len(config[1]):
-                raise AssertionError(
-                    f"Ambiguous config match for '{name}': {config[0]} and {config[1]} have same length"
-                )  # make sure only one 'best' match
+            assert len(config[0]) != len(config[1]), (
+                name
+            )  # make sure only one 'best' match
 
         return cls(**transformer_configs[config[0]])
 
@@ -99,10 +99,7 @@ class KVCache(nn.Module):
 
     def update(self, input_pos, k_val, v_val):
         # input_pos: [S], k_val: [B, H, S, D]
-        if input_pos.shape[0] != k_val.shape[2]:
-            raise AssertionError(
-                f"input_pos.shape[0] ({input_pos.shape[0]}) must equal k_val.shape[2] ({k_val.shape[2]})"
-            )
+        assert input_pos.shape[0] == k_val.shape[2]
 
         k_out = self.k_cache
         v_out = self.v_cache
@@ -124,8 +121,8 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(config.dim, eps=config.norm_eps)
         self.output = nn.Linear(config.dim, config.vocab_size, bias=False)
 
-        self.freqs_cis: Tensor | None = None
-        self.mask_cache: Tensor | None = None
+        self.freqs_cis: Optional[Tensor] = None
+        self.mask_cache: Optional[Tensor] = None
         self.max_batch_size = -1
         self.max_seq_length = -1
 
@@ -153,9 +150,8 @@ class Transformer(nn.Module):
             torch.ones(self.max_seq_length, self.max_seq_length, dtype=torch.bool)
         )
 
-    def forward(self, idx: Tensor, input_pos: Tensor | None = None) -> Tensor:
-        if self.freqs_cis is None:
-            raise AssertionError("Caches must be initialized first")
+    def forward(self, idx: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
+        assert self.freqs_cis is not None, "Caches must be initialized first"
         mask = self.causal_mask[None, None, input_pos]
         freqs_cis = self.freqs_cis[input_pos]
         x = self.tok_embeddings(idx)
@@ -190,10 +186,7 @@ class TransformerBlock(nn.Module):
 class Attention(nn.Module):
     def __init__(self, config: ModelArgs):
         super().__init__()
-        if config.dim % config.n_head != 0:
-            raise AssertionError(
-                f"config.dim ({config.dim}) must be divisible by config.n_head ({config.n_head})"
-            )
+        assert config.dim % config.n_head == 0
 
         total_head_dim = (config.n_head + 2 * config.n_local_heads) * config.head_dim
         # key, query, value projections for all heads, but in a batch
@@ -219,7 +212,7 @@ class Attention(nn.Module):
         x: Tensor,
         freqs_cis: Tensor,
         mask: Tensor,
-        input_pos: Tensor | None = None,
+        input_pos: Optional[Tensor] = None,
     ) -> Tensor:
         bsz, seqlen, _ = x.shape
 

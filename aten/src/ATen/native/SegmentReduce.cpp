@@ -458,8 +458,26 @@ Tensor segment_reduce_kernel(
   }
 }
 
-REGISTER_ALL_CPU_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
-REGISTER_ALL_CPU_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
+REGISTER_ARCH_DISPATCH(
+    _segment_reduce_lengths_stub,
+    DEFAULT,
+    &_segment_reduce_lengths_cpu_kernel)
+REGISTER_AVX2_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
+REGISTER_AVX512_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
+REGISTER_VSX_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
+REGISTER_ZVECTOR_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
+REGISTER_SVE256_DISPATCH(_segment_reduce_lengths_stub, &_segment_reduce_lengths_cpu_kernel)
+
+// offsets dispatches
+REGISTER_ARCH_DISPATCH(
+    _segment_reduce_offsets_stub,
+    DEFAULT,
+    &_segment_reduce_offsets_cpu_kernel)
+REGISTER_AVX2_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
+REGISTER_AVX512_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
+REGISTER_VSX_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
+REGISTER_ZVECTOR_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
+REGISTER_SVE256_DISPATCH(_segment_reduce_offsets_stub, &_segment_reduce_offsets_cpu_kernel)
 
 // Currently some computation is being duplicated across forward and backward.
 // TODO: Cache indices in forward pass to reuse in backward
@@ -514,7 +532,44 @@ Tensor _segment_reduce_backward_kernel(
   }
 }
 
-REGISTER_ALL_CPU_DISPATCH(_segment_reduce_lengths_backward_stub, &_segment_reduce_cpu_lengths_backward_kernel)
-REGISTER_ALL_CPU_DISPATCH(_segment_reduce_offsets_backward_stub, &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_ARCH_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    DEFAULT,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+REGISTER_AVX512_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+REGISTER_AVX2_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+REGISTER_VSX_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+REGISTER_ZVECTOR_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+REGISTER_SVE256_DISPATCH(
+    _segment_reduce_lengths_backward_stub,
+    &_segment_reduce_cpu_lengths_backward_kernel)
+
+REGISTER_ARCH_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    DEFAULT,
+    &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_AVX512_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_AVX2_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_VSX_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_ZVECTOR_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    &_segment_reduce_cpu_offsets_backward_kernel)
+REGISTER_SVE256_DISPATCH(
+    _segment_reduce_offsets_backward_stub,
+    &_segment_reduce_cpu_offsets_backward_kernel)
 
 } // namespace at::native

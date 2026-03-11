@@ -12,7 +12,7 @@ TEST_CODES = [
     "CUdeviceptr var = reinterpret_cast<CUdeviceptr>(arg.data_ptr());",
     "at::cuda::CUDAStreamGuard guard(at::cuda::getStreamFromExternal());",
     # Hipification should be idempotent, hipifying should be a no-op for already hipified files
-    "at::cuda::CUDAStreamGuard guard(at::cuda::getStreamFromExternal());",
+    "at::hip::HIPStreamGuardMasqueradingAsCUDA guard(at::hip::getStreamFromExternalMasqueradingAsCUDA());",
 ]
 
 HIP_CODES = [
@@ -20,17 +20,14 @@ HIP_CODES = [
     "hipFunction_t kernel = nullptr;",
     "static hipFunction_t kernel = nullptr;",
     "hipDeviceptr_t var = reinterpret_cast<hipDeviceptr_t>(arg.data_ptr());",
-    "at::cuda::CUDAStreamGuard guard(at::cuda::getStreamFromExternal());",
-    "at::cuda::CUDAStreamGuard guard(at::cuda::getStreamFromExternal());",
+    "at::hip::HIPStreamGuardMasqueradingAsCUDA guard(at::hip::getStreamFromExternalMasqueradingAsCUDA());",
+    "at::hip::HIPStreamGuardMasqueradingAsCUDA guard(at::hip::getStreamFromExternalMasqueradingAsCUDA());",
 ]
 
 
 class TestCppWrapperHipify(TestCase):
     def test_hipify_basic_declaration(self) -> None:
-        if len(TEST_CODES) != len(HIP_CODES):
-            raise AssertionError(
-                f"TEST_CODES length {len(TEST_CODES)} != HIP_CODES length {len(HIP_CODES)}"
-            )
+        assert len(TEST_CODES) == len(HIP_CODES)
         for i in range(len(TEST_CODES)):
             result = maybe_hipify_code_wrapper(TEST_CODES[i], True)
             expected = HIP_CODES[i]
@@ -121,10 +118,7 @@ class TestCppWrapperHipify(TestCase):
         self.assertEqual(result.rstrip(), expected.rstrip())
 
     def test_hipify_cross_platform(self) -> None:
-        if len(TEST_CODES) != len(HIP_CODES):
-            raise AssertionError(
-                f"TEST_CODES length {len(TEST_CODES)} != HIP_CODES length {len(HIP_CODES)}"
-            )
+        assert len(TEST_CODES) == len(HIP_CODES)
         for i in range(len(TEST_CODES)):
             hip_result = maybe_hipify_code_wrapper(TEST_CODES[i], True)
             result = maybe_hipify_code_wrapper(TEST_CODES[i])

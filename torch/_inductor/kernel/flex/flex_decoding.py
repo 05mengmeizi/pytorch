@@ -116,7 +116,6 @@ flex_decoding_template = TritonTemplate(
     source=load_flex_template("flex_decode")
     + load_flex_template("utilities")
     + load_flex_template("common"),
-    always_freeze_layout=True,
 )
 
 
@@ -279,7 +278,11 @@ def create_flex_decoding_kernel(*args, **kwargs):
             # else  # Always use a BLOCK_M > 16 before Triton fix https://github.com/triton-lang/triton/pull/4061 is in pin
             max(
                 next_power_of_2(
-                    V.graph.sizevars.optimization_hint(seq_len_q) * gqa_shared_heads
+                    V.graph.sizevars.size_hint(
+                        seq_len_q,
+                        fallback=torch._inductor.config.unbacked_symint_fallback,  # type: ignore[arg-type]
+                    )
+                    * gqa_shared_heads
                 ),
                 1 if torch.xpu.is_available() else 16,
             )
@@ -349,9 +352,7 @@ def create_flex_decoding_kernel(*args, **kwargs):
                 "num_buffers_warp_spec", num_buffers_warp_spec
             )
 
-        # Intel GPU enables TMA by default
-        cur_kernel_options.setdefault("USE_TMA", bool(torch.xpu.is_available()))
-
+        cur_kernel_options.setdefault("USE_TMA", False)
         if cur_kernel_options["USE_TMA"] and not can_use_tma(query, key, value):
             cur_kernel_options["USE_TMA"] = False
 

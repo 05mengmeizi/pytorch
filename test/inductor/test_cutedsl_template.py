@@ -87,7 +87,7 @@ class TestCuteDSLTemplate(TestCase):
         self.assertIsInstance(imports, str)
 
         lines = imports.strip().split("\n")
-        self.assertEqual(len(lines), 8)
+        self.assertEqual(len(lines), 7)
 
     def test_render_includes_imports(self):
         template_source = """@cute.kernel
@@ -418,13 +418,11 @@ SCALE_FACTOR: cutlass.Constexpr = 1.5
         mock_cse_a.__str__.return_value = "tensor_a"
         mock_cse_a.dtype = torch.float32
         mock_cse_a.bounds = ValueRanges.unknown()
-        mock_cse_a.shape = (32, 64)
 
         mock_cse_b = MagicMock(spec=CSEVariable)
         mock_cse_b.__str__.return_value = "tensor_b"
         mock_cse_b.dtype = torch.float32
         mock_cse_b.bounds = ValueRanges.unknown()
-        mock_cse_b.shape = (32, 64)
 
         mock_graph = MockGraphHandler()
         with V.set_graph_handler(mock_graph):
@@ -449,20 +447,14 @@ SCALE_FACTOR: cutlass.Constexpr = 1.5
                 result = CuteDSLOpOverrides.sqrt(mock_cse_a)
                 self.assertIsInstance(result, CSEVariable)
 
-                result = CuteDSLOpOverrides.maximum(mock_cse_a, mock_cse_b)
-                self.assertIsInstance(result, CSEVariable)
+                with self.assertRaises(NotImplementedError):
+                    result = CuteDSLOpOverrides.maximum(mock_cse_a, mock_cse_b)
+                    result = CuteDSLOpOverrides.minimum(mock_cse_a, mock_cse_b)
 
-                result = CuteDSLOpOverrides.minimum(mock_cse_a, mock_cse_b)
-                self.assertIsInstance(result, CSEVariable)
-
-        scalar_result = CuteDSLOpOverrides._ensure_tensor_ssa(
-            "5.0", mock_cse_a, is_tensor=False
-        )
+        scalar_result = CuteDSLOpOverrides._ensure_tensor_ssa("5.0", mock_cse_a)
         self.assertEqual(scalar_result, "cute.full_like(tensor_a, 5.0)")
 
-        tensor_result = CuteDSLOpOverrides._ensure_tensor_ssa(
-            mock_cse_a, mock_cse_b, is_tensor=True
-        )
+        tensor_result = CuteDSLOpOverrides._ensure_tensor_ssa(mock_cse_a, mock_cse_b)
         self.assertEqual(tensor_result, "tensor_a")
 
     def test_cse_integration(self):

@@ -44,8 +44,7 @@ def input_fn(mod, inputs, device_mesh):
 
 # prepare output to be local torch.Tensor
 def output_fn(mod, outputs, device_mesh):
-    if not isinstance(outputs, DTensor):
-        raise AssertionError(f"Expected DTensor, got {type(outputs)}")
+    assert isinstance(outputs, DTensor)
     return outputs.redistribute(placements=[Replicate()] * device_mesh.ndim).to_local()
 
 

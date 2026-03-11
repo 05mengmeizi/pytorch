@@ -14,8 +14,6 @@ API Methods
 
 .. autofunction:: torch.distributed.elastic.events.get_logging_handler
 
-.. autofunction:: torch.distributed.elastic.events.record_rdzv_event
-
 Event Objects
 -----------------
 

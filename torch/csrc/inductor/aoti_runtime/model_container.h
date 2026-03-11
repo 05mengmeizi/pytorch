@@ -172,9 +172,9 @@ class AOTInductorModelContainer {
           /* use_inactive = */ false,
           /* validate_full_update = */ false);
       const_folded = ConstantState::FOLDED;
-    } else if (const_folded != ConstantState::FOLDED) {
+    } else if (constant_folded_ != ConstantState::FOLDED) {
       throw std::runtime_error(
-          "Unknown constant state: " + toStringConstantState(const_folded));
+          "Unknown constant state: " + toStringConstantState(constant_folded_));
     }
 
     model->run_single_threaded(

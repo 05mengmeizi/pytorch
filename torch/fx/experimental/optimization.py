@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 from collections.abc import Iterable
 from enum import Enum
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 import torch
 import torch.fx as fx
@@ -67,8 +67,7 @@ def matches_module_pattern(
 def replace_node_module(
     node: fx.Node, modules: dict[str, Any], new_module: torch.nn.Module
 ):
-    if not isinstance(node.target, str):
-        raise AssertionError(f"Expected str target, got {type(node.target)}")
+    assert isinstance(node.target, str)
     parent_name, name = _parent_name(node.target)
     modules[node.target] = new_module
     setattr(modules[parent_name], name, new_module)
@@ -125,8 +124,7 @@ def remove_dropout(model: nn.Module) -> nn.Module:
             self, target: Target, args: tuple[Argument, ...], kwargs: dict[str, Any]
         ) -> Any:
             if isinstance(self.submodules[target], nn.Dropout):
-                if len(args) != 1:
-                    raise AssertionError(f"Expected 1 arg for Dropout, got {len(args)}")
+                assert len(args) == 1
                 return args[0]
             else:
                 return super().call_module(target, args, kwargs)
@@ -192,14 +190,12 @@ def modules_to_mkldnn(nodes: list[fx.Node], modules: dict[str, nn.Module]):
     old_modules: dict[nn.Module, nn.Module] = {}
     for node in nodes:
         if node.op == "call_module":
-            if not isinstance(node.target, str):
-                raise AssertionError(f"Expected str target, got {type(node.target)}")
+            assert isinstance(node.target, str)
             cur_module = modules[node.target]
             if type(cur_module) in mkldnn_map:
                 # pyrefly: ignore [bad-index, index-error]
                 new_module = mkldnn_map[type(cur_module)](cur_module, torch.float)
-                if not isinstance(new_module, nn.Module):
-                    raise AssertionError(f"Expected nn.Module, got {type(new_module)}")
+                assert isinstance(new_module, nn.Module)
                 old_modules[new_module] = copy.deepcopy(cur_module)
                 replace_node_module(node, modules, new_module)
     return old_modules
@@ -216,8 +212,7 @@ def reset_modules(
     """
     for node in nodes:
         if node.op == "call_module":
-            if not isinstance(node.target, str):
-                raise AssertionError(f"Expected str target, got {type(node.target)}")
+            assert isinstance(node.target, str)
             cur_module = modules[node.target]
             if cur_module in old_modules:
                 replace_node_module(node, modules, old_modules[cur_module])
@@ -291,7 +286,7 @@ def use_mkl_length(graph: MklSubgraph) -> bool:
 
 class UnionFind:
     def __init__(self, n):
-        self.parent: list[int | None] = [None] * n
+        self.parent: list[Optional[int]] = [None] * n
         self.size: list[int] = [0] * n
 
     def make_set(self, v: int):
@@ -302,8 +297,7 @@ class UnionFind:
         par = self.parent[v]
         if v == par:
             return v
-        if par is None:
-            raise AssertionError("Parent is None")
+        assert par is not None
         self.parent[v] = self.find(par)
         return cast(int, self.parent[v])
 
@@ -319,7 +313,7 @@ class UnionFind:
 
 def optimize_for_inference(
     model: torch.nn.Module,
-    pass_config: dict[str, Any] | None = None,
+    pass_config: Optional[dict[str, Any]] = None,
     tracer: type[fx.Tracer] = fx.Tracer,
 ) -> torch.nn.Module:
     """
@@ -378,12 +372,12 @@ def optimize_for_inference(
                 supports_mkldnn = MklSupport.YES
                 sample_parameter = next(cur_module.parameters(), None)
                 if sample_parameter is not None:
-                    if sample_parameter.dtype != torch.float:
-                        raise AssertionError(
-                            "this pass is only for torch.float modules"
-                        )
-                    if sample_parameter.device != torch.device("cpu"):
-                        raise AssertionError("this pass is only for CPU modules")
+                    assert sample_parameter.dtype == torch.float, (
+                        "this pass is only for torch.float modules"
+                    )
+                    assert sample_parameter.device == torch.device("cpu"), (
+                        "this pass is only for CPU modules"
+                    )
         elif node.op == "call_function":
             if node.target in mkldnn_supported:
                 supports_mkldnn = MklSupport.YES
@@ -448,8 +442,7 @@ def optimize_for_inference(
             node.start_color = cur_idx
             uf.make_set(cur_idx)
         elif node.op == "call_method" and node.target == "to_dense":
-            if get_color(node.args[0]) is None:
-                raise AssertionError("Expected color for to_dense input")
+            assert get_color(node.args[0]) is not None
             node.end_color = get_color(node.args[0])
         else:
             cur_colors = [
@@ -461,8 +454,7 @@ def optimize_for_inference(
 
             if len(cur_colors) == 0:
                 continue
-            if any(i is None for i in cur_colors):
-                raise AssertionError("Found None in cur_colors")
+            assert not any(i is None for i in cur_colors)
             cur_colors = sorted(cur_colors)
             node.color = cur_colors[0]
             for other_color in cur_colors[1:]:

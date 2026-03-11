@@ -2,7 +2,7 @@ import logging
 import operator
 from collections.abc import Callable
 from functools import partial
-from typing import Any
+from typing import Any, Optional, Union
 
 import sympy
 from sympy import Expr
@@ -36,7 +36,7 @@ class BoundVars:
     """
 
     def __init__(self, loop_body: LoopBody) -> None:
-        def upper_bound(v: Expr | int) -> int:
+        def upper_bound(v: Union[Expr, int]) -> int:
             return bound_sympy(v).upper if isinstance(v, Expr) else v
 
         self.loop_body = loop_body
@@ -198,7 +198,7 @@ class ValueRangeAnalysis(SymPyValueRangeAnalysis, DefaultHandler):
     def to_dtype(
         x: Any,
         dtype: torch.dtype,
-        src_dtype: torch.dtype | None = None,
+        src_dtype: Optional[torch.dtype] = None,
         use_compute_types: bool = True,
     ) -> ValueRanges[Any]:
         x = ValueRanges.wrap(x)

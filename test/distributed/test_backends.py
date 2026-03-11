@@ -18,20 +18,11 @@ class TestMiscCollectiveUtils(TestCase):
         Test device to backend mapping
         """
         if "cuda" in device:
-            if dist.get_default_backend_for_device(device) != "nccl":
-                raise AssertionError(
-                    f"Expected nccl, got {dist.get_default_backend_for_device(device)}"
-                )
+            assert dist.get_default_backend_for_device(device) == "nccl"
         elif "cpu" in device:
-            if dist.get_default_backend_for_device(device) != "gloo":
-                raise AssertionError(
-                    f"Expected gloo, got {dist.get_default_backend_for_device(device)}"
-                )
+            assert dist.get_default_backend_for_device(device) == "gloo"
         elif "hpu" in device:
-            if dist.get_default_backend_for_device(device) != "hccl":
-                raise AssertionError(
-                    f"Expected hccl, got {dist.get_default_backend_for_device(device)}"
-                )
+            assert dist.get_default_backend_for_device(device) == "hccl"
         else:
             with self.assertRaises(ValueError):
                 dist.get_default_backend_for_device(device)
@@ -49,8 +40,7 @@ class TestMiscCollectiveUtils(TestCase):
         )
         pg = dist.distributed_c10d._get_default_group()
         backend_pg = pg._get_backend_name()
-        if backend_pg != backend:
-            raise AssertionError(f"Expected {backend}, got {backend_pg}")
+        assert backend_pg == backend
         dist.destroy_process_group()
 
 

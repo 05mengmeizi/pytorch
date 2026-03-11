@@ -3,6 +3,7 @@
 import copy
 import functools
 from contextlib import nullcontext
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -81,7 +82,7 @@ class TestFullyShardStateDictMultiProcess(FSDPTest):
             MLP(mlp_dim),
         )
 
-        def _shard_placement_fn(param: nn.Parameter) -> Shard | None:
+        def _shard_placement_fn(param: nn.Parameter) -> Optional[Shard]:
             largest_dim = largest_dim_size = -1
             for dim, dim_size in enumerate(param.shape):
                 if dim_size > largest_dim_size:
@@ -131,8 +132,7 @@ class TestFullyShardStateDictMultiProcess(FSDPTest):
 
         # call .state_dict() once and use `sd` directly to reduce cpu overhead
         sd = model.state_dict()
-        if not isinstance(model.weight, DTensor):
-            raise AssertionError(f"Expected DTensor, got {type(model.weight)}")
+        assert isinstance(model.weight, DTensor)
 
         if not mutate_after_state_dict:
             self.assertTrue(

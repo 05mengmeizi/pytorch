@@ -27,6 +27,7 @@
 //
 
 #include <cstdint>
+#include <c10/util/C++17.h>
 #include <c10/util/Load.h>
 #include <c10/util/irange.h>
 #include <ATen/detail/FunctionTraits.h>

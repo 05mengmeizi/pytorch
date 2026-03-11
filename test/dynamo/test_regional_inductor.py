@@ -80,8 +80,7 @@ def aot_eager_regional_inductor(
             serialized = GraphPickler.dumps(result)
 
             fake_mode = detect_fake_mode(example_args)
-            if fake_mode is None:
-                raise AssertionError("Expected fake_mode to be set")
+            assert fake_mode is not None
             # Serialize and deserialize the result to confirm pickling works
             # Use a fresh tracing context on the new process
             context = torch._guards.TracingContext(fake_mode)
@@ -315,10 +314,10 @@ class RegionalInductorTests(torch._inductor.test_case.TestCase):
             captured_options.append(options)
 
             # Verify config is set as expected from explicit options
-            if not inductor_config.max_autotune:
-                raise AssertionError("max_autotune should be True")
-            if inductor_config.triton.cudagraphs:
-                raise AssertionError("triton.cudagraphs should be False")
+            assert inductor_config.max_autotune, "max_autotune should be True"
+            assert not inductor_config.triton.cudagraphs, (
+                "triton.cudagraphs should be False"
+            )
 
             return original_compile(*args, **kwargs)
 
@@ -536,12 +535,10 @@ class RegionalInductorTests(torch._inductor.test_case.TestCase):
 
         def regional_inductor_with_refcounting(gm, *example_args):
             fn = regional_inductor(gm, *example_args)
-            if not fn._boxed_call:
-                raise AssertionError("Expected fn._boxed_call to be True")
+            assert fn._boxed_call
 
             def run(args: Any) -> Any:
-                if type(args) is not list:
-                    raise AssertionError(f"Expected args to be list, got {type(args)}")
+                assert type(args) is list
 
                 # NOTE: sys.getrefcount adds a temporary reference to the object
                 # So sys.getrefcount(x) == 2 actually means we hold the single reference to x
@@ -999,10 +996,11 @@ def forward(self, primals_0, primals_1, primals_2, primals_3, primals_4, primals
                 captured_gms[1].code.strip(),
                 """\
 def forward(self, primals_0, primals_1, primals_2, primals_3, primals_4, primals_5, primals_6, primals_7, primals_8, alias_2, alias_3, tangents_0):
+    full_10 = torch.ops.aten.full.default([1, 1, 768], 0, dtype = torch.float32, layout = torch.strided, device = device(type='cuda', index=0), pin_memory = False)
     fw_graph0 = self.fw_graph0
     joint_graph0 = self.joint_graph0
     mask_graph0 = self.mask_graph0
-    flex_attention_backward = torch.ops.higher_order.flex_attention_backward(primals_0, primals_0, primals_0, alias_2, alias_3, tangents_0, None, fw_graph0, joint_graph0, (768, 768, primals_1, primals_2, primals_3, primals_4, primals_5, primals_6, primals_7, primals_8, 128, 128, mask_graph0), 0.125, {'BACKEND': 'AUTO', 'PRESCALE_QK': False, 'ROWS_GUARANTEED_SAFE': False, 'BLOCKS_ARE_CONTIGUOUS': False, 'WRITE_DQ': True, 'OUTPUT_LOGSUMEXP': True, 'OUTPUT_MAX': False}, (), ());  primals_0 = alias_2 = alias_3 = tangents_0 = fw_graph0 = joint_graph0 = primals_1 = primals_2 = primals_3 = primals_4 = primals_5 = primals_6 = primals_7 = primals_8 = mask_graph0 = None
+    flex_attention_backward = torch.ops.higher_order.flex_attention_backward(primals_0, primals_0, primals_0, alias_2, alias_3, tangents_0, full_10, fw_graph0, joint_graph0, (768, 768, primals_1, primals_2, primals_3, primals_4, primals_5, primals_6, primals_7, primals_8, 128, 128, mask_graph0), 0.125, {'BACKEND': 'AUTO', 'PRESCALE_QK': False, 'ROWS_GUARANTEED_SAFE': False, 'BLOCKS_ARE_CONTIGUOUS': False, 'WRITE_DQ': True, 'OUTPUT_LOGSUMEXP': True, 'OUTPUT_MAX': False}, (), ());  primals_0 = alias_2 = alias_3 = tangents_0 = full_10 = fw_graph0 = joint_graph0 = primals_1 = primals_2 = primals_3 = primals_4 = primals_5 = primals_6 = primals_7 = primals_8 = mask_graph0 = None
     getitem_3 = flex_attention_backward[0]
     getitem_4 = flex_attention_backward[1]
     getitem_5 = flex_attention_backward[2];  flex_attention_backward = None
@@ -1045,10 +1043,10 @@ def forward(self, primals_0, primals_1, primals_2, primals_3, primals_4, primals
             captured_options.append(options)
 
             # Verify config is set as expected from explicit options
-            if not torch._inductor.config.max_autotune:
-                raise AssertionError("max_autotune should be True")
-            if inductor_config.triton.cudagraphs:
-                raise AssertionError("triton.cudagraphs should be False")
+            assert torch._inductor.config.max_autotune, "max_autotune should be True"
+            assert not inductor_config.triton.cudagraphs, (
+                "triton.cudagraphs should be False"
+            )
 
             return original_compile(*args, **kwargs)
 
@@ -1314,12 +1312,10 @@ def forward(self, primals_0, primals_1, primals_2, primals_3, primals_4, primals
 
         def regional_inductor_with_refcounting(gm, *example_args):
             fn = regional_inductor_invoke_subgraph(gm, *example_args)
-            if not fn._boxed_call:
-                raise AssertionError("Expected fn._boxed_call to be True")
+            assert fn._boxed_call
 
             def run(args: Any) -> Any:
-                if type(args) is not list:
-                    raise AssertionError(f"Expected args to be list, got {type(args)}")
+                assert type(args) is list
 
                 # NOTE: sys.getrefcount adds a temporary reference to the object
                 # So sys.getrefcount(x) == 2 actually means we hold the single reference to x

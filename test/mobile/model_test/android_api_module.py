@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch import Tensor
 
@@ -70,11 +72,11 @@ class AndroidAPIModule(torch.jit.ScriptModule):
         return (input, sum)
 
     @torch.jit.script_method
-    def optionalIntIsNone(self, input: int | None) -> bool:
+    def optionalIntIsNone(self, input: Optional[int]) -> bool:
         return input is None
 
     @torch.jit.script_method
-    def intEq0None(self, input: int) -> int | None:
+    def intEq0None(self, input: int) -> Optional[int]:
         if input == 0:
             return None
         return input
@@ -96,12 +98,9 @@ class AndroidAPIModule(torch.jit.ScriptModule):
     @torch.jit.script_method
     def testNonContiguous(self):
         x = torch.tensor([100, 200, 300])[::2]
-        if x.is_contiguous():
-            raise AssertionError("Expected tensor to be non-contiguous")
-        if x[0] != 100:
-            raise AssertionError(f"Expected x[0] == 100, got {x[0]}")
-        if x[1] != 300:
-            raise AssertionError(f"Expected x[1] == 300, got {x[1]}")
+        assert not x.is_contiguous()
+        assert x[0] == 100
+        assert x[1] == 300
         return x
 
     @torch.jit.script_method

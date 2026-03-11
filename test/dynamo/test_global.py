@@ -1,4 +1,5 @@
 # Owner(s): ["module: dynamo"]
+from typing import Optional
 
 import torch
 import torch._dynamo.test_case
@@ -184,7 +185,7 @@ class TestGlobals(torch._dynamo.test_case.TestCase):
     def test_store_global_inline_1(self):
         # Borrowed from test_python_autograd.py
         class Variable:
-            def __init__(self, value: torch.Tensor, name: str | None = None):
+            def __init__(self, value: torch.Tensor, name: Optional[str] = None):
                 self.value = value
                 self.name = name or fresh_name()
 
@@ -204,12 +205,12 @@ class TestGlobals(torch._dynamo.test_case.TestCase):
     def test_store_global_inline_2(self):
         # Borrowed from test_python_autograd.py
         class Variable:
-            def __init__(self, value: torch.Tensor, name: str | None = None):
+            def __init__(self, value: torch.Tensor, name: Optional[str] = None):
                 self.value = value
                 self.name = name or fresh_name()
 
             @staticmethod
-            def constant(value: torch.Tensor, name: str | None = None):
+            def constant(value: torch.Tensor, name: Optional[str] = None):
                 return Variable(value, name)
 
         def fn(a, b):
@@ -231,13 +232,13 @@ class TestGlobals(torch._dynamo.test_case.TestCase):
         except ImportError:
             import mock_store_global_crossfile_inline
 
-        @torch.compile(backend="eager")
+        @torch.compile()
         def fn(x):
             mock_store_global_crossfile_inline.set_flag_true()
             mock_store_global_crossfile_inline.set_flag_false()
             return x + 1
 
-        @torch.compile(backend="eager")
+        @torch.compile()
         def fn_set_true(x):
             mock_store_global_crossfile_inline.set_flag_true()
             return x + 1

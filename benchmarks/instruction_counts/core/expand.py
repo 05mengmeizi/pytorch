@@ -12,7 +12,7 @@ import os
 import re
 import textwrap
 import uuid
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 import torch
 
@@ -37,7 +37,7 @@ _ALL_MODES = tuple(
 )
 
 
-def _generate_torchscript_file(model_src: str, name: str) -> str | None:
+def _generate_torchscript_file(model_src: str, name: str) -> Optional[str]:
     """Returns the path a saved model if one can be constructed from `spec`.
 
     Because TorchScript requires actual source code in order to script a
@@ -48,8 +48,7 @@ def _generate_torchscript_file(model_src: str, name: str) -> str | None:
     `model_src` must contain `jit_model = ...`, which `materialize` will supply.
     """
     # Double check.
-    if "jit_model = " not in model_src:
-        raise AssertionError(f"Missing jit_model definition:\n{model_src}")
+    assert "jit_model = " in model_src, f"Missing jit_model definition:\n{model_src}"
 
     # `torch.utils.benchmark.Timer` will automatically import torch, so we
     # need to match that convention.
@@ -72,21 +71,18 @@ def _generate_torchscript_file(model_src: str, name: str) -> str | None:
     module_spec = importlib.util.spec_from_file_location(
         f"torchscript__{name}", module_path
     )
-    if module_spec is None:
-        raise AssertionError(f"Failed to create module spec for {module_path}")
+    assert module_spec is not None
     module = importlib.util.module_from_spec(module_spec)
     loader = module_spec.loader
-    if loader is None:
-        raise AssertionError(f"Module spec has no loader for {module_path}")
+    assert loader is not None
 
     loader.exec_module(module)
 
     # And again, the type checker has no way of knowing that this line is valid.
     jit_model = module.jit_model  # type: ignore[attr-defined]
-    if not isinstance(jit_model, (torch.jit.ScriptFunction, torch.jit.ScriptModule)):
-        raise AssertionError(
-            f"Expected ScriptFunction or ScriptModule, got: {type(jit_model)}"
-        )
+    assert isinstance(jit_model, (torch.jit.ScriptFunction, torch.jit.ScriptModule)), (
+        f"Expected ScriptFunction or ScriptModule, got: {type(jit_model)}"
+    )
     jit_model.save(artifact_path)  # type: ignore[call-arg]
 
     # Cleanup now that we have the actual serialized model.
@@ -99,7 +95,7 @@ def _get_stmt(
     runtime: RuntimeMode,
     autograd: AutogradMode,
     language: Language,
-) -> str | None:
+) -> Optional[str]:
     """Specialize a GroupedBenchmark for a particular configuration."""
     is_python = language == Language.PYTHON
 
@@ -111,12 +107,8 @@ def _get_stmt(
         stmts = (benchmark.py_fwd_stmt, benchmark.cpp_fwd_stmt)
 
     else:
-        if runtime != RuntimeMode.JIT:
-            raise AssertionError(f"Expected RuntimeMode.JIT, but got {runtime}")
-        if benchmark.signature_args is None:
-            raise AssertionError(
-                "benchmark.signature_args must not be None for JIT mode"
-            )
+        assert runtime == RuntimeMode.JIT
+        assert benchmark.signature_args is not None
         stmts = GroupedBenchmark._make_model_invocation(
             benchmark.signature_args, benchmark.signature_output, RuntimeMode.JIT
         )
@@ -124,10 +116,7 @@ def _get_stmt(
     stmt = stmts[0 if is_python else 1]
 
     if autograd == AutogradMode.FORWARD_BACKWARD and stmt is not None:
-        if benchmark.signature_output is None:
-            raise AssertionError(
-                "benchmark.signature_output must not be None for FORWARD_BACKWARD mode"
-            )
+        assert benchmark.signature_output is not None
         backward = (
             f"{benchmark.signature_output}"
             # In C++ we have to get the Tensor out of the IValue to call `.backward()`
@@ -143,7 +132,7 @@ def _get_setup(
     runtime: RuntimeMode,
     language: Language,
     stmt: str,
-    model_path: str | None,
+    model_path: Optional[str],
 ) -> str:
     """Specialize a GroupedBenchmark for a particular configuration.
 
@@ -162,24 +151,20 @@ def _get_setup(
         setup = benchmark.setup.py_setup
         model_setup = benchmark.py_model_setup
     else:
-        if language != Language.CPP:
-            raise AssertionError(f"Expected Language.CPP, but got {language}")
+        assert language == Language.CPP
         setup = benchmark.setup.cpp_setup
         model_setup = benchmark.cpp_model_setup
 
     if runtime == RuntimeMode.EAGER:
         return "\n".join([setup, model_setup or ""])
 
-    if runtime != RuntimeMode.JIT:
-        raise AssertionError(f"Expected RuntimeMode.JIT, but got {runtime}")
-    if model_path is None:
-        raise AssertionError("model_path must not be None for JIT mode")
+    assert runtime == RuntimeMode.JIT
+    assert model_path is not None
 
     # We template `"{model_path}"`, so quotes would break model loading. The
     # model path is generated within the benchmark, so this is just an
     # abundance of caution rather than something that is expected in practice.
-    if '"' in model_path:
-        raise AssertionError(f"model_path contains quotes: {model_path}")
+    assert '"' not in model_path
 
     # `stmt` may contain newlines, so we can't use f-strings. Instead we need
     # to generate templates so that dedent works properly.
@@ -195,8 +180,7 @@ def _get_setup(
         )
 
     else:
-        if language != Language.CPP:
-            raise AssertionError(f"Expected Language.CPP, but got {language}")
+        assert language == Language.CPP
         setup_template = textwrap.dedent(
             f"""
             const std::string fpath = "{model_path}";
@@ -231,10 +215,9 @@ def materialize(benchmarks: FlatIntermediateDefinition) -> FlatDefinition:
             results.append((label, auto_labels, args))
 
         else:
-            if not isinstance(args, GroupedBenchmark):
-                raise AssertionError(f"Expected GroupedBenchmark, but got {type(args)}")
+            assert isinstance(args, GroupedBenchmark)
 
-            model_path: str | None = None
+            model_path: Optional[str] = None
             if args.py_model_setup and args.torchscript:
                 model_setup = (
                     f"{args.py_model_setup}\njit_model = torch.jit.script(model)"

@@ -48,12 +48,9 @@ class TestFakeSparsity(TestCase):
     def test_weights_parametrized(self):
         model = ModelUnderTest(bias=False)
 
-        if hasattr(model.linear, "parametrizations"):
-            raise AssertionError("model.linear should not have parametrizations")
-        if hasattr(model.seq[0], "parametrizations"):
-            raise AssertionError("model.seq[0] should not have parametrizations")
-        if hasattr(model.seq[1], "parametrizations"):
-            raise AssertionError("model.seq[1] should not have parametrizations")
+        assert not hasattr(model.linear, "parametrizations")
+        assert not hasattr(model.seq[0], "parametrizations")
+        assert not hasattr(model.seq[1], "parametrizations")
         mask = torch.eye(16)
         parametrize.register_parametrization(
             model.linear, "weight", utils.FakeSparsity(mask)
@@ -67,18 +64,12 @@ class TestFakeSparsity(TestCase):
             model.seq[1], "weight", utils.FakeSparsity(mask)
         )
 
-        if not hasattr(model.linear, "parametrizations"):
-            raise AssertionError("model.linear should have parametrizations")
-        if not parametrize.is_parametrized(model.linear, "weight"):
-            raise AssertionError("model.linear.weight should be parametrized")
-        if not hasattr(model.seq[0], "parametrizations"):
-            raise AssertionError("model.seq[0] should have parametrizations")
-        if not parametrize.is_parametrized(model.linear, "weight"):
-            raise AssertionError("model.linear.weight should be parametrized")
-        if not hasattr(model.seq[1], "parametrizations"):
-            raise AssertionError("model.seq[1] should have parametrizations")
-        if not parametrize.is_parametrized(model.linear, "weight"):
-            raise AssertionError("model.linear.weight should be parametrized")
+        assert hasattr(model.linear, "parametrizations")
+        assert parametrize.is_parametrized(model.linear, "weight")
+        assert hasattr(model.seq[0], "parametrizations")
+        assert parametrize.is_parametrized(model.linear, "weight")
+        assert hasattr(model.seq[1], "parametrizations")
+        assert parametrize.is_parametrized(model.linear, "weight")
 
     def test_state_dict_preserved(self):
         model_save = ModelUnderTest(bias=False)
@@ -114,18 +105,12 @@ class TestFakeSparsity(TestCase):
         model_load.load_state_dict(state_dict, strict=False)
 
         # Check the parametrizations are preserved
-        if not hasattr(model_load.linear, "parametrizations"):
-            raise AssertionError("model_load.linear should have parametrizations")
-        if not parametrize.is_parametrized(model_load.linear, "weight"):
-            raise AssertionError("model_load.linear.weight should be parametrized")
-        if not hasattr(model_load.seq[0], "parametrizations"):
-            raise AssertionError("model_load.seq[0] should have parametrizations")
-        if not parametrize.is_parametrized(model_load.linear, "weight"):
-            raise AssertionError("model_load.linear.weight should be parametrized")
-        if not hasattr(model_load.seq[1], "parametrizations"):
-            raise AssertionError("model_load.seq[1] should have parametrizations")
-        if not parametrize.is_parametrized(model_load.linear, "weight"):
-            raise AssertionError("model_load.linear.weight should be parametrized")
+        assert hasattr(model_load.linear, "parametrizations")
+        assert parametrize.is_parametrized(model_load.linear, "weight")
+        assert hasattr(model_load.seq[0], "parametrizations")
+        assert parametrize.is_parametrized(model_load.linear, "weight")
+        assert hasattr(model_load.seq[1], "parametrizations")
+        assert parametrize.is_parametrized(model_load.linear, "weight")
 
         # Check the weights are preserved
         self.assertEqual(

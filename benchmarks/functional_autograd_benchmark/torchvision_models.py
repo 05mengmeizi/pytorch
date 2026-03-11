@@ -422,10 +422,7 @@ def _segm_resnet(name, backbone_name, num_classes, aux, pretrained_backbone=True
     #     pretrained=pretrained_backbone,
     #     replace_stride_with_dilation=[False, True, True])
     # Hardcoded resnet 50
-    if backbone_name != "resnet50":
-        raise AssertionError(
-            f"Expected backbone_name='resnet50', but got '{backbone_name}'"
-        )
+    assert backbone_name == "resnet50"
     backbone = resnet50(
         pretrained=pretrained_backbone, replace_stride_with_dilation=[False, True, True]
     )
@@ -584,10 +581,8 @@ def generalized_box_iou(boxes1, boxes2):
     """
     # degenerate boxes gives inf / nan results
     # so do an early check
-    if not (boxes1[:, 2:] >= boxes1[:, :2]).all():
-        raise AssertionError("boxes1 has invalid box coordinates (x1 < x0 or y1 < y0)")
-    if not (boxes2[:, 2:] >= boxes2[:, :2]).all():
-        raise AssertionError("boxes2 has invalid box coordinates (x1 < x0 or y1 < y0)")
+    assert (boxes1[:, 2:] >= boxes1[:, :2]).all()
+    assert (boxes2[:, 2:] >= boxes2[:, :2]).all()
     iou, union = box_iou(boxes1, boxes2)
 
     lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])
@@ -693,8 +688,7 @@ class SetCriterion(nn.Module):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
-        if "pred_logits" not in outputs:
-            raise AssertionError("outputs must contain 'pred_logits' key")
+        assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
@@ -740,8 +734,7 @@ class SetCriterion(nn.Module):
         targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
         The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
         """
-        if "pred_boxes" not in outputs:
-            raise AssertionError("outputs must contain 'pred_boxes' key")
+        assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
         target_boxes = torch.cat(
@@ -765,8 +758,7 @@ class SetCriterion(nn.Module):
         """Compute the losses related to the masks: the focal loss and the dice loss.
         targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
         """
-        if "pred_masks" not in outputs:
-            raise AssertionError("outputs must contain 'pred_masks' key")
+        assert "pred_masks" in outputs
 
         src_idx = self._get_src_permutation_idx(indices)
         tgt_idx = self._get_tgt_permutation_idx(indices)
@@ -822,10 +814,7 @@ class SetCriterion(nn.Module):
             "boxes": self.loss_boxes,
             "masks": self.loss_masks,
         }
-        if loss not in loss_map:
-            raise AssertionError(
-                f"Unknown loss type '{loss}'. Available: {list(loss_map.keys())}"
-            )
+        assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
     def forward(self, outputs, targets):
@@ -895,10 +884,9 @@ class HungarianMatcher(nn.Module):
         self.cost_class = cost_class
         self.cost_bbox = cost_bbox
         self.cost_giou = cost_giou
-        if cost_class == 0 and cost_bbox == 0 and cost_giou == 0:
-            raise AssertionError(
-                "At least one of cost_class, cost_bbox, or cost_giou must be non-zero"
-            )
+        assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, (
+            "all costs can't be 0"
+        )
 
     @torch.no_grad()
     def forward(self, outputs, targets):

@@ -100,10 +100,8 @@ class TestBuiltin(TestCase):
         # dtypes results in False/True when compared to valid dtypes.
         # Here 7 cannot be converted to dtype. No exceptions should be raised
 
-        if not (np.dtype(np.int32) != 7):
-            raise AssertionError("dtype richcompare failed for ==")
-        if not (np.dtype(np.int32) != 7):
-            raise AssertionError("dtype richcompare failed for !=")
+        assert np.dtype(np.int32) != 7, "dtype richcompare failed for =="
+        assert np.dtype(np.int32) != 7, "dtype richcompare failed for !="
 
     @parametrize("operation", [operator.le, operator.lt, operator.ge, operator.gt])
     def test_richcompare_invalid_dtype_comparison(self, operation):
@@ -187,10 +185,8 @@ class TestPickling(TestCase):
             buf = pickle.dumps(dtype, proto)
             # The dtype pickling itself pickles `np.dtype` if it is pickled
             # as a singleton `dtype` should be stored in the buffer:
-            if b"_DType_reconstruct" in buf:
-                raise AssertionError("_DType_reconstruct should not be in buf")
-            if b"dtype" not in buf:
-                raise AssertionError("dtype should be in buf")
+            assert b"_DType_reconstruct" not in buf
+            assert b"dtype" in buf
             pickled = pickle.loads(buf)
             assert_equal(pickled, dtype)
 
@@ -221,10 +217,7 @@ class TestPickling(TestCase):
         # Check that DTypes (the classes/types) roundtrip when pickling
         for proto in range(pickle.HIGHEST_PROTOCOL + 1):
             roundtrip_DType = pickle.loads(pickle.dumps(DType, proto))
-            if roundtrip_DType is not DType:
-                raise AssertionError(
-                    f"roundtrip_DType is not DType: {roundtrip_DType} vs {DType}"
-                )
+            assert roundtrip_DType is DType
 
 
 @skip(reason="XXX: value-based promotions, we don't have.")
@@ -257,12 +250,10 @@ class TestPromotion(TestCase):
         min_complex = np.dtype(np.complex64)
 
         res = np.result_type(other, min_complex)
-        if res != expected:
-            raise AssertionError(f"result_type mismatch: {res} != {expected}")
+        assert res == expected
         # Check the same for a simple ufunc call that uses the same logic:
         res = np.minimum(other, np.ones(3, dtype=min_complex)).dtype
-        if res != expected:
-            raise AssertionError(f"dtype mismatch: {res} != {expected}")
+        assert res == expected
 
     @parametrize(
         "other, expected",
@@ -281,12 +272,10 @@ class TestPromotion(TestCase):
         complex_scalar = 1j
 
         res = np.result_type(other, complex_scalar)
-        if res != expected:
-            raise AssertionError(f"result_type mismatch: {res} != {expected}")
+        assert res == expected
         # Check the same for a simple ufunc call that uses the same logic:
         res = np.minimum(np.ones(3, dtype=other), complex_scalar).dtype
-        if res != expected:
-            raise AssertionError(f"dtype mismatch: {res} != {expected}")
+        assert res == expected
 
     @parametrize("val", [2, 2**32, 2**63, 2**64, 2 * 100])
     def test_python_integer_promotion(self, val):
@@ -294,15 +283,9 @@ class TestPromotion(TestCase):
         # into account that the integer may be considered int32, int64, uint64,
         # or object depending on the input value.  So test those paths!
         expected_dtype = np.result_type(np.array(val).dtype, np.array(0).dtype)
-        if np.result_type(val, 0) != expected_dtype:
-            raise AssertionError(
-                f"result_type mismatch: {np.result_type(val, 0)} != {expected_dtype}"
-            )
+        assert np.result_type(val, 0) == expected_dtype
         # For completeness sake, also check with a NumPy scalar as second arg:
-        if np.result_type(val, np.int8(0)) != expected_dtype:
-            raise AssertionError(
-                f"result_type mismatch: {np.result_type(val, np.int8(0))} != {expected_dtype}"
-            )
+        assert np.result_type(val, np.int8(0)) == expected_dtype
 
     @parametrize(
         "dtypes, expected",
@@ -327,25 +310,19 @@ class TestPromotion(TestCase):
         # above some uint and int combinations promote to a larger integer
         # type, which would then promote to a larger than necessary float.
         for perm in permutations(dtypes):
-            if np.result_type(*perm) != expected:
-                raise AssertionError(
-                    f"result_type mismatch: {np.result_type(*perm)} != {expected}"
-                )
+            assert np.result_type(*perm) == expected
 
 
 class TestMisc(TestCase):
     def test_dtypes_are_true(self):
         # test for gh-6294
-        if not bool(np.dtype("f8")):
-            raise AssertionError("np.dtype('f8') should be truthy")
-        if not bool(np.dtype("i8")):
-            raise AssertionError("np.dtype('i8') should be truthy")
+        assert bool(np.dtype("f8"))
+        assert bool(np.dtype("i8"))
 
     @xpassIfTorchDynamo_np  # (reason="No keyword arg for dtype ctor.")
     def test_keyword_argument(self):
         # test for https://github.com/numpy/numpy/pull/16574#issuecomment-642660971
-        if np.dtype(dtype=np.float64) != np.dtype(np.float64):
-            raise AssertionError("dtype keyword argument should work")
+        assert np.dtype(dtype=np.float64) == np.dtype(np.float64)
 
 
 class TestFromDTypeAttribute(TestCase):
@@ -353,12 +330,8 @@ class TestFromDTypeAttribute(TestCase):
         class dt:
             dtype = np.dtype("f8")
 
-        if np.dtype(dt) != np.float64:
-            raise AssertionError(f"np.dtype(dt) should be float64, got {np.dtype(dt)}")
-        if np.dtype(dt()) != np.float64:
-            raise AssertionError(
-                f"np.dtype(dt()) should be float64, got {np.dtype(dt())}"
-            )
+        assert np.dtype(dt) == np.float64
+        assert np.dtype(dt()) == np.float64
 
     @skip(
         reason="We simply require the .name attribute, so this "
@@ -383,37 +356,27 @@ class TestFromDTypeAttribute(TestCase):
 class TestClassGetItem(TestCase):
     def test_dtype(self) -> None:
         alias = np.dtype[Any]
-        if not isinstance(alias, types.GenericAlias):
-            raise AssertionError(f"alias should be GenericAlias, got {type(alias)}")
-        if alias.__origin__ is not np.dtype:
-            raise AssertionError(
-                f"alias.__origin__ should be np.dtype, got {alias.__origin__}"
-            )
+        assert isinstance(alias, types.GenericAlias)
+        assert alias.__origin__ is np.dtype
 
     @parametrize("code", np.typecodes["All"])
     def test_dtype_subclass(self, code: str) -> None:
         cls = type(np.dtype(code))
         alias = cls[Any]
-        if not isinstance(alias, types.GenericAlias):
-            raise AssertionError(f"alias should be GenericAlias, got {type(alias)}")
-        if alias.__origin__ is not cls:
-            raise AssertionError(
-                f"alias.__origin__ should be {cls}, got {alias.__origin__}"
-            )
+        assert isinstance(alias, types.GenericAlias)
+        assert alias.__origin__ is cls
 
     @parametrize("arg_len", range(4))
     def test_subscript_tuple(self, arg_len: int) -> None:
         arg_tup = (Any,) * arg_len
         if arg_len == 1:
-            if not np.dtype[arg_tup]:
-                raise AssertionError("np.dtype[arg_tup] should be truthy")
+            assert np.dtype[arg_tup]
         else:
             with pytest.raises(TypeError):
                 np.dtype[arg_tup]
 
     def test_subscript_scalar(self) -> None:
-        if not np.dtype[Any]:
-            raise AssertionError("np.dtype[Any] should be truthy")
+        assert np.dtype[Any]
 
 
 if __name__ == "__main__":

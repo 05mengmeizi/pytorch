@@ -40,17 +40,11 @@ class LazyFuncionalizationTest(TestCase):
 
                     sync_tensors = metrics.counter_value("SyncedTensorsWithIR")
                     if reset_storage:
-                        if sync_tensors != 1:
-                            raise AssertionError(
-                                f"Expected 1 synced tensor, got {sync_tensors}"
-                            )
+                        assert sync_tensors == 1
                     else:
                         # There is an extra tensor being unnecessarily synced if
                         # the functional storage is not reset.
-                        if sync_tensors != 2:
-                            raise AssertionError(
-                                f"Expected 2 synced tensors, got {sync_tensors}"
-                            )
+                        assert sync_tensors == 2
 
                 x = torch.ones(4)
                 out = model(x)

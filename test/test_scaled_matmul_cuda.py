@@ -7,6 +7,7 @@ import re
 import itertools
 import tempfile
 import unittest
+from typing import Optional
 
 import torch
 
@@ -61,7 +62,6 @@ from torch.testing._internal.common_quantized import (
     generate_jagged_offs,
     pack_uint4,
 )
-from torch._inductor.utils import infer_scale_swizzle
 
 
 _IS_SM8X = False
@@ -70,7 +70,7 @@ if TEST_CUDA:
     _IS_SM8X = torch.cuda.get_device_capability(0)[0] == 8
 
 f8_msg = "FP8 is only supported on H100+, SM 8.9 and MI300+ and XPU devices"
-f8_grouped_msg = "FP8 grouped is only supported on SM90 and MI300/MI350 devices"
+f8_grouped_msg = "FP8 grouped is only supported on SM90 and MI300+ devices"
 mx_skip_msg = "MX gemm is only supported on CUDA capability 10.0+"
 mxfp8_grouped_mm_skip_msg = "MXFP8 grouped GEMM is only supported when PyTorch is built with USE_MSLK=1 on SM100+"
 
@@ -201,6 +201,70 @@ def round_up(x: int, y: int) -> int:
     return ((x + y - 1) // y) * y
 
 
+def infer_scale_swizzle(mat, scale):
+    # Tensor-wise
+    if scale.numel() == 1:
+        return ScalingType.TensorWise, SwizzleType.NO_SWIZZLE
+
+    # Row-wise
+    if (scale.shape[0] == mat.shape[0] and scale.shape[1] == 1) or (
+        scale.shape[0] == 1 and scale.shape[1] == mat.shape[1]
+    ):
+        return ScalingType.RowWise, SwizzleType.NO_SWIZZLE
+
+    # deepgemm 1x128 / 128x1
+    if len(scale.shape) > 1:
+        if (
+            (scale.shape[0] == mat.shape[0]
+                and scale.shape[1] == math.ceil(mat.shape[1] // 128))
+            or (scale.shape[1] == mat.shape[1]
+                and scale.shape[0] == math.ceil(mat.shape[0] // 128))
+        ):
+            return ScalingType.BlockWise1x128, SwizzleType.NO_SWIZZLE
+
+        # deepgemm 128x128
+        if scale.shape[0] == math.ceil(mat.shape[0] // 128) and scale.shape[
+            1
+        ] == math.ceil(mat.shape[1] // 128):
+            return ScalingType.BlockWise128x128, SwizzleType.NO_SWIZZLE
+
+    # if we're checking for nvfp4, need to adjust for packed-K
+    K_multiplier = 2 if mat.dtype == torch.float4_e2m1fn_x2 else 1
+    # NVFP4
+    if (
+        (scale.numel()
+            == round_up(mat.shape[0], 128) * round_up(math.ceil(K_multiplier * mat.shape[1] // 16), 4)
+            or scale.numel()
+            == round_up(mat.shape[1], 128) * round_up(math.ceil(K_multiplier * mat.shape[0] // 16), 4))
+        and mat.dtype == torch.float4_e2m1fn_x2
+        and scale.dtype == torch.float8_e4m3fn
+    ):
+        return ScalingType.BlockWise1x16, SwizzleType.SWIZZLE_32_4_4
+
+    # MX formats
+    if not torch.version.hip:
+        # MX w/swizzle (NVIDIA)
+        if (
+            (scale.numel()
+                == round_up(mat.shape[0], 128) * round_up(math.ceil(K_multiplier * mat.shape[1] // 32), 4)
+                or scale.numel()
+                == round_up(mat.shape[1], 128) * round_up(math.ceil(K_multiplier * mat.shape[0] // 32), 4))
+            and scale.dtype == torch.float8_e8m0fnu
+        ):
+            return ScalingType.BlockWise1x32, SwizzleType.SWIZZLE_32_4_4
+
+    else:
+        # MX w/o swizzle (AMD)
+        if (
+            (scale.numel() == math.ceil(mat.shape[0] // 32) * K_multiplier * mat.shape[1]
+                or scale.numel() == math.ceil(K_multiplier * mat.shape[1] // 32) * mat.shape[0])
+            and scale.dtype == torch.float8_e8m0fnu
+        ):
+            return ScalingType.BlockWise1x32, SwizzleType.NO_SWIZZLE
+
+    return None, None
+
+
 wrap: bool = True
 
 def scaled_mm_wrap(
@@ -294,7 +358,7 @@ def scaled_grouped_mm_wrap(
 
 
 
-def mm_float8_emulated(x, x_scale, y, y_scale, out_dtype, bias: torch.Tensor | None = None) -> torch.Tensor:
+def mm_float8_emulated(x, x_scale, y, y_scale, out_dtype, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
     # naive implementation: dq -> op -> q
     x_fp32 = x.to(torch.float) / x_scale
     y_fp32 = y.to(torch.float) / y_scale
@@ -321,8 +385,8 @@ def addmm_float8_unwrapped(
     b_data: torch.Tensor,
     b_scale: torch.tensor,
     output_dtype: torch.dtype,
-    output_scale: torch.Tensor | None,
-    bias: torch.Tensor | None = None,
+    output_scale: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     a_inverse_scale = a_scale.reciprocal()
     b_inverse_scale = b_scale.reciprocal()
@@ -631,7 +695,7 @@ class TestFP8Matmul(TestCase):
     def _test_tautological_mm(self, device: str = "cuda",
                               x_dtype: torch.dtype = e4m3_type,
                               y_dtype: torch.dtype = e4m3_type,
-                              out_dtype: torch.dtype | None = None,
+                              out_dtype: Optional[torch.dtype] = None,
                               x_cm: bool = True,
                               y_cm: bool = False,
                               size: int = 16) -> None:
@@ -651,8 +715,6 @@ class TestFP8Matmul(TestCase):
             self.assertEqual(out_dtype, out_fp8.dtype)
         self.assertEqual(out_fp32, out_fp8.to(torch.float))
 
-    # Skip on XPU due to known oneDNN accuracy issue (#169772)
-    @skipXPU
     def test_float8_basics(self, device) -> None:
         if not _device_supports_scaled_mm_fp8(device):
             raise unittest.SkipTest(f8_msg)
@@ -672,14 +734,8 @@ class TestFP8Matmul(TestCase):
 
         if torch.cuda.is_available():
             for (x_cm, y_cm) in itertools.product([True, False], repeat=2):
-                # SM 10 and 11 support all permutations, SM 12 TT and TN, SM 9 only TN
-                major, minor = torch.cuda.get_device_capability(0)
-                if major in (10, 11):
-                    layouts_supported = True
-                elif major == 12 and (minor == 1 or _get_torch_cuda_version() >= (13, 1)):
-                    layouts_supported = x_cm
-                else:
-                    layouts_supported = (x_cm, y_cm) == (True, False)
+                # Blackwell (SM_10) supports all possible layout permutations, while Hopper only TN
+                layouts_supported = (x_cm, y_cm) == (True, False) or torch.cuda.get_device_properties(0).major == 10
                 with contextlib.nullcontext() if layouts_supported else self.assertRaises(RuntimeError):
                     self._test_tautological_mm(device, size=64, out_dtype=torch.bfloat16, x_cm=x_cm, y_cm=y_cm)
 
@@ -750,10 +806,8 @@ class TestFP8Matmul(TestCase):
             raise ValueError(f'format must be mxfp8|nvfp4|mxfp4, got "{format}"')
 
         if format == 'nvfp4':
-            if x_global_scales.numel() != w_global_scales.numel():
-                raise AssertionError(f"scale numel mismatch: {x_global_scales.numel()} != {w_global_scales.numel()}")
-            if x_global_scales.numel() != G:
-                raise AssertionError(f"scale numel should be {G}, got {x_global_scales.numel()}")
+            assert x_global_scales.numel() == w_global_scales.numel()
+            assert x_global_scales.numel() == G
 
         # Compute mxfp8 grouped mm output
         y_lp = scaled_grouped_mm_wrap(
@@ -770,8 +824,7 @@ class TestFP8Matmul(TestCase):
         )
 
         # Assert no NaNs
-        if y_lp.isnan().any():
-            raise AssertionError("low-precision output contains NaN")
+        assert not y_lp.isnan().any(), "low-precision output contains NaN"
 
         # Assert outputs are close
         torch.testing.assert_close(y_lp, y_bf16, atol=8.0e-2, rtol=8.0e-2)
@@ -897,10 +950,8 @@ class TestFP8Matmul(TestCase):
             raise ValueError(f'format must be mxfp8|nvfp4, got "{format}"')
 
         if format == 'nvfp4':
-            if x_global_scales.numel() != w_global_scales.numel():
-                raise AssertionError(f"scale numel mismatch: {x_global_scales.numel()} != {w_global_scales.numel()}")
-            if x_global_scales.numel() != G:
-                raise AssertionError(f"scale numel should be {G}, got {x_global_scales.numel()}")
+            assert x_global_scales.numel() == w_global_scales.numel()
+            assert x_global_scales.numel() == G
 
         # Compute low-precision grouped gemm.
         y_lp = scaled_grouped_mm_wrap(
@@ -1326,7 +1377,7 @@ class TestFP8Matmul(TestCase):
             test()
 
     @unittest.skipIf(not PLATFORM_SUPPORTS_FP8 or IS_WINDOWS, f8_msg)
-    @unittest.skipIf(not IS_SM90, "DeepSeek style (1x128, 128x128) blockwise scaling requires SM90 (Hopper)")
+    @unittest.skipIf(not IS_SM90, "cuBLAS blockwise scaling requires sm90+")
     @unittest.skipIf(
         _get_torch_cuda_version() < (12, 9),
         "cuBLAS blockwise scaling added in CUDA 12.9",
@@ -1379,10 +1430,8 @@ class TestFP8Matmul(TestCase):
             if lhs_block == 1:
                 x_scales = x_scales.t().contiguous().t()
                 lhs_recipe = ScalingType.BlockWise1x128
-                if not (x_scales.shape[0] == M and x_scales.shape[1] == K // 128):
-                    raise AssertionError(f"{x_scales.shape=}")
-                if not (x_scales.stride(0) == 1 and x_scales.stride(1) in [1, M]):
-                    raise AssertionError(f"{x_scales.stride=}")
+                assert (x_scales.shape[0] == M and x_scales.shape[1] == K // 128), f"{x_scales.shape=}"
+                assert (x_scales.stride(0) == 1 and x_scales.stride(1) in [1, M]), f"{x_scales.stride=}"
                 x_hp = hp_from_1x128(x_fp8, x_scales_original)
             else:
                 lhs_recipe = ScalingType.BlockWise128x128
@@ -1400,10 +1449,8 @@ class TestFP8Matmul(TestCase):
             if rhs_block == 1:
                 y_scales = y_scales.t().contiguous().t()
                 rhs_recipe = ScalingType.BlockWise1x128
-                if not (y_scales.shape[0] == N and y_scales.shape[1] == K // 128):
-                    raise AssertionError(f"{y_scales.shape=}")
-                if not (y_scales.stride(0) == 1 and y_scales.stride(1) in [1, N]):
-                    raise AssertionError(f"{y_scales.stride=}")
+                assert (y_scales.shape[0] == N and y_scales.shape[1] == K // 128), f"{y_scales.shape=}"
+                assert (y_scales.stride(0) == 1 and y_scales.stride(1) in [1, N]), f"{y_scales.stride=}"
                 y_hp = hp_from_1x128(y_fp8, y_scales_original)
             else:
                 rhs_recipe = ScalingType.BlockWise128x128
@@ -1557,7 +1604,7 @@ class TestFP8Matmul(TestCase):
 
 
     @unittest.skipIf(not PLATFORM_SUPPORTS_FP8 or IS_WINDOWS, f8_msg)
-    @unittest.skipIf(not IS_SM90, "DeepSeek style (1x128, 128x128) blockwise scaling requires SM90 (Hopper)")
+    @unittest.skipIf(not IS_SM90, "cuBLAS blockwise scaling requires sm90+")
     @unittest.skipIf(
         _get_torch_cuda_version() < (12, 9),
         "cuBLAS blockwise scaling added in CUDA 12.9",
@@ -1582,10 +1629,8 @@ class TestFP8Matmul(TestCase):
         if lhs_block == 1:
             x_scales = x_scales.t().contiguous().t()
             lhs_recipe = ScalingType.BlockWise1x128
-            if not (x_scales.shape[0] == M and x_scales.shape[1] == K // 128):
-                raise AssertionError(f"{x_scales.shape=}")
-            if not (x_scales.stride(0) == 1 and x_scales.stride(1) in [1, M]):
-                raise AssertionError(f"{x_scales.stride=}")
+            assert (x_scales.shape[0] == M and x_scales.shape[1] == K // 128), f"{x_scales.shape=}"
+            assert (x_scales.stride(0) == 1 and x_scales.stride(1) in [1, M]), f"{x_scales.stride=}"
         else:
             lhs_recipe = ScalingType.BlockWise128x128
             x_scales, pad_amount = _pad_128x128_scales(x_scales)
@@ -1595,10 +1640,8 @@ class TestFP8Matmul(TestCase):
         if rhs_block == 1:
             y_scales = y_scales.t().contiguous().t()
             rhs_recipe = ScalingType.BlockWise1x128
-            if not (y_scales.shape[0] == N and y_scales.shape[1] == K // 128):
-                raise AssertionError(f"{y_scales.shape=}")
-            if not (y_scales.stride(0) == 1 and y_scales.stride(1) in [1, N]):
-                raise AssertionError(f"{y_scales.stride=}")
+            assert (y_scales.shape[0] == N and y_scales.shape[1] == K // 128), f"{y_scales.shape=}"
+            assert (y_scales.stride(0) == 1 and y_scales.stride(1) in [1, N]), f"{y_scales.stride=}"
         else:
             rhs_recipe = ScalingType.BlockWise128x128
             y_scales, pad_amount = _pad_128x128_scales(y_scales)
@@ -1629,7 +1672,7 @@ class TestFP8Matmul(TestCase):
     @skipIfRocm
     @onlyCUDA
     @unittest.skipIf(not PLATFORM_SUPPORTS_FP8 or IS_WINDOWS, f8_msg)
-    @unittest.skipIf(IS_SM90, "DeepSeek style (1x128, 128x128) blockwise scaling works on SM90 (Hopper)")
+    @unittest.skipIf(IS_SM90, "cuBLAS blockwise scaling works on sm90")
     @unittest.skipIf(
         _get_torch_cuda_version() < (12, 9),
         "cuBLAS blockwise scaling added in CUDA 12.9",
@@ -1661,7 +1704,7 @@ class TestFP8Matmul(TestCase):
         else:
             rhs_recipe = ScalingType.BlockWise128x128
 
-        # Verify that actual F8 mm raises expected error on non-SM90
+        # Verify that actual F8 mm doesn't error
         with self.assertRaisesRegex(
             NotImplementedError,
             ".*DeepSeek.*scaling.*only supported in CUDA for SM90.*"
@@ -1848,8 +1891,7 @@ class TestFP8Matmul(TestCase):
         )
 
         sqnr = compute_error(C_ref, C)
-        if sqnr.item() <= approx_match_sqnr_target:
-            raise AssertionError(f"sqnr {sqnr.item()} should be > {approx_match_sqnr_target}")
+        assert sqnr.item() > approx_match_sqnr_target
 
     @unittest.skipIf(not PLATFORM_SUPPORTS_MX_GEMM, mx_skip_msg)
     @parametrize("test_case_name", [
@@ -2110,103 +2152,7 @@ class TestFP8Matmul(TestCase):
             torch.testing.assert_close(C, C_ref, atol=0, rtol=0)
         else:
             sqnr = compute_error(C_ref, C)
-            if sqnr.item() <= approx_match_sqnr_target:
-                raise AssertionError(f"sqnr {sqnr.item()} should be > {approx_match_sqnr_target}")
-
-    @unittest.skipIf(not PLATFORM_SUPPORTS_MX_GEMM or IS_WINDOWS, mx_skip_msg)
-    def test_passed_swizzle_arrays(self, device) -> None:
-        # Ensure that incorrectly-sized swizzle arrays are caught
-        M, N, K = 128, 128, 128
-
-        # MXFP8: swizzle=[SWIZZLE_32_4_4]
-        x = torch.randn(M, K, device=device).to(torch.float8_e4m3fn)
-        w = torch.randn(N, K, device=device).to(torch.float8_e4m3fn)
-
-        x_scale = torch.full((M, K // 32), 1., dtype=torch.float8_e8m0fnu, device=device)
-        w_scale = torch.full((N, K // 32), 1., dtype=torch.float8_e8m0fnu, device=device)
-
-        # No swizzle passed - must fail on swizzle_a
-        with self.assertRaisesRegex(
-            ValueError,
-            "swizzle_a must have 1 values, got 0",
-        ):
-            _ = torch.nn.functional.scaled_mm(
-                x,
-                w.t(),
-                x_scale,
-                ScalingType.BlockWise1x32,
-                w_scale,
-                ScalingType.BlockWise1x32,
-            )
-
-        # swizzle_a passed, not b, must fail on swizzle_b
-        with self.assertRaisesRegex(
-            ValueError,
-            "swizzle_b must have 1 values, got 0",
-        ):
-            _ = torch.nn.functional.scaled_mm(
-                x,
-                w.t(),
-                x_scale,
-                ScalingType.BlockWise1x32,
-                w_scale,
-                ScalingType.BlockWise1x32,
-                swizzle_a=SwizzleType.SWIZZLE_32_4_4,
-            )
-
-        # NVFP4 two-level: swizzle=[SWIZZLE_32_4_4, NO_SWIZZLE]
-        x = _bfloat16_to_float4_e2m1fn_x2(x.to(torch.bfloat16))
-        w = _bfloat16_to_float4_e2m1fn_x2(w.to(torch.bfloat16))
-
-        x_scale = torch.full((M, K // 16), 1., dtype=torch.float8_e4m3fn, device=device)
-        w_scale = torch.full((N, K // 16), 1., dtype=torch.float8_e4m3fn, device=device)
-
-        global_scale = torch.full((1, ), 1., dtype=torch.float, device=device)
-
-        # No swizzles passed - must fail on swizzle_a
-        with self.assertRaisesRegex(
-            ValueError,
-            "swizzle_a must have 2 values, got 0",
-        ):
-            _ = torch.nn.functional.scaled_mm(
-                x,
-                w.t(),
-                [x_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-                [w_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-            )
-
-        # Not enough swizzles passed - must fail on swizzle_a
-        with self.assertRaisesRegex(
-            ValueError,
-            "swizzle_a must have 2 values, got 1",
-        ):
-            _ = torch.nn.functional.scaled_mm(
-                x,
-                w.t(),
-                [x_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-                [w_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-                swizzle_a=[SwizzleType.SWIZZLE_32_4_4, ],
-            )
-
-        # Not enough swizzles passed to b - must fail on swizzle_b
-        with self.assertRaisesRegex(
-            ValueError,
-            "swizzle_b must have 2 values, got 1",
-        ):
-            _ = torch.nn.functional.scaled_mm(
-                x,
-                w.t(),
-                [x_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-                [w_scale, global_scale],
-                [ScalingType.BlockWise1x16, ScalingType.TensorWise],
-                swizzle_a=[SwizzleType.SWIZZLE_32_4_4, SwizzleType.NO_SWIZZLE],
-                swizzle_b=[SwizzleType.SWIZZLE_32_4_4, ],
-            )
+            assert sqnr.item() > approx_match_sqnr_target
 
 
     @unittest.skipIf(not PLATFORM_SUPPORTS_MX_GEMM or IS_WINDOWS, mx_skip_msg)

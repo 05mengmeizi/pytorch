@@ -6,7 +6,7 @@ import functools
 import unittest
 from collections.abc import Callable
 from contextlib import contextmanager, ExitStack
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch._dynamo
@@ -68,8 +68,7 @@ def ap_style_initial_capture(
 
     with fake_mode:
         inputs = inputs_fn()
-    if not isinstance(inputs, tuple):
-        raise AssertionError(f"Expected inputs to be tuple, got {type(inputs)}")
+    assert isinstance(inputs, tuple)
 
     with (
         enable_local_map_wrapping(),
@@ -183,8 +182,7 @@ def create_model(attention_fn, nheads, dim1, dim2, sac_policy=None):
 
 
 def get_local_mapped_functions(mesh):
-    if not torch.distributed.is_available():
-        raise AssertionError("torch.distributed is not available")
+    assert torch.distributed.is_available()
 
     @local_map(
         out_placements=((Shard(0), Shard(1), Shard(2)),),
@@ -561,8 +559,7 @@ class GraphModule(torch.nn.Module):
     @unittest.skipIf(*get_skip_reasons())
     def test_local_map_with_local_shapes_hop_tracing(self):
         def fn(x):
-            if x.shape != (10, 80):
-                raise AssertionError("expected local shapes")
+            assert x.shape == (10, 80), "expected local shapes"
             # force view specialization ops
             out = x.view(-1) + 10
             return (out.view(x.shape),)
@@ -612,27 +609,19 @@ class GraphModule(torch.nn.Module):
 
         # Graph should not be aware that Fake key used local shapes
         fw_inputs = fw_node.args
-        if len(fw_inputs) != 1:
-            raise AssertionError(f"Expected len(fw_inputs) == 1, got {len(fw_inputs)}")
+        assert len(fw_inputs) == 1
         self.assertEqual(fw_inputs[0].meta["val"].shape, (80, 80))
 
         fw_outputs = fw_node.args
-        if len(fw_outputs) != 1:
-            raise AssertionError(
-                f"Expected len(fw_outputs) == 1, got {len(fw_outputs)}"
-            )
+        assert len(fw_outputs) == 1
         self.assertEqual(fw_outputs[0].meta["val"].shape, (80, 80))
 
         bw_inputs = bw_node.args
-        if len(bw_inputs) != 1:
-            raise AssertionError(f"Expected len(bw_inputs) == 1, got {len(bw_inputs)}")
+        assert len(bw_inputs) == 1
         self.assertEqual(bw_inputs[0].meta["val"].shape, (80, 80))
 
         bw_outputs = bw_node.meta["val"]
-        if len(bw_outputs) != 1:
-            raise AssertionError(
-                f"Expected len(bw_outputs) == 1, got {len(bw_outputs)}"
-            )
+        assert len(bw_outputs) == 1
         self.assertEqual(bw_outputs[0].shape, (80, 80))
 
     @unittest.skipIf(*get_skip_reasons())
@@ -756,17 +745,16 @@ class GraphModule(torch.nn.Module):
 
         def _all_to_all(
             self: torch.Tensor,
-            output_split_sizes: list[int] | None,
-            input_split_sizes: list[int] | None,
+            output_split_sizes: Optional[list[int]],
+            input_split_sizes: Optional[list[int]],
             group_name: str,
         ):
             group_size = c10d._get_group_size_by_name(group_name)
             if output_split_sizes is None or input_split_sizes is None:
-                if not (output_split_sizes is None and input_split_sizes is None):
-                    raise AssertionError(
-                        "output_split_sizes and input_split_sizes must either be "
-                        "specified together or both set to None"
-                    )
+                assert output_split_sizes is None and input_split_sizes is None, (
+                    "output_split_sizes and input_split_sizes must either be "
+                    "specified together or both set to None"
+                )
                 output_split_sizes = [self.shape[0] // group_size] * group_size
                 input_split_sizes = output_split_sizes
 
@@ -781,8 +769,8 @@ class GraphModule(torch.nn.Module):
             def forward(
                 ctx: Any,
                 x: torch.Tensor,
-                output_split_sizes: list[int] | None,
-                input_split_sizes: list[int] | None,
+                output_split_sizes: Optional[list[int]],
+                input_split_sizes: Optional[list[int]],
                 axis_name: str,
             ):
                 group_name = _get_group_name_from_axis_name(axis_name)
@@ -931,34 +919,6 @@ class GraphModule(torch.nn.Module):
         self.assertEqual(mm_nodes[1].meta["custom"]["inside_local_map"], 1)
         self.assertEqual(mm_nodes[2].meta["custom"]["inside_local_map"], 1)
         self.assertEqual(mm_nodes[3].meta["custom"]["inside_local_map"], 0)
-
-    @unittest.skipIf(*get_skip_reasons())
-    def test_local_map_make_contiguous_strides_for(self):
-        # make_contiguous_strides_for inside local_map must compile with dynamic shapes.
-        from torch._prims_common import make_contiguous_strides_for
-
-        @local_map(
-            out_placements=((Shard(0), Replicate()),),
-            in_placements=((Shard(0), Replicate()),),
-            redistribute_inputs=True,
-            device_mesh=self.mesh,
-        )
-        def fn(x):
-            strides = make_contiguous_strides_for(x.shape)
-            return (x.as_strided(x.shape, strides),)
-
-        class MyModule(torch.nn.Module):
-            def forward(self, x):
-                return fn(x)
-
-        model = MyModule()
-        from torch._dynamo.testing import EagerAndRecordGraphs
-
-        backend = EagerAndRecordGraphs()
-        x = torch.randn(80, 80)
-        with enable_local_map_wrapping():
-            out = torch.compile(model, backend=backend)(x)
-        self.assertEqual(out[0].shape, x.shape)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import math
 from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING, Union
 
 import sympy
 
@@ -18,7 +18,7 @@ from torch.utils._pytree import tree_map, tree_map_only
 if TYPE_CHECKING:
     from torch._inductor.codegen.cuda_combined_scheduling import _IntLike
 else:
-    _IntLike = int | sympy.Expr
+    _IntLike = Union[int, sympy.Expr]
 
 
 from ...ir import (
@@ -46,7 +46,7 @@ from ...select_algorithm import realize_inputs
 from ...utils import load_template
 
 
-SubgraphResults = list[ComputedBuffer | None] | ComputedBuffer | None
+SubgraphResults = Union[list[Optional[ComputedBuffer]], Optional[ComputedBuffer]]
 
 
 def zeros_and_scatter_lowering(shape: list[int], indices, values):
@@ -96,7 +96,7 @@ def zeros_and_scatter_lowering(shape: list[int], indices, values):
 
 def get_fwd_subgraph_outputs(
     subgraph_buffer: SubgraphResults, mask_graph_buffer: SubgraphResults
-) -> list[ComputedBuffer | None]:
+) -> list[Optional[ComputedBuffer]]:
     subgraph_buffer = (
         subgraph_buffer if isinstance(subgraph_buffer, Sequence) else [subgraph_buffer]
     )
@@ -134,7 +134,7 @@ def build_subgraph_module_buffer(
     with V.set_graph_handler(pw_subgraph):  # type: ignore[arg-type]
         pw_subgraph.run(*args)
 
-    def convert_output_node_to_buffer(output_buffer) -> ComputedBuffer | None:
+    def convert_output_node_to_buffer(output_buffer) -> Optional[ComputedBuffer]:
         if output_buffer is None:
             return None
         if isinstance(output_buffer, ComputedBuffer):
@@ -168,7 +168,7 @@ def build_subgraph_buffer(args: list[TensorBox], subgraph: Subgraph) -> Subgraph
     return build_subgraph_module_buffer(args, subgraph.graph_module)
 
 
-def maybe_realize(args: list[IRNode | None]):
+def maybe_realize(args: list[Optional[IRNode]]):
     """Accepts a list of optional IRNodes and returns a list of realized IRNodes"""
     return tree_map(
         lambda x: (
@@ -200,7 +200,7 @@ def create_placeholder(
     name: str,
     dtype: torch.dtype,
     device: torch.device,
-    size: list[int] | None = None,
+    size: Optional[list[int]] = None,
 ) -> TensorBox:
     """Creates a placeholder input buffers for producing subgraph_output."""
     input_buffer = InputBuffer(
@@ -252,23 +252,12 @@ def infer_dense_strides(
         The behavior of empty_like()
     """
     fill_order = get_fill_order(orig_strides, V.graph.sizevars.shape_env)
-    strides = construct_strides(size, fill_order)
-
-    # Attention kernels require stride[-1]=1 for efficient memory access.
-    # Ensure this by moving last dim to front of fill_order if needed.
-    if strides[-1] != 1:
-        last_dim = len(size) - 1
-        fill_order = list(fill_order)
-        fill_order.remove(last_dim)
-        fill_order = [last_dim] + fill_order
-        strides = construct_strides(size, fill_order)
-
-    return strides
+    return construct_strides(size, fill_order)
 
 
 def create_indices_fake(x) -> torch.Tensor:
     """Create a fake indices that is used for autotuning."""
-    size = V.graph.sizevars.optimization_hints(x.get_size())
+    size = [V.graph.sizevars.size_hint(i) for i in x.get_size()]
     indices = torch.arange(0, size[-1], dtype=x.get_dtype(), device=x.get_device())
     indices = indices.expand(size).contiguous()
     return indices
@@ -290,10 +279,8 @@ def create_num_blocks_fake_generator(sparse_indices):
     """
 
     def create_num_blocks_fake(x) -> torch.Tensor:
-        num_blocks_for_autotuning = V.graph.sizevars.optimization_hint(
-            sparse_indices.shape[-1]
-        )
-        size = V.graph.sizevars.optimization_hints(x.get_size())
+        num_blocks_for_autotuning = V.graph.sizevars.size_hint(sparse_indices.shape[-1])
+        size = [V.graph.sizevars.size_hint(i) for i in x.get_size()]
         return torch.full(
             size,
             num_blocks_for_autotuning,

@@ -1,6 +1,5 @@
 # mypy: allow-untyped-defs
 import contextlib
-import warnings
 
 import torch
 
@@ -101,8 +100,7 @@ def _script_method_graph_for(self, parent, *args, **kwargs):
     try:
         dbs = parent.get_debug_state()
         eps = list(dbs.execution_plans.values())
-        if len(eps) != 1:
-            raise AssertionError(f"Expected exactly 1 execution plan, got {len(eps)}")
+        assert len(eps) == 1
         graph = eps[0].graph.copy()
 
         # graph_executor_states for differentiable node
@@ -111,11 +109,7 @@ def _script_method_graph_for(self, parent, *args, **kwargs):
         for n in graph.nodes():
             _get_differentiable_graph_node(n, diff_nodes)
 
-        if len(fw_states) != len(diff_nodes):
-            raise AssertionError(
-                f"Expected fw_states ({len(fw_states)}) and diff_nodes "
-                f"({len(diff_nodes)}) to have the same length"
-            )
+        assert len(fw_states) == len(diff_nodes)
         # swap each differentiable graph with optimized graph in their execution plan
         for n, state in zip(diff_nodes, fw_states):
             fw_execution_plans = list(state.execution_plans.values())
@@ -135,9 +129,6 @@ def _script_method_graph_for(self, parent, *args, **kwargs):
 
 def set_fusion_strategy(strategy: list[tuple[str, int]]):
     """Set the type and number of specializations that can occur during fusion.
-
-    .. deprecated:: 2.5
-        TorchScript is deprecated, please use ``torch.compile`` instead.
 
     Usage: provide a list of pairs (type, depth) where type is one of "STATIC" or "DYNAMIC"
     and depth is an integer.
@@ -166,8 +157,4 @@ def set_fusion_strategy(strategy: list[tuple[str, int]]):
     NB: in the future, if more as more fusion backends are added there may be more granular
     apis for specific fusers.
     """
-    warnings.warn(
-        "`torch.jit.set_fusion_strategy` is deprecated. Please use `torch.compile` instead.",
-        DeprecationWarning,
-    )
     return torch._C._jit_set_fusion_strategy(strategy)

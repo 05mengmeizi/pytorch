@@ -6,10 +6,6 @@
 // I don't have to also fix namespaces.  Sorry!
 namespace c10::hip {
 
-// NB: THIS SHOULD NOT BE USED
-// I couldn't find anywhere it was used in public pytorch sources or downstream projects.
-// But to avoid risk in removing it, it's still here.
-
 // Takes a valid HIPAllocator (of any sort) and turns it into
 // an allocator pretending to be a CUDA allocator.  See
 // Note [Masquerading as CUDA]
@@ -24,7 +20,9 @@ public:
   // From c10::Allocator
 
   DataPtr allocate(size_t size) override {
-    return allocator_->allocate(size);
+    DataPtr r = allocator_->allocate(size);
+    r.unsafe_set_device(Device(c10::DeviceType::CUDA, r.device().index()));
+    return r;
   }
 
   bool is_simple_data_ptr(const DataPtr& data_ptr) const override {
@@ -116,8 +114,8 @@ public:
     allocator_->recordStream(ptr, stream);
   }
 
-  HIPCachingAllocator::SnapshotInfo snapshot(MempoolId_t mempool_id = {0, 0}, bool include_traces = true) override {
-    return allocator_->snapshot(mempool_id, include_traces);
+  HIPCachingAllocator::SnapshotInfo snapshot(MempoolId_t mempool_id = {0, 0}) override {
+    return allocator_->snapshot(mempool_id);
   }
 
   void beginAllocateToPool(
@@ -230,7 +228,11 @@ public:
   HIPCachingAllocator::CheckpointDelta setCheckpointPoolState(
       c10::DeviceIndex device,
       std::shared_ptr<HIPCachingAllocator::AllocatorState> pps) override {
-    return allocator_->setCheckpointPoolState(device, pps);
+    auto cpd = allocator_->setCheckpointPoolState(device, pps);
+    for (auto& ptr : cpd.dataptrs_allocd) {
+      ptr.unsafe_set_device(Device(c10::DeviceType::CUDA, ptr.device().index()));
+    }
+    return cpd;
   }
 
   std::string name() override {

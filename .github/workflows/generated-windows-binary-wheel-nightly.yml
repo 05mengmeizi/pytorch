@@ -14,7 +14,6 @@ on:
       # Release candidate tags look like: v1.11.0-rc1
       - v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+
       - 'ciflow/binaries/*'
-      - 'ciflow/binaries_libtorch/*'
       - 'ciflow/binaries_wheel/*'
   workflow_dispatch:
 
@@ -48,7 +47,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -115,11 +114,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -137,12 +138,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -155,7 +158,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -213,11 +216,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -242,12 +247,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -258,7 +265,7 @@ jobs:
       contents: read
     needs: wheel-py3_10-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -268,9 +275,6 @@ jobs:
       build_name: wheel-py3_10-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_10-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -278,7 +282,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -346,11 +350,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -368,12 +374,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -386,7 +394,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -445,11 +453,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -474,12 +484,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -490,7 +502,7 @@ jobs:
       contents: read
     needs: wheel-py3_10-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -501,9 +513,6 @@ jobs:
       build_name: wheel-py3_10-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_10-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -511,7 +520,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -579,11 +588,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -601,12 +612,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -619,7 +632,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -678,11 +691,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -707,12 +722,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -723,7 +740,7 @@ jobs:
       contents: read
     needs: wheel-py3_10-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -734,9 +751,6 @@ jobs:
       build_name: wheel-py3_10-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_10-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -744,7 +758,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -812,11 +826,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -834,12 +850,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -852,7 +870,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -911,11 +929,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -940,12 +960,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -956,7 +978,7 @@ jobs:
       contents: read
     needs: wheel-py3_10-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -967,9 +989,6 @@ jobs:
       build_name: wheel-py3_10-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_10-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -977,7 +996,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -985,7 +1004,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.10"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -1045,11 +1064,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -1067,12 +1088,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1085,7 +1108,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1143,11 +1166,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -1172,12 +1197,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1188,7 +1215,7 @@ jobs:
       contents: read
     needs: wheel-py3_10-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1198,9 +1225,6 @@ jobs:
       build_name: wheel-py3_10-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_11-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -1208,7 +1232,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1275,11 +1299,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -1297,12 +1323,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1315,7 +1343,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1373,11 +1401,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -1402,12 +1432,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1418,7 +1450,7 @@ jobs:
       contents: read
     needs: wheel-py3_11-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1428,9 +1460,6 @@ jobs:
       build_name: wheel-py3_11-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_11-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -1438,7 +1467,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1506,11 +1535,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -1528,12 +1559,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1546,7 +1579,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1605,11 +1638,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -1634,12 +1669,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1650,7 +1687,7 @@ jobs:
       contents: read
     needs: wheel-py3_11-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1661,9 +1698,6 @@ jobs:
       build_name: wheel-py3_11-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_11-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -1671,7 +1705,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1739,11 +1773,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -1761,12 +1797,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1779,7 +1817,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1838,11 +1876,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -1867,12 +1907,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -1883,7 +1925,7 @@ jobs:
       contents: read
     needs: wheel-py3_11-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1894,9 +1936,6 @@ jobs:
       build_name: wheel-py3_11-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_11-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -1904,7 +1943,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -1972,11 +2011,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -1994,12 +2035,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2012,7 +2055,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2071,11 +2114,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -2100,12 +2145,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2116,7 +2163,7 @@ jobs:
       contents: read
     needs: wheel-py3_11-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2127,9 +2174,6 @@ jobs:
       build_name: wheel-py3_11-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_11-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -2137,7 +2181,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2145,7 +2189,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.11"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -2205,11 +2249,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -2227,12 +2273,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2245,7 +2293,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2303,11 +2351,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -2332,12 +2382,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2348,7 +2400,7 @@ jobs:
       contents: read
     needs: wheel-py3_11-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2358,9 +2410,6 @@ jobs:
       build_name: wheel-py3_11-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_12-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -2368,7 +2417,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2435,11 +2484,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -2457,12 +2508,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2475,7 +2528,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2533,11 +2586,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -2562,12 +2617,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2578,7 +2635,7 @@ jobs:
       contents: read
     needs: wheel-py3_12-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2588,9 +2645,6 @@ jobs:
       build_name: wheel-py3_12-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_12-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -2598,7 +2652,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2666,11 +2720,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -2688,12 +2744,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2706,7 +2764,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2765,11 +2823,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -2794,12 +2854,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2810,7 +2872,7 @@ jobs:
       contents: read
     needs: wheel-py3_12-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2821,9 +2883,6 @@ jobs:
       build_name: wheel-py3_12-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_12-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -2831,7 +2890,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2899,11 +2958,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -2921,12 +2982,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -2939,7 +3002,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -2998,11 +3061,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -3027,12 +3092,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3043,7 +3110,7 @@ jobs:
       contents: read
     needs: wheel-py3_12-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3054,9 +3121,6 @@ jobs:
       build_name: wheel-py3_12-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_12-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -3064,7 +3128,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3132,11 +3196,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -3154,12 +3220,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3172,7 +3240,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3231,11 +3299,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -3260,12 +3330,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3276,7 +3348,7 @@ jobs:
       contents: read
     needs: wheel-py3_12-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3287,9 +3359,6 @@ jobs:
       build_name: wheel-py3_12-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_12-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -3297,7 +3366,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3305,7 +3374,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.12"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -3365,11 +3434,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -3387,12 +3458,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3405,7 +3478,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3463,11 +3536,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -3492,12 +3567,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3508,7 +3585,7 @@ jobs:
       contents: read
     needs: wheel-py3_12-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3518,9 +3595,6 @@ jobs:
       build_name: wheel-py3_12-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -3528,7 +3602,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3595,11 +3669,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -3617,12 +3693,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3635,7 +3713,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3693,11 +3771,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -3722,12 +3802,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3738,7 +3820,7 @@ jobs:
       contents: read
     needs: wheel-py3_13-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3748,9 +3830,6 @@ jobs:
       build_name: wheel-py3_13-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -3758,7 +3837,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3826,11 +3905,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -3848,12 +3929,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3866,7 +3949,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3925,11 +4008,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -3954,12 +4039,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -3970,7 +4057,7 @@ jobs:
       contents: read
     needs: wheel-py3_13-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -3981,9 +4068,6 @@ jobs:
       build_name: wheel-py3_13-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -3991,7 +4075,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4059,11 +4143,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -4081,12 +4167,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4099,7 +4187,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4158,11 +4246,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -4187,12 +4277,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4203,7 +4295,7 @@ jobs:
       contents: read
     needs: wheel-py3_13-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4214,9 +4306,6 @@ jobs:
       build_name: wheel-py3_13-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -4224,7 +4313,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4292,11 +4381,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -4314,12 +4405,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4332,7 +4425,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4391,11 +4484,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -4420,12 +4515,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4436,7 +4533,7 @@ jobs:
       contents: read
     needs: wheel-py3_13-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4447,9 +4544,6 @@ jobs:
       build_name: wheel-py3_13-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -4457,7 +4551,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4465,7 +4559,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.13"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -4525,11 +4619,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -4547,12 +4643,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4565,7 +4663,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4623,11 +4721,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -4652,12 +4752,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4668,7 +4770,7 @@ jobs:
       contents: read
     needs: wheel-py3_13-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4678,9 +4780,6 @@ jobs:
       build_name: wheel-py3_13-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13t-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -4688,7 +4787,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4755,11 +4854,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -4777,12 +4878,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4795,7 +4898,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4853,11 +4956,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -4882,12 +4987,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -4898,7 +5005,7 @@ jobs:
       contents: read
     needs: wheel-py3_13t-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4908,9 +5015,6 @@ jobs:
       build_name: wheel-py3_13t-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13t-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -4918,7 +5022,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -4986,11 +5090,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -5008,12 +5114,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5026,7 +5134,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5085,11 +5193,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -5114,12 +5224,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5130,7 +5242,7 @@ jobs:
       contents: read
     needs: wheel-py3_13t-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5141,9 +5253,6 @@ jobs:
       build_name: wheel-py3_13t-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13t-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -5151,7 +5260,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5219,11 +5328,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -5241,12 +5352,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5259,7 +5372,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5318,11 +5431,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -5347,12 +5462,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5363,7 +5480,7 @@ jobs:
       contents: read
     needs: wheel-py3_13t-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5374,9 +5491,6 @@ jobs:
       build_name: wheel-py3_13t-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13t-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -5384,7 +5498,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5452,11 +5566,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -5474,12 +5590,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5492,7 +5610,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5551,11 +5669,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -5580,12 +5700,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5596,7 +5718,7 @@ jobs:
       contents: read
     needs: wheel-py3_13t-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5607,9 +5729,6 @@ jobs:
       build_name: wheel-py3_13t-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_13t-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -5617,7 +5736,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5625,7 +5744,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.13t"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -5685,11 +5804,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -5707,12 +5828,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5725,7 +5848,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5783,11 +5906,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -5812,12 +5937,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5828,7 +5955,7 @@ jobs:
       contents: read
     needs: wheel-py3_13t-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5838,9 +5965,6 @@ jobs:
       build_name: wheel-py3_13t-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -5848,7 +5972,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -5915,11 +6039,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -5937,12 +6063,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -5955,7 +6083,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6013,11 +6141,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -6042,12 +6172,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6058,7 +6190,7 @@ jobs:
       contents: read
     needs: wheel-py3_14-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6068,9 +6200,6 @@ jobs:
       build_name: wheel-py3_14-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -6078,7 +6207,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6146,11 +6275,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -6168,12 +6299,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6186,7 +6319,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6245,11 +6378,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -6274,12 +6409,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6290,7 +6427,7 @@ jobs:
       contents: read
     needs: wheel-py3_14-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6301,9 +6438,6 @@ jobs:
       build_name: wheel-py3_14-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -6311,7 +6445,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6379,11 +6513,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -6401,12 +6537,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6419,7 +6557,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6478,11 +6616,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -6507,12 +6647,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6523,7 +6665,7 @@ jobs:
       contents: read
     needs: wheel-py3_14-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6534,9 +6676,6 @@ jobs:
       build_name: wheel-py3_14-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -6544,7 +6683,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6612,11 +6751,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -6634,12 +6775,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6652,7 +6795,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6711,11 +6854,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -6740,12 +6885,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6756,7 +6903,7 @@ jobs:
       contents: read
     needs: wheel-py3_14-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6767,9 +6914,6 @@ jobs:
       build_name: wheel-py3_14-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -6777,7 +6921,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6785,7 +6929,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.14"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -6845,11 +6989,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -6867,12 +7013,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6885,7 +7033,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6943,11 +7091,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -6972,12 +7122,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -6988,7 +7140,7 @@ jobs:
       contents: read
     needs: wheel-py3_14-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -6998,9 +7150,6 @@ jobs:
       build_name: wheel-py3_14-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14t-cpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -7008,7 +7157,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7075,11 +7224,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -7097,12 +7248,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7115,7 +7268,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7173,11 +7326,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -7202,12 +7357,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7218,7 +7375,7 @@ jobs:
       contents: read
     needs: wheel-py3_14t-cpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7228,9 +7385,6 @@ jobs:
       build_name: wheel-py3_14t-cpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14t-cuda12_6-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -7238,7 +7392,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7306,11 +7460,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -7328,12 +7484,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7346,7 +7504,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7405,11 +7563,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -7434,12 +7594,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7450,7 +7612,7 @@ jobs:
       contents: read
     needs: wheel-py3_14t-cuda12_6-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7461,9 +7623,6 @@ jobs:
       build_name: wheel-py3_14t-cuda12_6
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14t-cuda12_8-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -7471,7 +7630,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7539,11 +7698,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -7561,12 +7722,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7579,7 +7742,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7638,11 +7801,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -7667,12 +7832,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7683,7 +7850,7 @@ jobs:
       contents: read
     needs: wheel-py3_14t-cuda12_8-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7694,9 +7861,6 @@ jobs:
       build_name: wheel-py3_14t-cuda12_8
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14t-cuda13_0-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -7704,7 +7868,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7772,11 +7936,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -7794,12 +7960,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7812,7 +7980,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.g4dn.xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7871,11 +8039,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -7900,12 +8070,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -7916,7 +8088,7 @@ jobs:
       contents: read
     needs: wheel-py3_14t-cuda13_0-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7927,9 +8099,6 @@ jobs:
       build_name: wheel-py3_14t-cuda13_0
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml
   wheel-py3_14t-xpu-build:
     if: ${{ github.repository_owner == 'pytorch' }}
@@ -7937,7 +8106,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.12xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -7945,7 +8114,7 @@ jobs:
       GPU_ARCH_TYPE: xpu
       SKIP_ALL_TESTS: 1
       DESIRED_PYTHON: "3.14t"
-      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.2 | intel-cmplr-lib-ur==2025.3.2 | intel-cmplr-lic-rt==2025.3.2 | intel-sycl-rt==2025.3.2 | oneccl-devel==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.2; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.1 | onemkl-sycl-blas==2025.3.1 | onemkl-sycl-dft==2025.3.1 | onemkl-sycl-lapack==2025.3.1 | onemkl-sycl-rng==2025.3.1 | onemkl-sycl-sparse==2025.3.1 | dpcpp-cpp-rt==2025.3.2 | intel-opencl-rt==2025.3.2 | mkl==2025.3.1 | intel-openmp==2025.3.2 | tbb==2022.3.1 | tcmlib==1.4.1 | umf==1.0.3 | intel-pti==0.16.0
+      PYTORCH_EXTRA_INSTALL_REQUIREMENTS: intel-cmplr-lib-rt==2025.3.1 | intel-cmplr-lib-ur==2025.3.1 | intel-cmplr-lic-rt==2025.3.1 | intel-sycl-rt==2025.3.1 | oneccl-devel==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | oneccl==2021.17.1; platform_system == 'Linux' and platform_machine == 'x86_64' | impi-rt==2021.17.0; platform_system == 'Linux' and platform_machine == 'x86_64' | onemkl-license==2025.3.0 | onemkl-sycl-blas==2025.3.0 | onemkl-sycl-dft==2025.3.0 | onemkl-sycl-lapack==2025.3.0 | onemkl-sycl-rng==2025.3.0 | onemkl-sycl-sparse==2025.3.0 | dpcpp-cpp-rt==2025.3.1 | intel-opencl-rt==2025.3.1 | mkl==2025.3.0 | intel-openmp==2025.3.1 | tbb==2022.3.0 | tcmlib==1.4.1 | umf==1.0.2 | intel-pti==0.15.0
     steps:
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
@@ -8005,11 +8174,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       - name: Populate binary env
         shell: bash
         run: |
@@ -8027,12 +8198,14 @@ jobs:
           path: "${{ env.PYTORCH_FINAL_PACKAGE_DIR }}"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -8045,7 +8218,7 @@ jobs:
     runs-on: "${{ needs.get-label-type.outputs.label-type }}windows.4xlarge"
     timeout-minutes: 360
     env:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -8103,11 +8276,13 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
+          path: pytorch
           show-progress: false
       - name: Clean PyTorch checkout
         run: |
           # Remove any artifacts from the previous checkouts
           git clean -fxd
+        working-directory: pytorch
       # NOTE: These environment variables are put here so that they can be applied on every job equally
       #       They are also here because setting them at a workflow level doesn't give us access to the
       #       runner.temp variable, which we need.
@@ -8132,12 +8307,14 @@ jobs:
           "${PYTORCH_ROOT}/.circleci/scripts/binary_windows_test.sh"
       - name: Wait until all sessions have drained
         shell: powershell
+        working-directory: pytorch
         if: always()
         timeout-minutes: 120
         run: |
           .github\scripts\wait_for_ssh_to_drain.ps1
       - name: Kill active ssh sessions if still around (Useful if workflow was cancelled)
         shell: powershell
+        working-directory: pytorch
         if: always()
         run: |
           .github\scripts\kill_active_ssh_sessions.ps1
@@ -8148,7 +8325,7 @@ jobs:
       contents: read
     needs: wheel-py3_14t-xpu-test
     with:
-      PYTORCH_ROOT: ${{ github.workspace }}
+      PYTORCH_ROOT: ${{ github.workspace }}/pytorch
       PACKAGE_TYPE: wheel
       # TODO: This is a legacy variable that we eventually want to get rid of in
       #       favor of GPU_ARCH_VERSION
@@ -8158,250 +8335,4 @@ jobs:
       build_name: wheel-py3_14t-xpu
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    uses: ./.github/workflows/_binary-upload.yml
-  libtorch-cpu-shared-with-deps-release-extract:
-    if: ${{ github.repository_owner == 'pytorch' }}
-    needs:
-      - wheel-py3_10-cpu-build
-      - get-label-type
-    runs-on: "${{ needs.get-label-type.outputs.label-type }}linux.4xlarge"
-    timeout-minutes: 60
-    env:
-      DESIRED_CUDA: cpu
-      LIBTORCH_VARIANT: shared-with-deps
-    steps:
-      - name: Checkout PyTorch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          sparse-checkout: .ci/libtorch/
-          show-progress: false
-      - uses: actions/download-artifact@v4.1.7
-        name: Download Wheel Artifact
-        with:
-          name: wheel-py3_10-cpu
-          path: "${{ runner.temp }}/wheel_artifact/"
-      - name: Extract libtorch from wheel
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p "${{ runner.temp }}/libtorch_output"
-          python3 .ci/libtorch/extract_libtorch_from_wheel.py \
-            --wheel-dir "${{ runner.temp }}/wheel_artifact" \
-            --output-dir "${{ runner.temp }}/libtorch_output" \
-            --platform windows \
-            --desired-cuda "$DESIRED_CUDA" \
-            --libtorch-variant "$LIBTORCH_VARIANT"
-      - uses: actions/upload-artifact@v4.4.0
-        if: always()
-        with:
-          name: libtorch-cpu-shared-with-deps-release
-          retention-days: 14
-          if-no-files-found: error
-          path: "${{ runner.temp }}/libtorch_output/"
-  libtorch-cpu-shared-with-deps-release-upload:  # Uploading
-    if: ${{ github.repository_owner == 'pytorch' }}
-    permissions:
-      id-token: write
-      contents: read
-    needs: libtorch-cpu-shared-with-deps-release-extract
-    with:
-      PYTORCH_ROOT: ${{ github.workspace }}
-      PACKAGE_TYPE: libtorch
-      DESIRED_CUDA: cpu
-      GPU_ARCH_TYPE: cpu
-      LIBTORCH_CONFIG: release
-      LIBTORCH_VARIANT: shared-with-deps
-      build_name: libtorch-cpu-shared-with-deps-release
-    secrets:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    uses: ./.github/workflows/_binary-upload.yml
-  libtorch-cuda12_6-shared-with-deps-release-extract:
-    if: ${{ github.repository_owner == 'pytorch' }}
-    needs:
-      - wheel-py3_10-cuda12_6-build
-      - get-label-type
-    runs-on: "${{ needs.get-label-type.outputs.label-type }}linux.4xlarge"
-    timeout-minutes: 60
-    env:
-      DESIRED_CUDA: cu126
-      LIBTORCH_VARIANT: shared-with-deps
-    steps:
-      - name: Checkout PyTorch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          sparse-checkout: .ci/libtorch/
-          show-progress: false
-      - uses: actions/download-artifact@v4.1.7
-        name: Download Wheel Artifact
-        with:
-          name: wheel-py3_10-cuda12_6
-          path: "${{ runner.temp }}/wheel_artifact/"
-      - name: Extract libtorch from wheel
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p "${{ runner.temp }}/libtorch_output"
-          python3 .ci/libtorch/extract_libtorch_from_wheel.py \
-            --wheel-dir "${{ runner.temp }}/wheel_artifact" \
-            --output-dir "${{ runner.temp }}/libtorch_output" \
-            --platform windows \
-            --desired-cuda "$DESIRED_CUDA" \
-            --libtorch-variant "$LIBTORCH_VARIANT"
-      - uses: actions/upload-artifact@v4.4.0
-        if: always()
-        with:
-          name: libtorch-cuda12_6-shared-with-deps-release
-          retention-days: 14
-          if-no-files-found: error
-          path: "${{ runner.temp }}/libtorch_output/"
-  libtorch-cuda12_6-shared-with-deps-release-upload:  # Uploading
-    if: ${{ github.repository_owner == 'pytorch' }}
-    permissions:
-      id-token: write
-      contents: read
-    needs: libtorch-cuda12_6-shared-with-deps-release-extract
-    with:
-      PYTORCH_ROOT: ${{ github.workspace }}
-      PACKAGE_TYPE: libtorch
-      DESIRED_CUDA: cu126
-      GPU_ARCH_VERSION: "12.6"
-      GPU_ARCH_TYPE: cuda
-      LIBTORCH_CONFIG: release
-      LIBTORCH_VARIANT: shared-with-deps
-      build_name: libtorch-cuda12_6-shared-with-deps-release
-    secrets:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    uses: ./.github/workflows/_binary-upload.yml
-  libtorch-cuda12_8-shared-with-deps-release-extract:
-    if: ${{ github.repository_owner == 'pytorch' }}
-    needs:
-      - wheel-py3_10-cuda12_8-build
-      - get-label-type
-    runs-on: "${{ needs.get-label-type.outputs.label-type }}linux.4xlarge"
-    timeout-minutes: 60
-    env:
-      DESIRED_CUDA: cu128
-      LIBTORCH_VARIANT: shared-with-deps
-    steps:
-      - name: Checkout PyTorch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          sparse-checkout: .ci/libtorch/
-          show-progress: false
-      - uses: actions/download-artifact@v4.1.7
-        name: Download Wheel Artifact
-        with:
-          name: wheel-py3_10-cuda12_8
-          path: "${{ runner.temp }}/wheel_artifact/"
-      - name: Extract libtorch from wheel
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p "${{ runner.temp }}/libtorch_output"
-          python3 .ci/libtorch/extract_libtorch_from_wheel.py \
-            --wheel-dir "${{ runner.temp }}/wheel_artifact" \
-            --output-dir "${{ runner.temp }}/libtorch_output" \
-            --platform windows \
-            --desired-cuda "$DESIRED_CUDA" \
-            --libtorch-variant "$LIBTORCH_VARIANT"
-      - uses: actions/upload-artifact@v4.4.0
-        if: always()
-        with:
-          name: libtorch-cuda12_8-shared-with-deps-release
-          retention-days: 14
-          if-no-files-found: error
-          path: "${{ runner.temp }}/libtorch_output/"
-  libtorch-cuda12_8-shared-with-deps-release-upload:  # Uploading
-    if: ${{ github.repository_owner == 'pytorch' }}
-    permissions:
-      id-token: write
-      contents: read
-    needs: libtorch-cuda12_8-shared-with-deps-release-extract
-    with:
-      PYTORCH_ROOT: ${{ github.workspace }}
-      PACKAGE_TYPE: libtorch
-      DESIRED_CUDA: cu128
-      GPU_ARCH_VERSION: "12.8"
-      GPU_ARCH_TYPE: cuda
-      LIBTORCH_CONFIG: release
-      LIBTORCH_VARIANT: shared-with-deps
-      build_name: libtorch-cuda12_8-shared-with-deps-release
-    secrets:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    uses: ./.github/workflows/_binary-upload.yml
-  libtorch-cuda13_0-shared-with-deps-release-extract:
-    if: ${{ github.repository_owner == 'pytorch' }}
-    needs:
-      - wheel-py3_10-cuda13_0-build
-      - get-label-type
-    runs-on: "${{ needs.get-label-type.outputs.label-type }}linux.4xlarge"
-    timeout-minutes: 60
-    env:
-      DESIRED_CUDA: cu130
-      LIBTORCH_VARIANT: shared-with-deps
-    steps:
-      - name: Checkout PyTorch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          sparse-checkout: .ci/libtorch/
-          show-progress: false
-      - uses: actions/download-artifact@v4.1.7
-        name: Download Wheel Artifact
-        with:
-          name: wheel-py3_10-cuda13_0
-          path: "${{ runner.temp }}/wheel_artifact/"
-      - name: Extract libtorch from wheel
-        shell: bash
-        run: |
-          set -eux
-          mkdir -p "${{ runner.temp }}/libtorch_output"
-          python3 .ci/libtorch/extract_libtorch_from_wheel.py \
-            --wheel-dir "${{ runner.temp }}/wheel_artifact" \
-            --output-dir "${{ runner.temp }}/libtorch_output" \
-            --platform windows \
-            --desired-cuda "$DESIRED_CUDA" \
-            --libtorch-variant "$LIBTORCH_VARIANT"
-      - uses: actions/upload-artifact@v4.4.0
-        if: always()
-        with:
-          name: libtorch-cuda13_0-shared-with-deps-release
-          retention-days: 14
-          if-no-files-found: error
-          path: "${{ runner.temp }}/libtorch_output/"
-  libtorch-cuda13_0-shared-with-deps-release-upload:  # Uploading
-    if: ${{ github.repository_owner == 'pytorch' }}
-    permissions:
-      id-token: write
-      contents: read
-    needs: libtorch-cuda13_0-shared-with-deps-release-extract
-    with:
-      PYTORCH_ROOT: ${{ github.workspace }}
-      PACKAGE_TYPE: libtorch
-      DESIRED_CUDA: cu130
-      GPU_ARCH_VERSION: "13.0"
-      GPU_ARCH_TYPE: cuda
-      LIBTORCH_CONFIG: release
-      LIBTORCH_VARIANT: shared-with-deps
-      build_name: libtorch-cuda13_0-shared-with-deps-release
-    secrets:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     uses: ./.github/workflows/_binary-upload.yml

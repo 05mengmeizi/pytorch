@@ -159,8 +159,7 @@ class TestDefaultStager(TestCase):
         stager = DefaultStager(options)
 
         staged_dict = stager.stage(cuda_state_dict)
-        if not isinstance(staged_dict, dict):
-            raise AssertionError(f"Expected dict, got {type(staged_dict)}")
+        assert isinstance(staged_dict, dict)
 
         # Verify tensors are staged (should be moved to CPU)
         self.assertIn("cuda_tensor", staged_dict)

@@ -1,6 +1,6 @@
 import contextlib
 from collections.abc import Generator
-from typing import Any
+from typing import Any, Union
 
 import torch
 from torch._C._functorch import (
@@ -37,4 +37,4 @@ def unwrap_dead_wrappers(args: tuple[Any, ...]) -> tuple[Any, ...]:
     return result
 
 
-argnums_t = int | tuple[int, ...]
+argnums_t = Union[int, tuple[int, ...]]

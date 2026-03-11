@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from typing import Optional, Union
 
 import torch
 
@@ -7,7 +8,7 @@ import torch
 log = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DeviceInfo:
     """
     Theoretical Numbers from data sheet. If two numbers are given, Tensor/Matrix Core vs not,
@@ -18,7 +19,7 @@ class DeviceInfo:
     For example,
     """
 
-    tops: dict[torch.dtype | str, float]
+    tops: dict[Union[torch.dtype, str], float]
     dram_bw_gbs: float
     dram_gb: float
 
@@ -177,7 +178,7 @@ _device_mapping["AMD INSTINCT MI300X"] = _device_mapping["AMD MI300X"]
 _device_mapping["AMD INSTINCT MI210X"] = _device_mapping["AMD MI210X"]
 
 
-def lookup_device_info(name: str) -> DeviceInfo | None:
+def lookup_device_info(name: str) -> Optional[DeviceInfo]:
     """
     Problem: when diffing profiles between amd and nvidia, we don't have access to the device information
     of the other one. Also, since the analysis is static, we should be able to do it on another device unrelated
@@ -188,12 +189,12 @@ def lookup_device_info(name: str) -> DeviceInfo | None:
     return _device_mapping.get(name)
 
 
-def datasheet_tops(dtype: torch.dtype, is_tf32: bool = False) -> float | None:
+def datasheet_tops(dtype: torch.dtype, is_tf32: bool = False) -> Optional[float]:
     """
     Get the theoretical TFLOPS of the device for a given dtype. This can throw an exception if the device
     is not in the datasheet list above.
     """
-    name: str | None = torch.cuda.get_device_name()
+    name: Optional[str] = torch.cuda.get_device_name()
     if name is None:
         log.info("No device found, returning None")
         return None

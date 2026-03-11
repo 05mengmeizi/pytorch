@@ -94,8 +94,7 @@ Reducer::Reducer(
     std::unordered_map<size_t, std::string> param_names,
     int64_t first_bucket_bytes_cap,
     bool skip_all_reduce_unused_params,
-    bool use_python_reducer,
-    std::vector<int64_t> bucket_bytes_cap_list)
+    bool use_python_reducer)
     : params_(std::move(params)),
       process_group_(std::move(process_group)),
       expect_sparse_gradients_(std::move(expect_sparse_gradients)),
@@ -120,8 +119,7 @@ Reducer::Reducer(
       ddp_debug_level_(debug_level()),
       param_names_(std::move(param_names)),
       first_bucket_bytes_cap_(first_bucket_bytes_cap),
-      use_python_reducer_(use_python_reducer),
-      bucket_bytes_cap_list_(std::move(bucket_bytes_cap_list)) {
+      use_python_reducer_(use_python_reducer) {
   C10_LOG_API_USAGE_ONCE("torch.distributed.ddp.reducer");
   TORCH_INTERNAL_ASSERT(!params_.empty(), "Expected at least one parameter.");
 
@@ -1934,19 +1932,9 @@ bool Reducer::rebuild_buckets() {
           params_.size(),
           " versus rebuilt params size of: ",
           rebuilt_param_indices_.size()));
-
-  // Use bucket_bytes_cap_list_ if provided (non-empty),
-  // otherwise fall back to the original logic using first_bucket_bytes_cap_
-  // and bucket_bytes_cap_ to preserve backward compatibility
   std::vector<size_t> bucket_size_limits;
-  if (!bucket_bytes_cap_list_.empty()) {
-    bucket_size_limits.assign(
-        bucket_bytes_cap_list_.begin(), bucket_bytes_cap_list_.end());
-  } else {
-    bucket_size_limits.push_back(first_bucket_bytes_cap_);
-    bucket_size_limits.push_back(bucket_bytes_cap_);
-  }
-
+  bucket_size_limits.push_back(first_bucket_bytes_cap_);
+  bucket_size_limits.push_back(bucket_bytes_cap_);
   auto ddp_set_last_bucket_as_small =
       (getCvarString({"DDP_SET_LAST_BUCKET_CAP"}, "N/A") == "1");
 

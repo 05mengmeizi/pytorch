@@ -129,8 +129,7 @@ class ProfilerTree:
                 elif prune_level == KEEP_ELLIPSES:
                     out.append((depth, "..."))
                 else:
-                    if prune_level != PRUNE_ALL:
-                        raise AssertionError(f"Expected PRUNE_ALL, got {prune_level}")
+                    assert prune_level == PRUNE_ALL
 
             return out
 
@@ -227,8 +226,7 @@ class ProfilerTree:
             if parent:
                 parent_name = to_string(parent.extra_fields.callsite)
                 caller_name = to_string(extra_fields.caller)
-                if parent_name != caller_name:
-                    raise AssertionError(f"{parent_name} vs. {caller_name}")
+                assert parent_name == caller_name, f"{parent_name} vs. {caller_name}"
 
 
 @unittest.skipIf(IS_ARM64, "Not working on ARM")

@@ -4,7 +4,7 @@ import io
 import math
 import weakref
 from collections.abc import Callable, Mapping, MutableMapping
-from typing import Any, cast, NamedTuple, TYPE_CHECKING
+from typing import Any, cast, NamedTuple, TYPE_CHECKING, Union
 
 import torch
 import torch.cuda._pin_memory_utils as pin_memory_utils
@@ -731,7 +731,7 @@ def _distribute_state_dict(
 # These APIs are from torch.distributed.checkpoint.
 # TODO: We should consolidate the code here as some not all modules can depend on
 # DCP.
-PATH_ITEM = str | int
+PATH_ITEM = Union[str, int]
 OBJ_PATH = tuple[PATH_ITEM, ...]
 FLATTEN_MAPPING = dict[str, OBJ_PATH]
 STATE_DICT_TYPE = dict[str, Any]

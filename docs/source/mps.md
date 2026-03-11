@@ -13,7 +13,6 @@
     :toctree: generated
     :nosignatures:
 
-    is_available
     device_count
     synchronize
     get_rng_state

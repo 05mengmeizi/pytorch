@@ -413,6 +413,7 @@ class LambdaLR(LRScheduler):
 
         for idx, fn in enumerate(self.lr_lambdas):
             if not isinstance(fn, types.FunctionType):
+                # pyrefly: ignore [unsupported-operation]
                 state_dict["lr_lambdas"][idx] = fn.__dict__.copy()
 
         return state_dict
@@ -532,6 +533,7 @@ class MultiplicativeLR(LRScheduler):
 
         for idx, fn in enumerate(self.lr_lambdas):
             if not isinstance(fn, types.FunctionType):
+                # pyrefly: ignore [unsupported-operation]
                 state_dict["lr_lambdas"][idx] = fn.__dict__.copy()
 
         return state_dict
@@ -1666,6 +1668,7 @@ class ReduceLROnPlateau(LRScheduler):
             self.default_min_lr = None
             self.min_lrs = list(min_lr)
         else:
+            # pyrefly: ignore [bad-assignment]
             self.default_min_lr = min_lr
             self.min_lrs = [min_lr] * len(optimizer.param_groups)
 
@@ -1725,6 +1728,7 @@ class ReduceLROnPlateau(LRScheduler):
                     "of the `optimizer` param groups."
                 )
             else:
+                # pyrefly: ignore [bad-assignment]
                 self.min_lrs = [self.default_min_lr] * len(self.optimizer.param_groups)
 
         for i, param_group in enumerate(self.optimizer.param_groups):

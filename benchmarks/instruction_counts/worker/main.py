@@ -24,7 +24,7 @@ import pickle
 import sys
 import timeit
 import traceback
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Union
 
 
 if TYPE_CHECKING:
@@ -117,17 +117,13 @@ class WorkerUnpickler(pickle.Unpickler):
 
     def load_input(self) -> WorkerTimerArgs:
         result = self.load()
-        if not isinstance(result, WorkerTimerArgs):
-            raise AssertionError(f"expected WorkerTimerArgs, got {type(result)}")
+        assert isinstance(result, WorkerTimerArgs)
         return result
 
-    def load_output(self) -> WorkerTimerArgs | WorkerOutput | WorkerFailure:
+    def load_output(self) -> Union[WorkerTimerArgs, WorkerOutput, WorkerFailure]:
         """Convenience method for type safe loading."""
         result = self.load()
-        if not isinstance(result, (WorkerTimerArgs, WorkerOutput, WorkerFailure)):
-            raise AssertionError(
-                f"expected WorkerTimerArgs, WorkerOutput, or WorkerFailure, got {type(result)}"
-            )
+        assert isinstance(result, (WorkerTimerArgs, WorkerOutput, WorkerFailure))
         return result
 
 
@@ -163,14 +159,11 @@ def _run(timer_args: WorkerTimerArgs) -> WorkerOutput:
 
 
 def main(communication_file: str) -> None:
-    result: WorkerOutput | WorkerFailure
+    result: Union[WorkerOutput, WorkerFailure]
     try:
         with open(communication_file, "rb") as f:
             timer_args: WorkerTimerArgs = WorkerUnpickler(f).load_input()
-            if not isinstance(timer_args, WorkerTimerArgs):
-                raise AssertionError(
-                    f"expected WorkerTimerArgs, got {type(timer_args)}"
-                )
+            assert isinstance(timer_args, WorkerTimerArgs)
         result = _run(timer_args)
 
     except KeyboardInterrupt:

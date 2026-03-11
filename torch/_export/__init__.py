@@ -80,14 +80,14 @@ def aot_compile_warning():
 def aot_compile(
     f: Callable,
     args: tuple[Any, ...],
-    kwargs: dict[str, Any] | None = None,
+    kwargs: Optional[dict[str, Any]] = None,
     *,
-    dynamic_shapes: dict[str, Any] | None = None,
-    options: dict[str, Any] | None = None,
+    dynamic_shapes: Optional[dict[str, Any]] = None,
+    options: Optional[dict[str, Any]] = None,
     remove_runtime_assertions: bool = False,
     disable_constraint_solver: bool = False,
     same_signature: bool = True,
-) -> list[Any] | str:
+) -> Union[list[Any], str]:
     """
     Note: this function is not stable yet
 
@@ -150,8 +150,7 @@ def aot_compile(
     with torch.no_grad():
         so_path = torch._inductor.aot_compile(gm, args, kwargs, options=options)  # type: ignore[arg-type]
 
-    if not isinstance(so_path, (str, list)):
-        raise AssertionError(f"expected str or list, got {type(so_path)}")
+    assert isinstance(so_path, (str, list))
     return so_path
 
 def aot_load(so_path: str, device: str) -> Callable:

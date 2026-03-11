@@ -4,7 +4,7 @@ import os
 import tempfile
 import textwrap
 from functools import lru_cache
-from typing import Any, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 from torch._dynamo.exc import BackendCompilerFailed, ShortenTraceback
 
@@ -62,17 +62,11 @@ class MissingOperatorWithDecomp(OperatorIssue):
 
 class LoweringException(OperatorIssue):
     def __init__(
-        self,
-        exc: Exception,
-        target: Any,
-        args: list[Any],
-        kwargs: dict[str, Any],
-        stack_trace: str | None = None,
+        self, exc: Exception, target: Any, args: list[Any], kwargs: dict[str, Any]
     ) -> None:
-        msg = f"{type(exc).__name__}: {exc}\n{self.operator_str(target, args, kwargs)}"
-        if stack_trace:
-            msg += f"{msg}\nFound from : \n {stack_trace}"
-        super().__init__(msg)
+        super().__init__(
+            f"{type(exc).__name__}: {exc}\n{self.operator_str(target, args, kwargs)}"
+        )
 
 
 class SubgraphLoweringException(RuntimeError):
@@ -126,7 +120,7 @@ class CUDACompileError(CppCompileError):
 
 
 class TritonMissing(ShortenTraceback):
-    def __init__(self, first_useful_frame: types.FrameType | None) -> None:
+    def __init__(self, first_useful_frame: Optional[types.FrameType]) -> None:
         super().__init__(
             "Cannot find a working triton installation. "
             "Either the package is not installed or it is too old. "
@@ -140,7 +134,7 @@ class GPUTooOldForTriton(ShortenTraceback):
         self,
         # pyrefly: ignore [not-a-type]
         device_props: _CudaDeviceProperties,
-        first_useful_frame: types.FrameType | None,
+        first_useful_frame: Optional[types.FrameType],
     ) -> None:
         super().__init__(
             f"Found {device_props.name} which is too old to be supported by the triton GPU compiler, "
@@ -156,7 +150,7 @@ class InductorError(BackendCompilerFailed):
     def __init__(
         self,
         inner_exception: Exception,
-        first_useful_frame: types.FrameType | None,
+        first_useful_frame: Optional[types.FrameType],
     ) -> None:
         self.inner_exception = inner_exception
         ShortenTraceback.__init__(

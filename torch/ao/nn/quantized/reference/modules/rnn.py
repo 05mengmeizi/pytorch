@@ -663,6 +663,7 @@ class LSTM(RNNBase):
         if isinstance(orig_input, PackedSequence):
             output_packed = PackedSequence(
                 output,
+                # pyrefly: ignore [bad-argument-type]
                 batch_sizes,
                 sorted_indices,
                 unsorted_indices,
@@ -824,6 +825,7 @@ class GRU(RNNBase):
         if isinstance(orig_input, PackedSequence):
             output_packed = PackedSequence(
                 output,
+                # pyrefly: ignore [bad-argument-type]
                 batch_sizes,
                 sorted_indices,
                 unsorted_indices,

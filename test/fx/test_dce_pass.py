@@ -1,6 +1,7 @@
 # Owner(s): ["module: fx"]
 import copy
 import unittest
+from typing import Optional
 
 import torch
 import torch.fx
@@ -41,7 +42,7 @@ class TestDCE(TestCase):
         self,
         m: torch.nn.Module,
         expect_dce_changes: bool,
-        modules_to_be_leafs: set[type] | None = None,
+        modules_to_be_leafs: Optional[set[type]] = None,
         custom: bool = False,
     ):
         class TestTracer(torch.fx.Tracer):

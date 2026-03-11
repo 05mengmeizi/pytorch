@@ -161,7 +161,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             def backward(ctx, grad_out):
                 return grad_out
 
-        @torch.compile(backend="eager")
+        @torch.compile
         def f(x: torch.Tensor):
             try:
                 with torch.autocast(device_type="cpu", dtype=None):
@@ -175,11 +175,11 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
 
     @make_dynamo_test
     def test_isinstance_CustomException(self):
-        assert isinstance(CustomException, type)  # noqa: S101
-        assert not isinstance(CustomException(), type)  # noqa: S101
+        assert isinstance(CustomException, type)
+        assert not isinstance(CustomException(), type)
         C = CustomExceptionWithInstanceCheck
-        assert isinstance(C, C)  # noqa: S101
-        assert isinstance(C(), C)  # noqa: S101
+        assert isinstance(C, C)
+        assert isinstance(C(), C)
 
     @make_dynamo_test
     def test_propagate_exception_inside_ctx_manager(self):
@@ -206,7 +206,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                 z = 1
             except IndexError:
                 z = 2
-            assert z == 1  # noqa: S101
+            assert z == 1
 
     def test_exception_else(self):
         def gn(x):
@@ -281,11 +281,11 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             with ctx():
                 raise e
         except Exception as exc:
-            assert isinstance(exc, a)  # noqa: S101
-            assert isinstance(exc.__context__, b)  # noqa: S101
-            assert isinstance(exc.__context__.__context__, c)  # noqa: S101
-            assert isinstance(exc.__context__.__context__.__context__, d)  # noqa: S101
-            assert isinstance(exc.__context__.__context__.__context__.__context__, e)  # noqa: S101
+            assert isinstance(exc, a)
+            assert isinstance(exc.__context__, b)
+            assert isinstance(exc.__context__.__context__, c)
+            assert isinstance(exc.__context__.__context__.__context__, d)
+            assert isinstance(exc.__context__.__context__.__context__.__context__, e)
 
     # TODO(anijain2305) - does not work with fullgraph=True
     def test_exception_with_another_exception2(self):
@@ -563,25 +563,6 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         res = opt_fn(x)
         self.assertEqual(ref, res)
 
-    def test_tensor_attribute_error_in_try_except(self):
-        class M(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.scale = torch.nn.Parameter(torch.tensor([2.0]))
-
-            def forward(self, x):
-                try:
-                    return x.this_attribute_does_not_exist
-                except AttributeError:
-                    return x * self.scale
-
-        m = M()
-        opt_m = torch.compile(m, backend="eager")
-        x = torch.randn(4, 4)
-        ref = m(x)
-        res = opt_m(x)
-        self.assertEqual(ref, res)
-
     def test_raise_from_None(self):
         # Inspired from os.environ
         class MyMapping:
@@ -626,8 +607,8 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         try:
             fn()
         except TypeError as e:
-            assert e.__cause__ is None  # noqa: S101
-            assert e.__suppress_context__ is True  # noqa: S101
+            assert e.__cause__ is None
+            assert e.__suppress_context__ is True
 
     @make_dynamo_test
     def test_raise_from_other(self):
@@ -640,8 +621,8 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         try:
             fn()
         except TypeError as e:
-            assert isinstance(e.__cause__, ValueError)  # noqa: S101
-            assert e.__suppress_context__ is True  # noqa: S101
+            assert isinstance(e.__cause__, ValueError)
+            assert e.__suppress_context__ is True
 
     @make_dynamo_test
     def test_reraise_first_exc(self):
@@ -659,7 +640,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             fn()
         except ZeroDivisionError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     @make_dynamo_test
     def test_ensure_exception_is_active_after_try_except_block(self):
@@ -675,7 +656,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                 raise
         except ZeroDivisionError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     @make_dynamo_test
     def test_ensure_exception_is_active_inside_try_except_block(self):
@@ -687,11 +668,11 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                     try:
                         raise exc
                     except exc as e:
-                        assert isinstance(e.__context__, ZeroDivisionError)  # noqa: S101
+                        assert isinstance(e.__context__, ZeroDivisionError)
                 raise
         except ZeroDivisionError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     @make_dynamo_test
     def test_handle_all_exceptions(self):
@@ -710,7 +691,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             gen.throw(ValueError)
         except TypeError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     @make_dynamo_test
     def test_reraise(self):
@@ -721,7 +702,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                 raise
         except ValueError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     @make_dynamo_test
     def test_raise_finally_simple(self):
@@ -738,7 +719,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             fn()
         except TypeError:
             pass
-        assert sys.exc_info()[0] is None  # noqa: S101
+        assert sys.exc_info()[0] is None
 
     def test_reconstruct___context__(self):
         @torch.compile(backend="eager", fullgraph=True)
@@ -875,9 +856,9 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         try:
             fn()
         except TypeError as e:
-            assert isinstance(e.__context__, ex)  # noqa: S101
-            assert e.__cause__ is None  # noqa: S101
-            assert e.__suppress_context__ is True  # noqa: S101
+            assert isinstance(e.__context__, ex)
+            assert e.__cause__ is None
+            assert e.__suppress_context__ is True
 
     @parametrize(
         "ex",
@@ -899,13 +880,13 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
             fn()
         except TypeError as e:
             z = 1
-            assert e.args == (  # noqa: S101
+            assert e.args == (
                 "exception cause must be None or derive from BaseException",
             )
         except Exception:
             raise AssertionError from None
 
-        assert z == 1  # noqa: S101
+        assert z == 1
 
     def test_user_defined_exception_variable(self):
         def fn(t):
@@ -921,7 +902,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                 if type(cls) is type:
                     t = t + 1
                 z = 2
-            assert z == 2  # noqa: S101
+            assert z == 2
             return t.sin()
 
         t = torch.randn(2)
@@ -939,7 +920,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
                 z = 1
             except CustomExceptionWithArgs:
                 z = 2
-            assert z == 2  # noqa: S101
+            assert z == 2
 
         t = torch.randn(2)
         fn(t)
@@ -951,14 +932,14 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         except TypeError as e:
             exc = e
 
-        assert exc.__context__ is None  # noqa: S101
+        assert exc.__context__ is None
 
         try:
             raise ValueError
         except ValueError as e:
             exc2 = e
 
-        assert exc2.__context__ is None  # noqa: S101
+        assert exc2.__context__ is None
 
     def test_exception_kwargs(self):
         @torch.compile(backend="eager", fullgraph=True)
@@ -989,7 +970,7 @@ class ExceptionTests(torch._dynamo.test_case.TestCase):
         # doesn't suppress it, the error message should point to the original raise
         # location, not the context manager cleanup code.
         def g():
-            assert False  # noqa: B011, S101
+            assert False  # noqa: B011
 
         @torch.compile(backend="eager", fullgraph=True)
         def f(x):

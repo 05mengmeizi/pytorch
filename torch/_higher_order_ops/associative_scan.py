@@ -18,8 +18,8 @@ from torch._higher_order_ops.utils import (
     first_slice_copy_with_grad,
     materialize_as_graph,
     reenter_make_fx,
-    save_values_for_backward,
-    saved_values,
+    save_tensors_and_symints_for_backward,
+    saved_tensors_and_symints,
     split_into_chunks,
     unique_graph_id,
     validate_subgraph_args_types,
@@ -37,10 +37,9 @@ aten = torch._ops.ops.aten
 
 
 def wrap_combine_fn_flat(*args, combine_fn, spec, num_leaves):
-    if len(args) != 2 * num_leaves:
-        raise AssertionError(
-            f"Combine_fn received wrong number of arguments, expected {2 * num_leaves}, but got {len(args)}"
-        )
+    assert len(args) == 2 * num_leaves, (
+        f"Combin_fn received wrong number of arguments, expected {2 * num_leaves}, but got {len(args)}"
+    )
     lhs = pytree.tree_unflatten(args[:num_leaves], spec)
     rhs = pytree.tree_unflatten(args[num_leaves:], spec)
     return combine_fn(lhs, rhs)
@@ -87,10 +86,9 @@ class AssociativeScanOp(HigherOrderOperator):
         # the additional_inputs being a list. See https://github.com/pytorch/pytorch/issues/145785
         # Once this issue is resolved, the assertion should only allow tuples
         # and the tuple cast should be removed
-        if not isinstance(additional_inputs, (tuple, list)):
-            raise AssertionError(
-                f"additional_inputs must be a tuple or list, got {type(additional_inputs)}"
-            )
+        assert isinstance(additional_inputs, (tuple, list)), (
+            "additional_inputs must be a tuple."
+        )
         additional_inputs = (
             tuple(additional_inputs)
             if isinstance(additional_inputs, list)
@@ -158,8 +156,7 @@ def associative_scan(
     Performs an inclusive scan with an associative combine function.
 
     .. warning::
-
-        ``torch.associative_scan`` is a prototype feature in PyTorch. It currently
+        `torch.associative_scan` is a prototype feature in PyTorch. It currently
         does not support autograd and you may run into miscompiles.
         Read more about feature classification at:
         https://pytorch.org/blog/pytorch-feature-classification-changes/#prototype
@@ -426,21 +423,15 @@ def trace_associative_scan(
     outputs = None
     for node in combine_graph.graph.nodes:
         if node.op == "output":
-            if outputs is not None:
-                raise AssertionError("found multiple output nodes in combine_graph")
-            if len(node.args) != 1:
-                raise AssertionError(
-                    f"expected output node to have 1 arg, got {len(node.args)}"
-                )
+            assert outputs is None
+            assert len(node.args) == 1
             outputs = node.args[0]
 
-    if outputs is None:
-        raise AssertionError("no output node found in combine_graph")
+    assert outputs is not None
     outputs = pytree.tree_leaves(outputs)
-    if len(outputs) != len(xs):
-        raise AssertionError(
-            f"expected combine_fn to return {len(xs)} results but got {len(outputs)}"
-        )
+    assert len(outputs) == len(xs), (
+        f"expected combine_fn to return {len(xs)} results but got {len(outputs)}"
+    )
 
     xs_fake_tensors: list[torch.Tensor | torch.SymInt | int] = [
         first_slice_copy(x) for x in xs
@@ -686,7 +677,7 @@ class AssociativeScanAutogradOp(torch.autograd.Function):
         with torch._C._AutoDispatchBelowAutograd():
             # 1.) Compute the forward output of the associative_scan
             ys = associative_scan_op(combine_fn, xs, additional_inputs)
-            save_values_for_backward(ctx, list(operands) + list(ys))
+            save_tensors_and_symints_for_backward(ctx, list(operands) + list(ys))
 
         return (*ys,)
 
@@ -708,7 +699,7 @@ class AssociativeScanAutogradOp(torch.autograd.Function):
         num_additional_inputs = ctx._num_additional_inputs
 
         # Extract the inputs to the forward path and outputs from the forward path
-        flat_args = saved_values(ctx)
+        flat_args = saved_tensors_and_symints(ctx)
         xs, additional_inputs, outs = split_into_chunks(
             flat_args, [num_xs, num_additional_inputs, num_xs]
         )

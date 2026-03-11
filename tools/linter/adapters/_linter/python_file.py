@@ -5,6 +5,7 @@ from functools import cached_property
 from pathlib import Path
 from tokenize import generate_tokens, TokenInfo
 from typing import TYPE_CHECKING
+from typing_extensions import Self
 
 from . import is_empty, NO_TOKEN, ParseError, ROOT
 from .sets import LineWithSets
@@ -12,7 +13,6 @@ from .sets import LineWithSets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from typing_extensions import Self
 
     from .block import Block
 
@@ -54,8 +54,7 @@ class PythonFile:
 
     @cached_property
     def omitted(self) -> OmittedLines:
-        if self.linter_name is None:
-            raise AssertionError("linter_name is None")
+        assert self.linter_name is not None
         return OmittedLines(self.lines, self.linter_name)
 
     @cached_property

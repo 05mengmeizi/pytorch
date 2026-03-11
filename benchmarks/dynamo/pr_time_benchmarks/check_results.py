@@ -84,8 +84,7 @@ def main():
                 noise_margin=float(row[3]),
             )
             key = (entry.benchmark_name, entry.metric_name)
-            if key in expected_data:
-                raise AssertionError(f"Duplicate entry for {key}")
+            assert key not in expected_data, f"Duplicate entry for {key}"
             expected_data[key] = entry
 
     # Read result data file.
@@ -101,8 +100,7 @@ def main():
             )
 
             key = (entry.benchmark_name, entry.metric_name)
-            if key in result_data:
-                raise AssertionError(f"Duplicate entry for {key}")
+            assert key not in result_data, f"Duplicate entry for {key}"
             result_data[key] = entry
 
     fail = False
