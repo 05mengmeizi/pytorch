@@ -5308,6 +5308,33 @@ def get_fn_id(fn_var: Any) -> int | None:
     return None
 
 
+def get_user_module_hash(
+    fn_var: Any,
+    fn_args_vt: Sequence[VariableTracker],
+) -> tuple[int, int] | None:
+    """Check if the module defines __dynamo_module_hash__ and return (fn_id, hash).
+
+    When present, this hash is used as the cache key instead of automatic
+    guard-based reuse, giving users an escape hatch to assert structural
+    equivalence across modules.
+    """
+    mod = None
+    if isinstance(fn_var, UnspecializedNNModuleVariable):
+        mod = fn_var.value
+    elif fn_args_vt and isinstance(fn_args_vt[0], UnspecializedNNModuleVariable):
+        mod = fn_args_vt[0].value
+
+    if mod is None or not hasattr(mod, "__dynamo_module_hash__"):
+        return None
+
+    fn_id = get_fn_id(fn_var)
+    if fn_id is None:
+        return None
+
+    user_hash = mod.__dynamo_module_hash__()
+    return (fn_id, user_hash)
+
+
 def has_mutated_vars(
     tx: "InstructionTranslator",
     traced_sources: OrderedSet[Any],
@@ -5701,8 +5728,9 @@ def save_reuse_entry(
     p_args: tuple[Any, ...],
     body_r: Any,
     example_value: Any,
-    condition: "InvokeSubgraphReuseCondition",
+    condition: "InvokeSubgraphReuseCondition | None" = None,
     max_reuse_entries: int = 8,
+    user_hash_key: tuple[int, int] | None = None,
 ) -> None:
     """Save a traced subgraph into the reuse cache for future cache hits.
 
@@ -5710,6 +5738,9 @@ def save_reuse_entry(
     lifted arg maps back to user inputs or captured variables), output
     metadata, and arg sources. On a future cache hit, stamp_out_subgraph
     uses this entry to emit a new invoke_subgraph call without re-tracing.
+
+    When user_hash_key is provided, saves to the user-hash cache instead
+    of the guard-based cache, bypassing all automatic guard checks.
     """
     from torch._guards import InvokeSubgraphCache, InvokeSubgraphReuseEntry
 
@@ -5750,7 +5781,14 @@ def save_reuse_entry(
         # rewrite captured variable sources for the current invocation.
         arg_sources=fingerprint.arg_sources,
     )
-    invoke_subgraph_cache.add_reuse_entry(fn_id, condition, entry, max_reuse_entries)
+
+    if user_hash_key is not None:
+        invoke_subgraph_cache.add_user_hash_entry(*user_hash_key, entry)
+    else:
+        assert condition is not None
+        invoke_subgraph_cache.add_reuse_entry(
+            fn_id, condition, entry, max_reuse_entries
+        )
 
 
 def stamp_out_subgraph(
@@ -6103,6 +6141,7 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
         kwargs: dict[str, VariableTracker],
     ) -> VariableTracker:
         from torch._dynamo.utils import dynamo_timed
+        from torch._guards import InvokeSubgraphCache
 
         fn_var = args[0]
         fn_args_vt = args[1:]
@@ -6127,10 +6166,32 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
         # and enable if request arises.
         reuse = not tx.output.export
 
+        # User-defined hash: bypass all automatic guard checks when
+        # the module defines __dynamo_module_hash__.
+        user_hash_key = get_user_module_hash(fn_var, fn_args_vt) if reuse else None
+
+        if user_hash_key is not None:
+            invoke_subgraph_cache = (
+                tx.output.tracing_context.hop_dispatch_set_cache.get_cache(
+                    torch._higher_order_ops.invoke_subgraph
+                )
+            )
+            if isinstance(invoke_subgraph_cache, InvokeSubgraphCache):
+                cached = invoke_subgraph_cache.find_user_hash_entry(*user_hash_key)
+                if cached is not None:
+                    hc_log.debug(
+                        "subgraph_reuse: user hash hit for '%s', reusing subgraph '%s'",
+                        fn_var,
+                        cached.body_name,
+                    )
+                    fingerprint = build_input_fingerprint(tx, fn_args_vt, kwargs)
+                    with dynamo_timed("invoke_subgraph_reuse_stamp_out"):
+                        return stamp_out_subgraph(tx, fingerprint, cached)
+
         # Reuse lookup: check fn_id first (cheap) to avoid the
         # expensive pytree flatten in build_input_fingerprint on the
         # first call when there's nothing in the cache yet.
-        if reuse and has_reuse_entries(tx, fn_var):
+        if user_hash_key is None and reuse and has_reuse_entries(tx, fn_var):
             with dynamo_timed("invoke_subgraph_reuse_lookup"):
                 fingerprint = build_input_fingerprint(tx, fn_args_vt, kwargs)
                 match = find_reuse_match(
@@ -6185,29 +6246,45 @@ class InvokeSubgraphHigherOrderVariable(WrapHigherOrderVariable):
         # Subgraph reuse: save entry for future cache hits
         if reuse:
             fingerprint = build_input_fingerprint(tx, fn_args_vt, kwargs)
-            traced_sources = tracing_info.traced_sources
-            if is_reuse_eligible(tx, body_r, fingerprint, tracing_info, traced_sources):
-                condition = build_reuse_condition(
+            if user_hash_key is not None:
+                save_reuse_entry(
                     tx,
-                    fingerprint.flat_vts,
-                    fingerprint.arg_sources,
-                    traced_sources,
-                    fingerprint.treespec,
+                    fn_var,
+                    fingerprint,
+                    body_name,
+                    body_gmod,
+                    config,
+                    p_args,
+                    body_r,
+                    example_value,
+                    user_hash_key=user_hash_key,
                 )
-                if condition is not None:
-                    save_reuse_entry(
+            else:
+                traced_sources = tracing_info.traced_sources
+                if is_reuse_eligible(
+                    tx, body_r, fingerprint, tracing_info, traced_sources
+                ):
+                    condition = build_reuse_condition(
                         tx,
-                        fn_var,
-                        fingerprint,
-                        body_name,
-                        body_gmod,
-                        config,
-                        p_args,
-                        body_r,
-                        example_value,
-                        condition,
-                        max_reuse_entries,
+                        fingerprint.flat_vts,
+                        fingerprint.arg_sources,
+                        traced_sources,
+                        fingerprint.treespec,
                     )
+                    if condition is not None:
+                        save_reuse_entry(
+                            tx,
+                            fn_var,
+                            fingerprint,
+                            body_name,
+                            body_gmod,
+                            config,
+                            p_args,
+                            body_r,
+                            example_value,
+                            condition,
+                            max_reuse_entries,
+                        )
 
         return _call_function_with_auto_output_flattening(  # type: ignore[return-value]
             tx,

@@ -831,6 +831,10 @@ class InvokeSubgraphCache(HopSubgraphCache):
         self.subgraph_reuse_cache: dict[
             int, list[tuple[InvokeSubgraphReuseCondition, InvokeSubgraphReuseEntry]]
         ] = defaultdict(list)
+        # User-hash cache: (fn_id, user_hash) → InvokeSubgraphReuseEntry.
+        # When a module defines __dynamo_module_hash__, this cache is used
+        # instead of subgraph_reuse_cache, bypassing all automatic guard checks.
+        self.user_hash_cache: dict[tuple[int, int], InvokeSubgraphReuseEntry] = {}
 
     def add_dynamo_installed_submodule(self, fn_id: int, identifier: str) -> None:
         self.dynamo_installed_submodules[fn_id].append(identifier)
@@ -919,6 +923,21 @@ class InvokeSubgraphCache(HopSubgraphCache):
                     entries.insert(0, entries.pop(i))
                 return entry
         return None
+
+    def add_user_hash_entry(
+        self,
+        fn_id: int,
+        user_hash: int,
+        entry: InvokeSubgraphReuseEntry,
+    ) -> None:
+        self.user_hash_cache[(fn_id, user_hash)] = entry
+
+    def find_user_hash_entry(
+        self,
+        fn_id: int,
+        user_hash: int,
+    ) -> InvokeSubgraphReuseEntry | None:
+        return self.user_hash_cache.get((fn_id, user_hash), None)
 
 
 class HopDispatchSetCache:

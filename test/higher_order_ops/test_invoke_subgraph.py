@@ -3646,6 +3646,157 @@ class GraphModule(torch.nn.Module):
 
 
 @skipIfTorchDynamo("Not a torch._dynamo test")
+class TestInvokeSubgraphUserHash(TestCase):
+    def test_subgraph_reuse_user_hash_basic(self):
+        """Module with __dynamo_module_hash__ triggers user-hash reuse."""
+
+        class MyBlock(torch.nn.Module):
+            def __init__(self, scale):
+                super().__init__()
+                self.linear = torch.nn.Linear(8, 8, bias=False)
+                torch.nn.init.constant_(self.linear.weight, scale)
+
+            def __dynamo_module_hash__(self):
+                return 42
+
+        @nested_compile_region()
+        def apply_block(mod, x):
+            return mod.linear(x).relu()
+
+        block1 = MyBlock(1.0)
+        block2 = MyBlock(2.0)
+
+        def fn(x):
+            a = apply_block(block1, x)
+            b = apply_block(block2, x)
+            return a + b
+
+        x = torch.randn(4, 8, requires_grad=True)
+        ref = fn(x)
+
+        x_clone = x.detach().clone().requires_grad_(True)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            res = torch.compile(fn, backend="aot_eager", fullgraph=True)(x_clone)
+
+        # Same user hash → only one trace, second call reuses
+        self.assertEqual(call_count, 1)
+
+        ref.sum().backward()
+        res.sum().backward()
+
+        self.assertEqual(ref, res)
+        self.assertEqual(x.grad, x_clone.grad)
+
+    def test_subgraph_reuse_user_hash_different_hash(self):
+        """Different __dynamo_module_hash__ values → separate traces."""
+
+        class MyBlock(torch.nn.Module):
+            def __init__(self, scale, hash_val):
+                super().__init__()
+                self.linear = torch.nn.Linear(8, 8, bias=False)
+                torch.nn.init.constant_(self.linear.weight, scale)
+                self._hash_val = hash_val
+
+            def __dynamo_module_hash__(self):
+                return self._hash_val
+
+        @nested_compile_region()
+        def apply_block(mod, x):
+            return mod.linear(x).relu()
+
+        block1 = MyBlock(1.0, 100)
+        block2 = MyBlock(2.0, 200)
+
+        def fn(x):
+            a = apply_block(block1, x)
+            b = apply_block(block2, x)
+            return a + b
+
+        x = torch.randn(4, 8)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            torch.compile(fn, backend="aot_eager", fullgraph=True)(x)
+
+        # Different hash values → two separate traces
+        self.assertEqual(call_count, 2)
+
+    def test_subgraph_reuse_user_hash_skips_guards(self):
+        """User hash bypasses automatic guard checks that would otherwise fail.
+
+        We simulate a scenario where the captured attribute differs between
+        modules (which would cause automatic reuse to fail due to guard
+        mismatch), but user hash says "trust me, reuse anyway".
+        """
+
+        class MyBlock(torch.nn.Module):
+            def __init__(self, c):
+                super().__init__()
+                self.linear = torch.nn.Linear(8, 8, bias=False)
+                self.c = c
+
+            def __dynamo_module_hash__(self):
+                return 99
+
+        @nested_compile_region()
+        def apply_block(mod, x):
+            return mod.linear(x) * mod.c
+
+        block1 = MyBlock(5)
+        block2 = MyBlock(10)
+
+        def fn(x):
+            a = apply_block(block1, x)
+            b = apply_block(block2, x)
+            return a + b
+
+        x = torch.randn(4, 8)
+
+        call_count = 0
+        orig_speculate = torch._dynamo.variables.higher_order_ops.speculate_subgraph_with_auto_output_flattening
+
+        def counting_speculate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return orig_speculate(*args, **kwargs)
+
+        with mock.patch.object(
+            torch._dynamo.variables.higher_order_ops,
+            "speculate_subgraph_with_auto_output_flattening",
+            counting_speculate,
+        ):
+            torch.compile(fn, backend="aot_eager", fullgraph=True)(x)
+
+        # Even though block1.c != block2.c (which would fail automatic guards),
+        # user hash matches so reuse fires — only one trace.
+        self.assertEqual(call_count, 1)
+
+
+@skipIfTorchDynamo("Not a torch._dynamo test")
 @parameterized_class(
     [
         {"strict": False},
