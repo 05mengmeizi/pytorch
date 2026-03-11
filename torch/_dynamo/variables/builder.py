@@ -3419,7 +3419,8 @@ def handle_traced_output(
         ]
         or (
             # TODO: this is a little sus, because we didn't check what the self is
-            proxy.node.op == "call_method" and proxy.node.target == "bit_length"
+            proxy.node.op == "call_method"
+            and proxy.node.target in ("bit_length", "__index__")
         )
     ):
         set_example_value(proxy.node, example_value)
@@ -3470,6 +3471,7 @@ def handle_traced_output(
             fake_script_obj,
         )
     else:
+        breakpoint()
         unimplemented(
             gb_type="torch.* op returned non-Tensor",
             context=f"example_value type: {typestr(example_value)}; op: {proxy.node.op}; target: {proxy.node.target}",
