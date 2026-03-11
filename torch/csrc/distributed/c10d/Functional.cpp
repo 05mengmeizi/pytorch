@@ -186,7 +186,8 @@ at::Tensor all_gather_into_tensor(
   TORCH_CHECK(input.is_contiguous());
   auto real_input = input.is_complex() ? at::view_as_real(input) : input;
   std::vector<at::Tensor> inputs{real_input};
-  auto output = all_gather_into_tensor_coalesced(inputs, group_size, std::move(group))[0];
+  auto output =
+      all_gather_into_tensor_coalesced(inputs, group_size, std::move(group))[0];
   return input.is_complex() ? at::view_as_complex(output) : output;
 }
 
@@ -225,7 +226,8 @@ at::Tensor& all_gather_into_tensor_out(
     const std::string& group_name,
     at::Tensor& output) {
   auto group = c10d::resolve_process_group(std::move(group_name));
-  return all_gather_into_tensor_out(input, group_size, std::move(group), output);
+  return all_gather_into_tensor_out(
+      input, group_size, std::move(group), output);
 }
 
 std::vector<at::Tensor> reduce_scatter_tensor_coalesced(
@@ -285,7 +287,8 @@ at::Tensor reduce_scatter_tensor(
     int64_t group_size,
     std::string group_name) {
   auto group = c10d::resolve_process_group(std::move(group_name));
-  return reduce_scatter_tensor(input, std::move(reduce_op), group_size, std::move(group));
+  return reduce_scatter_tensor(
+      input, std::move(reduce_op), group_size, std::move(group));
 }
 
 at::Tensor reduce_scatter_tensor(
@@ -330,12 +333,16 @@ at::Tensor reduce_scatter_tensor_out(
     auto real_output = at::view_as_real(output);
     std::vector<at::Tensor> outputs{std::move(real_output)};
     return at::view_as_complex(reduce_scatter_tensor_coalesced_out(
-        inputs, std::move(reduce_op), group_size, std::move(group), outputs)[0]);
+        inputs,
+        std::move(reduce_op),
+        group_size,
+        std::move(group),
+        outputs)[0]);
   }
   std::vector<at::Tensor> inputs{std::move(input)};
   std::vector<at::Tensor> outputs{std::move(output)};
   return reduce_scatter_tensor_coalesced_out(
-    inputs, std::move(reduce_op), group_size, std::move(group), outputs)[0];
+      inputs, std::move(reduce_op), group_size, std::move(group), outputs)[0];
 }
 
 at::Tensor all_to_all_single(

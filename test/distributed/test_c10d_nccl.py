@@ -4957,6 +4957,11 @@ class LargeCommTest(test_c10d_common.AbstractLargeCommTest, MultiProcessTestCase
     def test_new_group_local_sync_duplicated_pg(self):
         self._test_new_group_local_sync_duplicate_pg(backend="nccl")
 
+    @requires_nccl()
+    @skip_if_lt_x_gpu(4)
+    def test_new_group_ordered(self):
+        self._test_new_group_ordered(backend="nccl")
+
     def _init_two_pg2_subgroups(self, world_size: int = 4):
         if world_size != 4:
             raise NotImplementedError(
@@ -5341,7 +5346,7 @@ class LargeCommTest(test_c10d_common.AbstractLargeCommTest, MultiProcessTestCase
         self.assertEqual(scatter_object_output_list, expected)
 
     @requires_nccl()
-    @skip_if_lt_x_gpu(2)
+    @skip_if_lt_x_gpu(4)
     @parametrize("float8_dtype", [torch.float8_e4m3fn, torch.float8_e5m2])
     def test_broadcast_float8(self, float8_dtype):
         device = torch.device(f"cuda:{self.rank}")

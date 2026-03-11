@@ -9,7 +9,6 @@ from typing_extensions import deprecated
 import torch
 import torch.distributed as dist
 import torch.distributed.distributed_c10d as c10d
-from torch._C._distributed_c10d import _resolve_process_group
 from torch._utils import _maybe_view_chunk_cat
 from torch.distributed.device_mesh import DeviceMesh
 from torch.fx.experimental.proxy_tensor import get_proxy_mode
@@ -1216,8 +1215,7 @@ def _resolve_group(
             raise AssertionError(
                 "Only 1D mesh is supported, pass in (DeviceMesh, int) together if mesh > 1D"
             )
-        group_name = group._dim_group_names[0]
-        return _resolve_process_group(group_name)
+        return group._dim_group_names[0]
     elif isinstance(group, tuple):
         if (
             len(group) == 2
@@ -1226,8 +1224,7 @@ def _resolve_group(
         ):
             dmesh = group[0]
             dim = group[1]
-            group_name = dmesh._dim_group_names[dim]
-            return _resolve_process_group(group_name)
+            return dmesh._dim_group_names[dim]
         else:
             raise ValueError(
                 f"Invalid tuple for group must be (DeviceMesh, int). Instead got {(type(group[0]), type(group[1]))}"
@@ -1241,12 +1238,11 @@ def _resolve_group(
                 FutureWarning,
                 stacklevel=3,
             )
-        group_name = c10d._resolve_group_name_by_ranks_and_tag(
+        return c10d._resolve_group_name_by_ranks_and_tag(
             # pyrefly: ignore [redundant-cast]
             cast(list[int], group),
             tag,
         )
-        return _resolve_process_group(group_name)
     else:
         raise ValueError(f"Unsupported group type: {type(group)}, {group}")
 
