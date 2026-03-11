@@ -38,7 +38,6 @@ from torch.testing._internal.common_utils import dtype_name, freeze_rng_state, r
     IS_PPC, \
     parametrize as parametrize_test, subtest, \
     skipIfTorchDynamo, gcIfJetson, set_default_dtype, ACCELERATOR_TYPE
-
 from torch.testing._internal.common_cuda import TEST_CUDA, TEST_MULTIGPU, TEST_CUDNN, \
     _get_torch_rocm_version
 from torch.testing._internal.common_nn import NNTestCase, NewModuleTest, CriterionTest, \
@@ -60,7 +59,6 @@ from torch.types import _TensorOrTensors
 from torch.testing._internal.common_mkldnn import reduced_f32_on_and_off
 
 AMPERE_OR_ROCM = TEST_WITH_ROCM or torch.cuda.is_tf32_supported()
-
 
 if TEST_WITH_ROCM:
     os.environ["PYTORCH_MIOPEN_SUGGEST_NHWC"] = "1"
@@ -6947,6 +6945,9 @@ tensor(..., device='meta', size=(1,), requires_grad=True)""")
 
     @set_default_dtype(torch.double)
     def test_interpolate(self, device):
+        if device == 'cpu' and os.environ.get("PYTORCH_TEST_WITH_DYNAMO") == "1":
+            raise SkipTest("RuntimeError when making fake tensor call")
+
         def _test_interpolate_non_integer_size_warning(in_t, out_size, dim, **kwargs):
             test_sizes = [float(out_size),
                           torch.tensor(out_size, dtype=torch.float)]

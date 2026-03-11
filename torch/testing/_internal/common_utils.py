@@ -1536,6 +1536,7 @@ ACCELERATOR_TYPE = LazyVal(lambda: (
     if (acc := torch.accelerator.current_accelerator(check_available=True))
     else None
 ))
+
 def split_if_not_empty(x: str):
     return x.split(",") if len(x) != 0 else []
 
