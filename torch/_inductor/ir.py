@@ -5305,9 +5305,6 @@ class TemplateBuffer(OperationBuffer):
     def get_allowed_prologue_inps(self) -> OrderedSet[str]:
         return self.allowed_prologue_inps
 
-    def get_outputs(self) -> list[Buffer]:
-        return [self, *self.mutation_outputs]
-
 
 class TritonTemplateBuffer(TemplateBuffer):
     def __init__(
@@ -5337,6 +5334,9 @@ class TritonTemplateBuffer(TemplateBuffer):
 
         self.subgraph_inps: list[IRNode | sympy.Expr | None] | None = None
         self.subgraph_outs: list[IRNode | None] | None = None
+
+    def get_outputs(self) -> list[Buffer]:
+        return [self, *self.mutation_outputs]
 
     @cache_on_self_and_args("TritonTemplateBuffer")
     def get_free_symbol_uses(
@@ -5580,6 +5580,7 @@ class CppTemplateBuffer(TemplateBuffer):
         super().__init__(layout, inputs, make_kernel_render)
         self.template = template
         self.choice = choice
+        self.outputs: list[Buffer] | None = None
 
     def get_layout(self) -> Layout:
         if isinstance(self.layout, MultiOutputLayout):
@@ -8858,9 +8859,7 @@ class MultiOutput(ExternKernel):
             assert len(rindex) == 0
             return ops.store(name, indexer(index), "fake")
 
-        write_rw = dependencies.extract_read_writes(
-            dummy, self.get_size(), ()
-        )
+        write_rw = dependencies.extract_read_writes(dummy, self.get_size(), ())
         return dependencies.ReadWrites(
             reads=reads,
             writes=write_rw.writes,
