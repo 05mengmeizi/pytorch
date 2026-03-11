@@ -7708,12 +7708,8 @@ class Scheduler:
             return None
 
     def generate_stream_ctx_enter(self, node: BaseSchedulerNode) -> None:
-        """Code-gen to enter the Stream context assigned to node.
-
-        NOTE: self.node_to_stream is populated in _populate_stream_assignments (PR #174223).
-        """
+        """Code-gen to enter the Stream context assigned to node."""
         assert not isinstance(node, NopKernelSchedulerNode)
-        # pyrefly: ignore[missing-attribute]
         node_stream = self.node_to_stream[node]
         self._current_stream_ctx = V.graph.wrapper_code.codegen_cuda_stream_enter(
             stream_idx=node_stream,
@@ -7731,15 +7727,11 @@ class Scheduler:
         Stream context switching is only generated if ``node``'s assigned stream is different from
         the previous node's stream. NopKernelSchedulerNodes have stream=None and inherit the
         enclosing stream context (or do nothing if no context is active yet).
-
-        NOTE: self.node_to_stream is populated in _populate_stream_assignments (PR #174223).
         """
-        # pyrefly: ignore[missing-attribute]
         assert node in self.node_to_stream
         stream = (
             None
             if isinstance(node, NopKernelSchedulerNode)
-            # pyrefly: ignore[missing-attribute]
             else self.node_to_stream[node]
         )
         if self.current_stream_idx == stream:
