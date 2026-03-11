@@ -169,7 +169,7 @@ class FunctionTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
     def test_inline_lru_cache_fn_with_default_args(a, b):
         return inline_lru_cache_fn_with_default_args(a, 2, b)
 
-    def test_lru_cache_warning_issued_during_tracing(self):
+    def test_lru_cache_no_warning_issued_during_tracing(self):
         import warnings
         from functools import lru_cache
 
@@ -187,9 +187,7 @@ class FunctionTests(torch._dynamo.test_case.TestCaseWithNestedGraphBreaks):
                 "Dynamo detected a call to a `functools.lru_cache`-wrapped"
                 in warning_message
             ):
-                break
-        else:
-            self.assertTrue(False, "Expected warning about lru_cache not found")
+                self.assertTrue(False, "Expected no warning about lru_cache found")
 
     @make_test
     def test_add(a, b):
@@ -4309,6 +4307,231 @@ class GraphModule(torch.nn.Module):
         x = torch.randn(2)
         opt_fn = torch.compile(fn, backend="eager", fullgraph=True)
         self.assertEqual(fn(x), opt_fn(x))
+
+    @unittest.expectedFailure
+    def test_functools_lru_cache_hits(self):
+        cache_misses = {"count": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_scale(a, b=1):
+            cache_misses["count"] += 1
+            return a * 10 + b
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(x):
+            return x + cached_scale(3, b=2)
+
+        x = torch.randn(2)
+        fn(x)
+        fn(x)
+        self.assertEqual(cache_misses["count"], 1)
+
+    @unittest.expectedFailure
+    def test_functools_lru_cache_default_and_kwarg_calls(self):
+        cache_misses = {"count": 0}
+
+        @functools.lru_cache(maxsize=8)
+        def cached_bias(a, b=0):
+            cache_misses["count"] += 1
+            return a + b
+
+        @torch.compile(backend="eager", fullgraph=True)
+        def fn(x):
+            return x + cached_bias(4) + cached_bias(4, b=0)
+
+        x = torch.randn(3)
+        fn(x)
+        fn(x)
+        self.assertEqual(cache_misses["count"], 1)
+
+    def test_functools_lru_cache_cache_misses(self):
+        cache_info = {"count": 0}
+
+        @functools.lru_cache(maxsize=2)
+        def cached_mul(a, b):
+            cache_info["count"] += 1
+            return a * b
+
+        def fn(x):
+            result = cached_mul(2, 3)
+            result += cached_mul(3, 4)
+            result += cached_mul(2, 3)
+            return x + result
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_info["count"], 2)
+
+    def test_functools_lru_cache_multiple_functions(self):
+        cache_calls = {"fn1": 0, "fn2": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_add(a, b):
+            cache_calls["fn1"] += 1
+            return a + b
+
+        @functools.lru_cache(maxsize=4)
+        def cached_sub(a, b):
+            cache_calls["fn2"] += 1
+            return a - b
+
+        def fn(x):
+            result = cached_add(5, 3)
+            result += cached_sub(10, 2)
+            result += cached_add(5, 3)
+            result += cached_sub(10, 2)
+            return x + result
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_calls["fn1"], 1)
+        self.assertEqual(cache_calls["fn2"], 1)
+
+    def test_functools_lru_cache_all_misses(self):
+        cache_count = {"count": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_div(a, b):
+            cache_count["count"] += 1
+            return a / b
+
+        def fn(x):
+            result = cached_div(6, 2)
+            result += cached_div(8, 2)
+            result += cached_div(10, 2)
+            return x + result
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_count["count"], 3)
+
+    def test_functools_lru_cache_with_tuple_args(self):
+        cache_count = {"count": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_tuple_op(a, b):
+            cache_count["count"] += 1
+            return a + b
+
+        def fn(x):
+            cached_tuple_op((1, 2), (3, 4))
+            cached_tuple_op((1, 2), (3, 4))
+            return x
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_count["count"], 1)
+
+    def test_functools_lru_cache_repeated_calls(self):
+        cache_info = {"count": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_pow(a, b):
+            cache_info["count"] += 1
+            return a**b
+
+        def fn(x):
+            for _ in range(3):
+                cached_pow(2, 3)
+            return x
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_info["count"], 1)
+
+    def test_functools_lru_cache_with_none_arg(self):
+        cache_count = {"count": 0}
+
+        @functools.lru_cache(maxsize=4)
+        def cached_with_none(a, b=None):
+            cache_count["count"] += 1
+            return a if b is None else a + b
+
+        def fn(x):
+            result = cached_with_none(5)
+            result += cached_with_none(5)
+            result += cached_with_none(6)
+            return x + result
+
+        x = torch.randn(2)
+        self.assertEqual(fn(x), fn(x))
+        self.assertEqual(cache_count["count"], 2)
+
+    def test_functools_lru_cache_pure_function_no_warning(self):
+        """Test that pure lru_cache functions don't emit warning"""
+        import warnings
+
+        @functools.lru_cache(maxsize=128)
+        def pure_cached_fn(x):
+            # Pure function - just computation, no side effects
+            return x * 2 + 1
+
+        def fn(x):
+            result = pure_cached_fn(5)
+            return x + result
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            torch.compile(fn, backend="eager")(torch.tensor(10.0))
+
+            lru_warnings = [
+                warning for warning in w if "lru_cache" in str(warning.message).lower()
+            ]
+            # Pure functions should not emit warning
+            self.assertEqual(len(lru_warnings), 0)
+
+    def test_functools_lru_cache_impure_function_warns(self):
+        """Test that impure lru_cache functions still emit warning"""
+        import warnings
+
+        side_effect_counter = {"count": 0}
+
+        @functools.lru_cache(maxsize=128)
+        def impure_cached_fn(x):
+            # Impure function - has side effect (dict mutation)
+            side_effect_counter["count"] += 1
+            return x * 2
+
+        def fn(x):
+            result = impure_cached_fn(5)
+            return x + result
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            torch.compile(fn, backend="eager")(torch.tensor(10.0))
+
+            lru_warnings = [
+                warning for warning in w if "lru_cache" in str(warning.message).lower()
+            ]
+            # Impure functions should emit warning
+            self.assertGreater(len(lru_warnings), 0)
+
+    def test_functools_lru_cache_impure_function_warns_preexisting_side_effect(self):
+        """Test that warning fires even when the mutated variable was already in the side effects table."""
+        import warnings
+
+        side_effect_counter = {"count": 0}
+
+        @functools.lru_cache(maxsize=128)
+        def impure_cached_fn(x):
+            side_effect_counter["count"] += 1
+            return x * 2
+
+        def fn(x):
+            # Mutate side_effect_counter BEFORE calling the lru_cache function,
+            # so it's already in the side effects table when impure_cached_fn runs.
+            side_effect_counter["count"] += 1
+            result = impure_cached_fn(5)
+            return x + result
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            torch.compile(fn, backend="eager")(torch.tensor(10.0))
+
+            lru_warnings = [
+                warning for warning in w if "lru_cache" in str(warning.message).lower()
+            ]
+            self.assertGreater(len(lru_warnings), 0)
 
     def test_torch_get_device_module(self):
         def f1():

@@ -143,6 +143,7 @@ class SideEffects:
         self.store_attr_mutations = store_attr_mutations or {}
         self.mutation_user_stacks = mutation_user_stacks or {}
         self.keepalive = keepalive or []
+        self.version_tag: int = 0
         self.save_for_backward = save_for_backward or []
         self.tensor_hooks = tensor_hooks or {}
         # Used by MappingProxyVariable to graph break in case of any mutated
@@ -323,6 +324,8 @@ class SideEffects:
         if item not in self.store_attr_mutations:
             self.store_attr_mutations[item] = {}
         self.store_attr_mutations[item][name] = value
+        if isinstance(item.mutation_type, AttributeMutationExisting):
+            self.version_tag += 1
         # Capture user stack for this mutation
         self._capture_user_stack(item)
         item_source = getattr(item, "source", None)
@@ -736,6 +739,7 @@ class SideEffects:
 
         if isinstance(var.mutation_type, ValueMutationExisting):
             var.mutation_type.is_modified = True
+            self.version_tag += 1
         if var.source is not None:
             self.mutated_sources.add(var.source)
         if (
