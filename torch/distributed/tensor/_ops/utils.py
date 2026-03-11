@@ -367,6 +367,7 @@ def expand_to_full_mesh_op_strategy(
         [list[DTensorSpec], DTensorSpec | tuple[DTensorSpec | None, ...]], bool
     ]
     | None = None,
+    cross_mesh_indices: list[int] | None = None,
 ) -> OpStrategy:
     """
     Convenience function to allow writing a sharding strategy considering only a single mesh dimension,
@@ -476,6 +477,25 @@ def expand_to_full_mesh_op_strategy(
                 f"input_specs({len(input_specs)}) != strategies({len(input_args_strategy)}: "
                 f"{len(args_strategy)} args + {len(kwargs_strategy)} kwargs)"
             )
+
+        # For cross-mesh inputs, preserve the original mesh and assert Replicate placements
+        if cross_mesh_indices is not None:
+            for idx in cross_mesh_indices:
+                if idx < len(input_args_strategy):
+                    cross_mesh_input = input_args_strategy[idx]
+                    original_spec = cross_mesh_input.strategies[0].output_spec
+                    if original_spec.mesh != mesh:
+                        assert all(
+                            p == Replicate() for p in original_spec.placements
+                        ), (
+                            f"Cross-mesh input at index {idx} must be Replicate, "
+                            f"but got {original_spec.placements}"
+                        )
+                        input_specs[idx] = DTensorSpec(
+                            mesh=original_spec.mesh,
+                            placements=original_spec.placements,
+                            tensor_meta=original_spec.tensor_meta,
+                        )
         self_spec = input_args_strategy[0].strategies[0].output_spec
 
         redistribute_input = self_spec.placements != input_specs[0].placements
