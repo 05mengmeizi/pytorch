@@ -660,7 +660,7 @@ class FSDPModule:
                 ``"NCCL"``. Currently, only ``"NCCL"`` is supported.
         """
         state = self._get_fsdp_state()
-        if (fsdp_param_group := state._fsdp_param_group) is not None:
+        for fsdp_param_group in state._fsdp_param_groups:
             fsdp_param_group.set_symm_mem(backend)
 
     def _set_unshard_async_op(self, async_op: bool):
