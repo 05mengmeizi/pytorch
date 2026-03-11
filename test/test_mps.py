@@ -13073,6 +13073,11 @@ class TestErrorInputs(TestCase):
             torch.nn.functional.embedding_bag(inputs, weight, offsets)
             torch.mps.synchronize()
 
+    @parametrize("dtype", MPS_UNSUPPORTED_TYPES)
+    def test_unsupported_type(self, dtype):
+        with self.assertRaises(TypeError):
+            torch.empty(128, device='mps', dtype=dtype)
+
 
 class TestComplex(TestCase):
     def test_tensor_scalar_binops(self):
