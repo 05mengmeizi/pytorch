@@ -204,7 +204,7 @@ from .dicts import (
     OrderedSetVariable,
     SetVariable,
 )
-from .distributed import DeviceMeshVariable, WorldMetaClassVariable
+from .distributed import WorldMetaClassVariable
 from .functions import (
     BuiltinMethodVariable,
     CollectionsNamedTupleFunction,
@@ -1229,10 +1229,6 @@ class VariableBuilder:
             return DispatchKeySetVariable(value)
         elif WorldMetaClassVariable.is_group_member_type(value):
             return WorldMetaClassVariable(value, source=self.source)
-        elif DeviceMeshVariable.is_device_mesh(value):
-            # TODO: see if we need to add custom guard instead of a simple ID_MATCH
-            self.install_guards(GuardBuilder.EQUALS_MATCH)
-            return DeviceMeshVariable(value, source=self.source)
         elif value is OrderedSet:
             self.install_guards(GuardBuilder.ID_MATCH)
             return OrderedSetClassVariable()
@@ -1525,6 +1521,12 @@ class VariableBuilder:
                 ScriptObjectQualifiedNameSource,
             )
 
+            # Unwrap FakeScriptObject to the underlying real object so the
+            # rest of this branch (guards, graph inputs, etc.) operates on
+            # the real opaque object type.
+            if isinstance(value, torch._library.fake_class_registry.FakeScriptObject):
+                value = value.real_obj
+
             # type: ignore[arg-type]
             if torch._library.fake_class_registry.tracing_with_real(value):
                 proxy = self.tx.output.root_tracer.create_graph_input(
@@ -1587,6 +1589,16 @@ class VariableBuilder:
             )
             if is_opaque_value_type(type(value)) and not should_hoist(type(value)):
                 proxy = value
+
+            elif config.install_free_tensors and (
+                is_from_global_source(self.source)
+                or is_from_nonlocal_source(self.source)
+                or is_from_unspecialized_nn_module_source(self.source)
+            ):
+                return self.tx.output.register_attr_or_module(
+                    value, self.name, source=self.source
+                )
+
             else:
                 proxy = self.tx.output.root_tracer.create_graph_input(
                     re.sub(r"[^a-zA-Z0-9]+", "_", self.name),
@@ -2000,6 +2012,19 @@ class VariableBuilder:
             self.install_guards(GuardBuilder.TYPE_MATCH)
             self.source = AttrSource(self.source, "_orig_mod")
             return self.wrap_module(value._orig_mod)
+
+        if type(value) is torch.jit._script.RecursiveScriptModule:
+            unimplemented(
+                gb_type="torch.jit.script/freeze modules unsupported",
+                context=str(value),
+                explanation="Dynamo does not support tracing into torch.jit.script or "
+                "torch.jit.freeze modules because they execute in the TorchScript "
+                "runtime, not Python. Replace the ScriptModule submodule with the "
+                "original eager nn.Module.",
+                hints=[
+                    *graph_break_hints.FUNDAMENTAL,
+                ],
+            )
 
         if (
             isinstance(value, (torch.nn.RNN, torch.nn.GRU, torch.nn.LSTM))
@@ -3950,6 +3975,7 @@ def _automatic_dynamic(
         tensor_source=source,
         shape_env_to_source_to_symbol_cache=shape_env_to_source_to_symbol_cache,
         shape_ids=getattr(e, "_dynamo_shape_ids", None),
+        unbacked_bounds=getattr(e, "_dynamo_unbacked_bounds", None),
     )
 
 
@@ -4034,8 +4060,16 @@ def _wrap_to_fake_tensor_and_record_impl(
             and isinstance(fake_e, FakeTensor)
             and (sym_val := fake_e.item_memo) is not None
         ):
+            # Match the peephole in FakeTensorConverter.from_real_tensor that
+            # strips FloatTensorSource before calling create_symbol.  Without
+            # this, the tracked fake source name won't match source_to_var and
+            # produce_guards_verbose will report "(unknown source)".
+            if isinstance(source, FloatTensorSource):
+                item_source = source.base
+            else:
+                item_source = CallMethodItemSource(source)
             tx.output.tracked_fakes.append(
-                TrackedFake(sym_val, CallMethodItemSource(source), symbolic_context)
+                TrackedFake(sym_val, item_source, symbolic_context)
             )
 
         if is_traceable_wrapper_subclass(fake_e):
@@ -4200,8 +4234,6 @@ class SourcelessBuilder:
             return SourcelessGraphModuleVariable(value)
         elif isinstance(value, torch.utils._pytree.TreeSpec):
             return UserDefinedObjectVariable(value)
-        elif DeviceMeshVariable.is_device_mesh(value):
-            return DeviceMeshVariable(value)
         elif isinstance(value, re.Pattern):
             return ConstantLikeVariable(value)
         elif isinstance(value, torch._dynamo.variables.lazy.LazySymNodeFormatString):

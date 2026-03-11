@@ -856,13 +856,27 @@ def foreach_group_loop(groups, num_outputs, apply_fn, realize_outputs):
     return outputs
 
 
-def to_dtype(x: TensorBox, dtype: torch.dtype, copy: bool = False):
+def to_dtype(
+    x: TensorBox, dtype: torch.dtype, copy: bool = False, use_compute_types: bool = True
+):
     src_dtype = x.get_dtype()
     if src_dtype == dtype:
         return clone(x) if copy else x
 
     def _to_dtype(x):
-        return ops.to_dtype(x, dtype, src_dtype=src_dtype)
+        result = ops.to_dtype(
+            x,
+            dtype,
+            src_dtype=src_dtype,
+            use_compute_types=use_compute_types,
+        )
+        low_pr_fp = (torch.bfloat16, torch.float16)
+        if not use_compute_types and dtype in low_pr_fp:
+            # Upcast back to compute type so fused consumers see a compute-type
+            # value. Without this, a raw low-precision value gets a redundant
+            # downcast from the consumer's input emulation.
+            result = ops.to_dtype(result, dtype)
+        return result
 
     return make_pointwise(_to_dtype, override_return_dtype=dtype)(x)
 
@@ -925,7 +939,13 @@ def _convert_element_type(x: TensorBox, dtype: torch.dtype):
             return fallback_handler(
                 prims.convert_element_type.default, add_to_fallback_set=False
             )(x, dtype)
-    return to_dtype(x, dtype, copy=True)
+    src_dtype = x.get_dtype()
+    low_pr_fp = (torch.bfloat16, torch.float16)
+    use_compute_types = not (
+        config.emulate_precision_casts
+        and (src_dtype in low_pr_fp or dtype in low_pr_fp)
+    )
+    return to_dtype(x, dtype, copy=True, use_compute_types=use_compute_types)
 
 
 def to_dtype_bitcast(x: TensorBox, dtype: torch.dtype, *, copy=False):
@@ -2908,6 +2928,12 @@ def constrain_to_fx_strides(fx_node, *args, **kwargs):
     return args, kwargs
 
 
+# native_dropout uses empty_like(input) internally, so bernoulli_ consumes
+# RNG values in the input's stride order. Constrain input strides to match
+# the FX graph (i.e. eager) so the dropout mask is identical.
+add_layout_constraint(aten.native_dropout.default, constrain_to_fx_strides)
+
+
 def sdpa_constraint(fx_node, *args, **kwargs):
     """Apply stride constraints to SDPA inputs, ensuring dense last dimension."""
 
@@ -4219,6 +4245,7 @@ def index_put_impl_(self, indices, values, accumulate, check, may_realize=False)
         None,
         check=check,
     )
+
     values = expand(values, expected_vals_size)
     # all guards are set above during broadcast_tensors and expand
 
