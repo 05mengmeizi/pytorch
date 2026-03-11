@@ -5005,9 +5005,8 @@ class FrameLocalsGuardAccessor : public GuardAccessor {
         _is_immutable_object(is_immutable_object(example_value)),
         _is_tensor(THPVariable_Check(example_value.ptr())),
         _tensor_requires_grad(
-            _is_tensor
-                ? THPVariable_Unpack(example_value.ptr()).requires_grad()
-                : false) {}
+            _is_tensor ? THPVariable_Unpack(example_value.ptr()).requires_grad()
+                       : false) {}
 
   // Run as a result of calling run_root_guard_manager/check_nopybind
   // NB: Intentional duplication between check_nopybind and
@@ -5159,9 +5158,8 @@ class DictGetItemGuardAccessor : public GuardAccessor {
         _is_immutable_object(is_immutable_object(example_value)),
         _is_tensor(THPVariable_Check(example_value.ptr())),
         _tensor_requires_grad(
-            _is_tensor
-                ? THPVariable_Unpack(example_value.ptr()).requires_grad()
-                : false) {}
+            _is_tensor ? THPVariable_Unpack(example_value.ptr()).requires_grad()
+                       : false) {}
 
   // NB: Intentional duplication between check_nopybind and
   // check_verbose_nopybind.
