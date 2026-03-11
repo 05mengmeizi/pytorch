@@ -1832,6 +1832,7 @@ class TestTorchDeviceType(TestCase):
                 torch.device(device).type == 'cuda' and dtype.is_floating_point)
 
     @skipIfMPS
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_nondeterministic_alert_bincount(self, device):
         a = torch.tensor([], device=device, dtype=torch.long)
         weights = torch.tensor([], device=device)
@@ -7160,6 +7161,7 @@ class TestTorch(TestCase):
                 t = torch.tensor([1., float('nan')], dtype=dtype)
                 self.assertFalse(torch.equal(t, t))
 
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_element_size(self):
         byte = torch.ByteStorage().element_size()
         char = torch.CharStorage().element_size()
@@ -7741,6 +7743,7 @@ class TestTorch(TestCase):
             with self.assertRaisesRegex(RuntimeError, r'Not available for CUDA storage'):
                 storage_class._new_shared_filename(0, 0, 0)
 
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_storage_casts(self):
         storage = torch.IntStorage([-1, 0, 1, 2, 3, 4])
         self.assertEqual(storage.size(), 6)
