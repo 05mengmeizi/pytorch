@@ -76,6 +76,7 @@ class _SingleDimStrategyInfo:
     func: _SingleDimStrategyFunc
     allow_unbacked_sharding: bool | None = field(default=None)
     allow_uneven_sharding: bool = field(default=False)
+    cross_mesh_indices: list[int] | None = field(default=None)
 
     # Delegate to func so this can be used interchangeably with a raw
     # _SingleDimStrategyFunc (e.g. in tests that call strategy functions directly).
@@ -461,6 +462,7 @@ def _expand_single_dim_strategy_to_mesh(
                 input_index=prepared_strategy.num_outputs,
                 allow_unbacked_sharding=prepared_strategy.allow_unbacked_sharding,
                 allow_uneven_sharding=prepared_strategy.allow_uneven_sharding,
+                cross_mesh_indices=strategy_info.cross_mesh_indices,
             )
 
         return expanded_strategy
@@ -482,14 +484,12 @@ def _expand_single_dim_strategy_to_mesh(
             # Unhashable types (SymInts), skip caching
             return _create_expanded_strategy_impl(op_schema, output_tensor_meta)
 
-    def _translate_foreach_op_schema(
-        op_schema: OpSchema, output_tensor_meta: Sequence[TensorMeta], index: int
-    ) -> tuple[OpSchema, TensorMeta]:
-        """Translate foreach op to per-element version of schema."""
-        op_parts = str(op_schema.op).split(".")
-        base_op_name = op_parts[-2].replace("_foreach_", "")
-        foreach_variant = op_parts[-1]
-
+    def _translate_list_op_schema(
+        op_schema: OpSchema,
+        output_tensor_meta: Sequence[TensorMeta] | None,
+        index: int,
+    ) -> tuple[OpSchema, TensorMeta | None]:
+        """Translate list op (foreach/fused/amp_foreach) to per-element version of schema."""
         # select per-element inputs, outputs
         target_args, target_kwargs = tree_map_only(
             TupleStrategy,
@@ -497,36 +497,77 @@ def _expand_single_dim_strategy_to_mesh(
             (op_schema.args_schema, op_schema.kwargs_schema),
             is_leaf=lambda x: isinstance(x, TupleStrategy),
         )
-        target_output_meta = output_tensor_meta[index]
-
-        # figure out target op variant
-        variant_map = {
-            "List": "Tensor",
-            "ScalarList": "Scalar",
-            "Scalar": "Scalar",
-            "Tensor": "Tensor",
-            "default": "default",
-        }
-        target_variant = (
-            "default"
-            if len(target_args) == 1
-            else variant_map.get(foreach_variant, "default")
+        # For inplace ops (e.g. _foreach_add_.List) output_tensor_meta is None
+        # because these ops return void; use None so _PreparedSingleDimStrategy
+        # correctly sets num_outputs=0.
+        target_output_meta = (
+            output_tensor_meta[index] if output_tensor_meta is not None else None
         )
 
-        # this seems a bit messy
-        base_op = getattr(torch.ops.aten, base_op_name)
-        target_op = (
-            getattr(base_op, target_variant)
-            if target_variant in base_op.overloads()
-            else base_op.default
-        )
+        op_str = str(op_schema.op)
 
-        op_schema = OpSchema(
+        # For standard _foreach_ ops (not _amp_foreach_), translate to the
+        # corresponding base aten op (e.g. _foreach_add -> add).
+        if "_foreach_" in op_str and "_amp_foreach_" not in op_str:
+            op_parts = op_str.split(".")
+            base_op_name = op_parts[-2].replace("_foreach_", "")
+            foreach_variant = op_parts[-1]
+
+            # figure out target op variant
+            variant_map = {
+                "List": "Tensor",
+                "ScalarList": "Scalar",
+                "Scalar": "Scalar",
+                "Tensor": "Tensor",
+                "default": "default",
+            }
+            target_variant = (
+                "default"
+                if len(target_args) == 1
+                else variant_map.get(foreach_variant, "default")
+            )
+
+            # this seems a bit messy
+            base_op = getattr(torch.ops.aten, base_op_name)
+            target_op = (
+                getattr(base_op, target_variant)
+                if target_variant in base_op.overloads()
+                else base_op.default
+            )
+            target_kwargs = op_schema.kwargs_schema
+        else:
+            # For _fused_* and _amp_foreach_* ops, there is no corresponding
+            # base aten op.  Keep the original op; the strategy function only
+            # looks at tensor shapes so the op identity does not matter.
+            target_op = op_schema.op
+            target_kwargs = {}
+
+        per_element_schema = OpSchema(
             target_op,  # type: ignore[arg-type]
             args_schema=tuple(target_args),
-            kwargs_schema=op_schema.kwargs_schema,
+            kwargs_schema=target_kwargs,
         )
-        return op_schema, target_output_meta
+        return per_element_schema, target_output_meta
+
+    def _get_per_element_mesh(per_index_schema: OpSchema) -> DeviceMesh:
+        """Get the mesh for a per-element schema, falling back to the outer mesh.
+
+        Validates that all tensor inputs within the element share the same mesh.
+        Different elements may live on different meshes (e.g. fused optimizers
+        across parameter groups), but inputs within one element must agree.
+        """
+        elem_mesh: DeviceMesh | None = None
+        for arg in per_index_schema.args_schema:
+            if isinstance(arg, OpStrategy):
+                if elem_mesh is None:
+                    elem_mesh = arg.mesh
+                elif arg.mesh is not elem_mesh:
+                    raise RuntimeError(
+                        f"Sharding propagation failed for {op_schema.op}: "
+                        f"inputs within the same list element are on different "
+                        f"device meshes ({elem_mesh} vs {arg.mesh})."
+                    )
+        return elem_mesh if elem_mesh is not None else mesh
 
     def expanded_foreach_strategy(
         op: OpOverload, args_schema: ArgsType, kwargs_schema: KwargsType
@@ -546,24 +587,51 @@ def _expand_single_dim_strategy_to_mesh(
 
         child_strategies: list[StrategyType] = []
         for tensorlist_i in range(tensorlist_len):
-            per_index_schema, per_index_output_meta = _translate_foreach_op_schema(
+            per_index_schema, per_index_output_meta = _translate_list_op_schema(
                 op_schema,
                 output_tensor_meta,  # type: ignore[arg-type]
                 tensorlist_i,
             )
-            per_index_strategy = _create_expanded_strategy(
-                per_index_schema, per_index_output_meta
-            )
-            child_strategies.append(
-                per_index_strategy(
-                    op, per_index_schema.args_meta, per_index_schema.kwargs_meta
+
+            # Each list element may live on a different mesh (e.g. fused
+            # optimizers across parameter groups). Detect the per-element
+            # mesh and rebuild the strategy expansion if it differs from the
+            # outer mesh.
+            elem_mesh = _get_per_element_mesh(per_index_schema)
+            if elem_mesh is not mesh:
+                # Build a fresh expansion closure over the per-element mesh.
+                elem_expanded = _expand_single_dim_strategy_to_mesh(
+                    elem_mesh,
+                    per_index_schema,
+                    strategy_info,
+                    per_index_output_meta,
                 )
-            )
+                child_strategies.append(
+                    elem_expanded(
+                        op,
+                        per_index_schema.args_meta,
+                        per_index_schema.kwargs_meta,
+                    )
+                )
+            else:
+                per_index_strategy = _create_expanded_strategy(
+                    per_index_schema, per_index_output_meta
+                )
+                child_strategies.append(
+                    per_index_strategy(
+                        op, per_index_schema.args_meta, per_index_schema.kwargs_meta
+                    )
+                )
 
         return TupleStrategy(children=child_strategies)
 
     # TODO maybe this could be helped by adding a new 'tag' to the OpOverload?
-    if op_schema.op.name().startswith("aten::_foreach_"):
+    op_name = op_schema.op.name()
+    if (
+        op_name.startswith("aten::_foreach_")
+        or op_name.startswith("aten::_amp_foreach_")
+        or op_name.startswith("aten::_fused_")
+    ):
         return expanded_foreach_strategy
 
     return _create_expanded_strategy(op_schema, output_tensor_meta)
@@ -574,6 +642,7 @@ def register_single_dim_strategy(
     schema_info: RuntimeSchemaInfo | None = None,
     allow_unbacked_sharding: bool | None = None,
     allow_uneven_sharding: bool = False,
+    cross_mesh_indices: list[int] | None = None,
 ) -> Callable[[_SingleDimStrategyFunc], _SingleDimStrategyFunc]:
     """
     Registers a single_dim_strategy function for the given op.
@@ -622,6 +691,7 @@ def register_single_dim_strategy(
             func=impl,
             allow_unbacked_sharding=allow_unbacked_sharding,
             allow_uneven_sharding=allow_uneven_sharding,
+            cross_mesh_indices=cross_mesh_indices,
         )
         registration_wrapper(info)
         return impl

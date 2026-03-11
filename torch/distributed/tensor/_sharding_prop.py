@@ -87,6 +87,17 @@ def _validate_tensor_meta_count(
 
     Raises AssertionError if the count doesn't match, providing a helpful error message.
     """
+    # Skip validation for list ops (foreach/fused/amp_foreach): they return
+    # List[Tensor] whose runtime length varies and cannot be known from the
+    # schema alone.
+    op_name = op_schema.op.name()
+    if (
+        op_name.startswith("aten::_foreach_")
+        or op_name.startswith("aten::_amp_foreach_")
+        or op_name.startswith("aten::_fused_")
+    ):
+        return
+
     expected_outputs = _get_expected_num_tensor_outputs(op_schema.op)
 
     # Compute actual count:

@@ -363,6 +363,7 @@ def expand_to_full_mesh_op_strategy(
     inplace_op: bool = False,
     allow_unbacked_sharding: bool | None = None,
     allow_uneven_sharding: bool = False,
+    cross_mesh_indices: list[int] | None = None,
     is_valid_strategy_cb: Callable[
         [list[DTensorSpec], DTensorSpec | tuple[DTensorSpec | None, ...]], bool
     ]
@@ -438,6 +439,28 @@ def expand_to_full_mesh_op_strategy(
                         tensor_meta = input_args_strategy[
                             input_strategy_counter
                         ].tensor_meta
+
+                        # Cross-mesh inputs: preserve the input's original mesh
+                        # and enforce Replicate placements (e.g. state_steps in
+                        # fused adam/adamw which live on a different device mesh).
+                        if (
+                            cross_mesh_indices is not None
+                            and input_strategy_counter in cross_mesh_indices
+                        ):
+                            cross_input = input_args_strategy[
+                                input_strategy_counter
+                            ]
+                            cross_spec = cross_input.strategies[0].output_spec
+                            spec_list.append(
+                                DTensorSpec(
+                                    mesh=cross_input.mesh,
+                                    placements=cross_spec.placements,
+                                    tensor_meta=tensor_meta,
+                                )
+                            )
+                            input_strategy_counter += 1
+                            continue
+
                         input_strategy_counter += 1
 
                 # pyrefly: ignore [bad-argument-type]

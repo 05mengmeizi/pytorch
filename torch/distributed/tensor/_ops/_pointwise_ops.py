@@ -171,6 +171,11 @@ binary_additive_ops = [
     aten.sub.Tensor,
     aten.sub_.Tensor,
     aten.sub.out,
+    # foreach equivalents
+    aten._foreach_add.List,
+    aten._foreach_add_.List,
+    aten._foreach_sub.List,
+    aten._foreach_sub_.List,
 ]
 
 _BINARY_ADDITIVE_RULES: list[list[Placement]] = [
@@ -191,8 +196,26 @@ for op in binary_additive_ops:
     _register_single_dim_pointwise(op, _BINARY_ADDITIVE_RULES)
 
 # mul: partials propagate through either arg. div: only through numerator.
-binary_mul_ops = [aten.mul.Tensor, aten.mul_.Tensor, aten.mul.out]
-binary_div_ops = [aten.div.Tensor, aten.div_.Tensor, aten.div.out]
+binary_mul_ops = [
+    aten.mul.Tensor,
+    aten.mul_.Tensor,
+    aten.mul.out,
+    # foreach equivalents
+    aten._foreach_mul.List,
+    aten._foreach_mul.Tensor,
+    aten._foreach_mul_.List,
+    aten._foreach_mul_.Tensor,
+]
+binary_div_ops = [
+    aten.div.Tensor,
+    aten.div_.Tensor,
+    aten.div.out,
+    # foreach equivalents
+    aten._foreach_div.List,
+    aten._foreach_div.Tensor,
+    aten._foreach_div_.List,
+    aten._foreach_div_.Tensor,
+]
 
 # _UNARY_LINEAR_RULES handles the scalar promotion case: Python's __mul__/__truediv__
 # promote scalars to 0-dim tensors, so aten.mul.Scalar dispatches as aten.mul.Tensor
@@ -220,6 +243,22 @@ scalar_linear_ops = [
     aten.div_.Scalar,
     aten.mul.Scalar,
     aten.mul_.Scalar,
+    # foreach equivalents
+    aten._foreach_add.Scalar,
+    aten._foreach_add_.Scalar,
+    aten._foreach_add_.ScalarList,
+    aten._foreach_sub.Scalar,
+    aten._foreach_sub_.Scalar,
+    aten._foreach_sub.ScalarList,
+    aten._foreach_sub_.ScalarList,
+    aten._foreach_mul.Scalar,
+    aten._foreach_mul.ScalarList,
+    aten._foreach_mul_.Scalar,
+    aten._foreach_mul_.ScalarList,
+    aten._foreach_div.Scalar,
+    aten._foreach_div.ScalarList,
+    aten._foreach_div_.Scalar,
+    aten._foreach_div_.ScalarList,
 ]
 
 for op in scalar_linear_ops:
@@ -322,7 +361,14 @@ for op in non_increasing_unary_ops:
     _register_single_dim_pointwise(op, _NON_INCREASING_RULES)
 
 # neg is linear: -(A1 + A2) = -A1 + -A2
-neg_ops = [aten.neg.default, aten.neg_.default, aten.neg.out]
+neg_ops = [
+    aten.neg.default,
+    aten.neg_.default,
+    aten.neg.out,
+    # foreach equivalents
+    aten._foreach_neg.default,
+    aten._foreach_neg_.default,
+]
 
 _NEG_RULES: list[list[Placement]] = _UNARY_LINEAR_RULES + _NON_INCREASING_RULES
 
@@ -721,17 +767,76 @@ pointwise_ops = [
     prims.ne.default,
     prims.spherical_bessel_j0.default,
     prims.zeta.default,
+    # Categorized ops below are also in the new category lists above.
+    # They remain here for registration via register_op_strategy until
+    # a follow-up PR switches them to register_single_dim_strategy.
+    *non_decreasing_unary_ops,
+    *non_increasing_unary_ops,
+    *[op for op in all_partial_preserving_unary_ops if op != aten.to.dtype],
+    *monotonic_binary_ops,
+    *[
+        op
+        for op in monotonic_max_preserving_binary_ops
+        if op not in partial_preserving_ops
+    ],
+    *[
+        op
+        for op in monotonic_min_preserving_binary_ops
+        if op not in partial_preserving_ops
+    ],
+    # foreach ops (generic, no partial rules)
+    aten._foreach_abs.default,
+    aten._foreach_abs_.default,
+    aten._foreach_addcdiv_.Scalar,
+    aten._foreach_addcdiv_.ScalarList,
+    aten._foreach_addcdiv_.Tensor,
+    aten._foreach_addcmul.Scalar,
+    aten._foreach_addcmul_.Scalar,
+    aten._foreach_addcmul_.ScalarList,
+    aten._foreach_addcmul_.Tensor,
+    aten._foreach_clamp_max_.Scalar,
+    aten._foreach_clamp_min_.Scalar,
+    aten._foreach_lerp_.Scalar,
+    aten._foreach_maximum_.List,
+    aten._foreach_pow.List,
+    aten._foreach_pow.ScalarList,
+    aten._foreach_reciprocal_.default,
+    aten._foreach_sqrt.default,
+    aten._foreach_sqrt_.default,
+    aten._foreach_zero_.default,
+    aten._foreach_exp.default,
+    aten._foreach_exp_.default,
+    aten._foreach_cos.default,
+    aten._foreach_cos_.default,
+    aten._foreach_log.default,
+    aten._foreach_log_.default,
+    aten._amp_foreach_non_finite_check_and_unscale_.default,
 ]
 
 
+def _is_list_op(op: OpOverload) -> bool:
+    """Return True for foreach/fused/amp_foreach ops that need list handling."""
+    name = op.name()
+    return (
+        "::_foreach_" in name
+        or "::_amp_foreach_" in name
+        or "::_fused_" in name
+    )
+
+
 # Reconstruct the original linear_pointwise_ops dict for the existing registration path.
+# Exclude foreach ops (they are registered separately via single_dim_strategy).
 linear_pointwise_ops: dict[OpOverload, int] = {
-    **dict.fromkeys(unary_linear_ops, 0),
-    **dict.fromkeys(binary_additive_ops, 1),
-    **dict.fromkeys(binary_mul_ops, 2),
-    **dict.fromkeys(binary_div_ops, 2),
-    **dict.fromkeys(scalar_linear_ops, 0),
-    **dict.fromkeys(neg_ops, 0),
+    op: lin
+    for op, lin in {
+        **dict.fromkeys(unary_linear_ops, 0),
+        **dict.fromkeys(binary_additive_ops, 1),
+        **dict.fromkeys(binary_mul_ops, 2),
+        **dict.fromkeys(binary_div_ops, 2),
+        **dict.fromkeys(scalar_linear_ops, 0),
+        **dict.fromkeys(neg_ops, 0),
+    }.items()
+    if not _is_list_op(op)
 }
 
 
@@ -1084,69 +1189,95 @@ norm_partial_avoidable_redistribute_ops = {
 }
 
 for op in pointwise_ops:
-    _register_single_dim_pointwise(op)
+    if _is_list_op(op):
+        continue  # foreach ops registered via single_dim_strategy below
+    register_op_strategy(op, schema_info=RuntimeSchemaInfo(static_kwargkey=["out"]))(
+        pointwise_strategy
+    )
 
-# TODO: add all for_each ops
-for_each_ops = [
-    aten._foreach_abs.default,
-    aten._foreach_abs_.default,
-    aten._foreach_addcdiv_.Scalar,
-    aten._foreach_addcdiv_.ScalarList,
-    aten._foreach_addcdiv_.Tensor,
-    aten._foreach_addcmul.Scalar,
-    aten._foreach_addcmul_.Scalar,
-    aten._foreach_addcmul_.ScalarList,
-    aten._foreach_addcmul_.Tensor,
-    aten._foreach_clamp_max_.Scalar,
-    aten._foreach_clamp_min_.Scalar,
-    aten._foreach_div_.List,
-    aten._foreach_div_.Scalar,
-    aten._foreach_div_.ScalarList,
-    aten._foreach_div_.Tensor,
-    aten._foreach_div.List,
-    aten._foreach_div.Scalar,
-    aten._foreach_div.ScalarList,
-    aten._foreach_div.Tensor,
-    aten._foreach_lerp_.Scalar,
-    aten._foreach_maximum_.List,
-    aten._foreach_mul.Scalar,
-    aten._foreach_mul.ScalarList,
-    aten._foreach_mul.Tensor,
-    aten._foreach_mul.List,
-    aten._foreach_mul_.Scalar,
-    aten._foreach_mul_.ScalarList,
-    aten._foreach_mul_.Tensor,
-    aten._foreach_mul_.List,
-    aten._foreach_pow.List,
-    aten._foreach_pow.ScalarList,
-    aten._foreach_neg.default,
-    aten._foreach_neg_.default,
-    aten._foreach_reciprocal_.default,
-    aten._foreach_sub.Scalar,
-    aten._foreach_sub_.Scalar,
-    aten._foreach_sub.List,
-    aten._foreach_sub_.List,
-    aten._foreach_sub.ScalarList,
-    aten._foreach_sub_.ScalarList,
-    aten._foreach_sqrt.default,
-    aten._foreach_sqrt_.default,
-    aten._foreach_zero_.default,
-    aten._foreach_exp.default,
-    aten._foreach_exp_.default,
-    aten._foreach_cos.default,
-    aten._foreach_cos_.default,
-    aten._foreach_log.default,
-    aten._foreach_log_.default,
-    aten._amp_foreach_non_finite_check_and_unscale_.default,
+# The state_steps arg of fused adam / adamw is a Replicate scalar tensor, which will be put on
+# the compute_mesh of an op across all parameter groups, even when not all parameter groups
+# are on the same device mesh. This idx will help avoid hitting exceptions or unnecessary
+# redistribute during sharding propagation.
+_FUSED_OP_SCALAR_IDX = 5
+
+
+def _register_single_dim_pointwise(
+    ops: list[OpOverload],
+    strategy_fn: Callable[
+        [OpOverload, ArgsType, KwargsType],
+        list[list[Placement | _ShardingPlaceholder]],
+    ],
+    allow_unbacked_sharding: bool | None = None,
+) -> None:
+    """Register foreach/fused/amp_foreach ops from the given list via single_dim_strategy.
+
+    Regular (non-list) ops in the list are skipped — they remain on the legacy
+    ``register_op_strategy`` path until a follow-up migration.
+    """
+    for op in ops:
+        if not _is_list_op(op):
+            continue
+
+        op_name = op.name()
+        is_fused = "::_fused_" in op_name
+
+        schema_info = RuntimeSchemaInfo(needs_pytree=True)
+        cross_mesh_indices = [_FUSED_OP_SCALAR_IDX] if is_fused else None
+
+        register_single_dim_strategy(
+            op,
+            schema_info=schema_info,
+            allow_unbacked_sharding=allow_unbacked_sharding,
+            allow_uneven_sharding=True,
+            cross_mesh_indices=cross_mesh_indices,
+        )(strategy_fn)
+
+
+fused_ops = [
+    aten._fused_adam_.default,
+    aten._fused_adam.default,
+    aten._fused_adam.tensor_lr,
+    aten._fused_adam_.tensor_lr,
+    aten._fused_adamw_.default,
+    aten._fused_adamw.default,
+    aten._fused_adamw.tensor_lr,
+    aten._fused_adamw_.tensor_lr,
 ]
 
-for_each_linearity_ops = [
-    aten._foreach_add.Scalar,
-    aten._foreach_add_.Scalar,
-    aten._foreach_add_.ScalarList,
-    aten._foreach_add.List,
-    aten._foreach_add_.List,
-]
+# Register all pointwise ops (including foreach variants) via single_dim_strategy.
+# Foreach ops are now in the same category lists as their base ops.
+# We use _common_pointwise_single_dim_strategy with explicit rule lists so that
+# rules are filtered by tensor count (handles scalar promotion gracefully).
+_register_single_dim_pointwise(
+    unary_linear_ops,
+    _common_pointwise_single_dim_strategy(_UNARY_LINEAR_RULES),
+)
+_register_single_dim_pointwise(
+    binary_additive_ops,
+    _common_pointwise_single_dim_strategy(
+        _BINARY_ADDITIVE_RULES + _UNARY_LINEAR_RULES
+    ),
+)
+_register_single_dim_pointwise(
+    binary_mul_ops,
+    _common_pointwise_single_dim_strategy(_MUL_RULES + _UNARY_LINEAR_RULES),
+)
+_register_single_dim_pointwise(
+    binary_div_ops,
+    _common_pointwise_single_dim_strategy(_DIV_RULES + _UNARY_LINEAR_RULES),
+)
+_register_single_dim_pointwise(
+    scalar_linear_ops,
+    _common_pointwise_single_dim_strategy(_UNARY_LINEAR_RULES),
+)
+_register_single_dim_pointwise(
+    neg_ops,
+    _common_pointwise_single_dim_strategy(_NEG_RULES),
+)
+_register_single_dim_pointwise(pointwise_ops, single_mesh_dim_pointwise_strategy)
+# Register fused adam/adamw ops via single_dim_strategy
+_register_single_dim_pointwise(fused_ops, single_mesh_dim_pointwise_strategy)
 
 
 def list_pointwise_strategy(
@@ -1227,35 +1358,3 @@ def list_linear_pointwise_strategy(op_schema: OpSchema) -> StrategyType:
     return list_pointwise_strategy(op_schema, linearity=True)
 
 
-for op in for_each_ops:
-    register_op_strategy(op, schema_info=RuntimeSchemaInfo(needs_pytree=True))(
-        list_pointwise_strategy
-    )
-
-for op in for_each_linearity_ops:
-    register_op_strategy(op, schema_info=RuntimeSchemaInfo(needs_pytree=True))(
-        list_linear_pointwise_strategy
-    )
-
-fused_ops = [
-    aten._fused_adam_.default,
-    aten._fused_adam.default,
-    aten._fused_adam.tensor_lr,
-    aten._fused_adam_.tensor_lr,
-    aten._fused_adamw_.default,
-    aten._fused_adamw.default,
-    aten._fused_adamw.tensor_lr,
-    aten._fused_adamw_.tensor_lr,
-]
-
-
-# The state_steps arg of fused adam / adamw is a Replicate scalar tensor, which will be put on
-# the compute_mesh of an op across all parameter groups, even when not all parameter groups
-# are on the same device mesh. This idx will help avoid hitting exceptions or unnecessary
-# redistribute during sharding propagation.
-_FUSED_OP_SCALAR_IDX = 5
-
-for op in fused_ops:
-    register_op_strategy(op, schema_info=RuntimeSchemaInfo(needs_pytree=True))(
-        list_pointwise_strategy
-    )
