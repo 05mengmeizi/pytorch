@@ -233,13 +233,20 @@ class PartialRender:
 
         # Whole-line placeholder with empty result — remove entire line
         if not (result and result.strip()):
-            return self._code[:line_start] + self._code[line_end + 1 :]
+            suffix = self._code[line_end + 1 :]
+            if not suffix and line_start > 0 and self._code[line_start - 1] == "\n":
+                # Placeholder on the very last line — also remove preceding newline
+                return self._code[: line_start - 1]
+            return self._code[:line_start] + suffix
 
         # Whole-line placeholder — dedent result and re-indent to match
         indent_str = self._code[line_start:idx]
         dedented = textwrap.dedent(result.rstrip("\n"))
         indented = textwrap.indent(dedented, indent_str)
-        return self._code[:line_start] + indented + self._code[line_end:]
+        if self._code[line_end : line_end + 1] == "\n":
+            return self._code[:line_start] + indented + self._code[line_end:]
+        # Placeholder on the very last line (no trailing newline)
+        return self._code[:line_start] + indented
 
     def finalize_hook(self, hook_key: str, strict: bool = True) -> None:
         """
