@@ -2979,8 +2979,21 @@ class InstructionTranslatorBase(
 
         # add resume function to the global scope
         if new_code.co_freevars:
-            # expose code object for debugging purposes
-            self.output.install_global_unsafe(resume_name, new_code)
+            # Install a factory that creates the resume function with the
+            # correct globals. We can't use MAKE_FUNCTION because it inherits
+            # the current frame's globals, which is wrong for resume functions
+            # from inlined (nested) frames that belong to a different module.
+            # Capture f_globals in a local to avoid closing over self.
+            _globals = self.f_globals
+
+            def _make_fn(
+                closure: tuple[types.CellType, ...],
+            ) -> types.FunctionType:
+                return types.FunctionType(
+                    new_code, _globals, resume_name, None, closure
+                )
+
+            self.output.install_global_unsafe(resume_name, _make_fn)
             package_name = None
         else:
             # This is safe: we pre-generate a unique name
@@ -3207,7 +3220,15 @@ class InstructionTranslatorBase(
                         cg.create_binary_subscr(),
                     ]
                 )
-                cg.make_function_with_closure(name, code)
+                # Call the factory function (stored under resume_name) to
+                # create the resume function with correct globals and closure.
+                cg.extend_output(
+                    [
+                        cg.create_load_global(name, add=True),
+                        *create_swap(2),
+                        *create_call_function(1, push_null=True),
+                    ]
+                )
             else:
                 cg.extend_output(cg.load_function_name(name, False, 0))
             cg.extend_output(create_swap(2))
@@ -3228,7 +3249,15 @@ class InstructionTranslatorBase(
                     cg.create_binary_subscr(),
                 ]
             )
-            cg.make_function_with_closure(resume_names[-1], resume_codes[-1])
+            # Call the factory function to create the resume function with
+            # correct globals and closure.
+            cg.extend_output(
+                [
+                    cg.create_load_global(resume_names[-1], add=True),
+                    *create_swap(2),
+                    *create_call_function(1, push_null=True),
+                ]
+            )
             cg.extend_output(
                 [
                     *create_rot_n(3),
