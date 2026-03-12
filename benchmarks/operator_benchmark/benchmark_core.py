@@ -385,7 +385,7 @@ class BenchmarkRunner:
         test_case.run_forward(num_runs=1, print_per_iter=False, cuda_sync=False)
         test_case._output_mean()
         backward_time = timeit.timeit(
-            functools.partial(test_case.run_backward, iters, print_per_iter), number=1
+            lambda: (test_case.run_backward(iters, print_per_iter), torch.cuda.synchronize()), number=1
         )
         return backward_time
 
