@@ -2183,7 +2183,6 @@ class TestSingleProc(DynamoDistributedSingleProcTestCase):
         # the frame count would be equal to the number of forward calls)
         self.assertEqual(cnt.frame_count, 1)
 
-    @torch._dynamo.config.patch("nested_graph_breaks", False)
     def test_fsdp_staticmethod(self):
         """
         Tests that Dynamo compiles staticmethods for FSDP-managed modules

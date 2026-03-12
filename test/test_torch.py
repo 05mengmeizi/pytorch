@@ -1831,7 +1831,6 @@ class TestTorchDeviceType(TestCase):
                 torch.device(device).type == 'cuda' and dtype.is_floating_point)
 
     @skipIfMPS
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_nondeterministic_alert_bincount(self, device):
         a = torch.tensor([], device=device, dtype=torch.long)
         weights = torch.tensor([], device=device)

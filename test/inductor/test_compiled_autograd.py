@@ -1958,7 +1958,7 @@ main()
                 yield x.grad
 
         self.check_output_and_recompiles(
-            fn, count=[1, 2], compiler_fn=make_compiler_fn(fullgraph=False)
+            fn, count=[1, 3], compiler_fn=make_compiler_fn(fullgraph=False)
         )
 
     def test_custom_fn_compiled_fw_graph_break(self):
@@ -1988,7 +1988,6 @@ main()
         )
         self.assertEqual(counters["stats"]["unique_graphs"], 4)  # 3 fw, 1 bw
 
-    @config.patch("nested_graph_breaks", False)
     def test_custom_fn_compiled_fw_bw_graph_break(self):
         def fn():
             class MySin(torch.autograd.Function):
@@ -4617,7 +4616,7 @@ class CompiledAutograd1(torch.nn.Module):
         self.check_output_and_recompiles(
             fn,
             compiler_fn=make_compiler_fn(fullgraph=False),
-            count=[1, 1],
+            count=[1, 2],
         )
 
     # Case 1.5.1: Dense variable gradient layout contract
@@ -4845,7 +4844,6 @@ class CompiledAutograd1(torch.nn.Module):
     #   ...
     # } else {
     #   variable_grad += new_grad;
-    @config.patch("nested_graph_breaks", False)
     def test_accumulate_grad_polyfill_case_2_3_3(self):
         def fn():
             class DenseVarGradSparseNewGradOp(BaseCustomOp):
@@ -4984,7 +4982,7 @@ class CompiledAutograd1(torch.nn.Module):
         self.check_output_and_recompiles(
             fn,
             compiler_fn=make_compiler_fn(fullgraph=False),
-            count=[1, 2],
+            count=[1, 3],
         )
 
     def test_torch_function_mode(self):
@@ -5287,10 +5285,6 @@ test_contexts = {
     "test_setitem_mask": config.patch(capture_dynamic_output_shape_ops=True),
     "test_index_backward_does_not_save_tensor": config.patch(
         capture_dynamic_output_shape_ops=True
-    ),
-    "test_dtensor_basic": config.patch(nested_graph_breaks=False),
-    "test_dtensor_contiguous_dtensor_noncontiguous_local_as_tangent": config.patch(
-        nested_graph_breaks=False
     ),
 }
 

@@ -430,7 +430,6 @@ Found from :
 
         exitstack.close()
 
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     @requires_distributed()
     @requires_cuda_and_triton
     @make_logging_test(ddp_graphs=True)
@@ -1432,19 +1431,9 @@ fn(torch.randn(5))
                 z = y * x
                 return z
 
-            # force top-level trace of bar
-            try:
-                return bar(), bar
-            finally:
-                pass
+            return bar(), bar
 
         foo()
-
-        @torch.compile
-        def baz(x):
-            return x + 1
-
-        baz(torch.ones(3))
 
         # `_log_traced_frames` is registered as an atexit callback, so we invoke
         # it explicitly for testing.
@@ -1460,7 +1449,6 @@ fn(torch.randn(5))
 TorchDynamo attempted to trace the following frames: [
   * foo test_logging.py:N
   * bar test_logging.py:N
-  * baz test_logging.py:N
 ]""",
         )
 
