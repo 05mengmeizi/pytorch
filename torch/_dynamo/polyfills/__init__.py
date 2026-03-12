@@ -62,6 +62,11 @@ class NoEnterTorchFunctionMode(BaseTorchFunctionMode):
         pass
 
 
+def _fn_with_ctx(ctx, fn, *args, **kwargs):
+    with ctx:
+        return fn(*args, **kwargs)
+
+
 def index(
     iterator: Iterator[T], item: T, start: int = 0, end: int | None = None
 ) -> int:
