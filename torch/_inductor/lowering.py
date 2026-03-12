@@ -4733,6 +4733,55 @@ def inplace_constant_pad_nd(
     return resized_x
 
 
+def _pad_as_cat(
+    x: TensorBox, padding: Sequence[int], fill_value: float
+) -> TensorBox | None:
+    """Rewrite right-pad as ConcatKernel for multi-consumer inputs (zero-copy)."""
+    sizes = x.get_size()
+    ndim = len(sizes)
+    pad_pairs = list(zip(padding[::2], padding[1::2]))
+
+    # Only support single-dimension right-pad
+    pad_dim = None
+    pad_amount = None
+    for i, (left, right) in enumerate(pad_pairs):
+        if left != 0:
+            return None
+        if right > 0:
+            if pad_dim is not None:
+                return None  # multi-dim pad
+            pad_dim = ndim - 1 - i  # padding format is reversed dim order
+            pad_amount = right
+        elif right < 0:
+            return None  # trim, not pad
+
+    if pad_dim is None:
+        return None
+
+    # Single-consumer pads are already optimal with masked Pointwise.
+    pad_node = V.current_node
+    if pad_node is None:
+        return None
+    input_node = pad_node.args[0]
+    if not isinstance(input_node, torch.fx.Node):
+        return None
+    if len(input_node.users) <= 1:
+        return None
+
+    # Build the fill tensor for the padding region
+    pad_shape = list(sizes)
+    pad_shape[pad_dim] = pad_amount
+    dtype = x.get_dtype()
+    device = x.get_device()
+    fill_value_typed = dtype_to_type(dtype)(fill_value)
+    pad_tensor = tensor_constructor(fill_value_typed)(
+        pad_shape, dtype=dtype, device=device
+    )
+
+    counters["inductor"]["pad_as_cat"] += 1
+    return TensorBox(ir.ConcatKernel.create([x, pad_tensor], pad_dim))
+
+
 @register_lowering(aten.constant_pad_nd, type_promotion_kind=None)
 def constant_pad_nd(x, padding, fill_value=0):
     assert (len(padding) % 2) == 0
@@ -4744,6 +4793,10 @@ def constant_pad_nd(x, padding, fill_value=0):
         if out:
             return out
             # fall through if can not inplace the padding
+
+    out = _pad_as_cat(x, padding, fill_value)
+    if out is not None:
+        return out
 
     sizes = x.get_size()
 
