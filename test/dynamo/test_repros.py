@@ -4094,7 +4094,6 @@ class ReproTests(torch._dynamo.test_case.TestCase):
 
         test_bug()
 
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_hf_bigbird_unsqueeze(self):
         def torch_bmm_nd(inp_1, inp_2, ndim=None):
             torch._dynamo.graph_break()
@@ -5334,7 +5333,6 @@ def forward(self, s77 : torch.SymInt, s27 : torch.SymInt, L_x_ : torch.Tensor):
     #         )
     #         self.assertEqual(out_ref, out_test)
 
-    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_super_in_staticmethod(self):
         class A:
             @staticmethod

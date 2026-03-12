@@ -661,7 +661,6 @@ class DictTests(torch._dynamo.test_case.TestCase):
         opt_mod = torch.compile(mod, backend="eager", fullgraph=True)
         self.assertEqual(mod(x), opt_mod(x))
 
-    @torch._dynamo.config.patch("nested_graph_breaks", False)
     def test_dict_reconstruct_keeps_original_order(self):
         def fn():
             modules = OrderedDict([("act", torch.nn.ReLU())])

@@ -768,7 +768,6 @@ class CompiledOptimizerTests(TestCase):
         self.assertTrue(p_ref() is None)
         gc.enable()
 
-    @torch._dynamo.config.patch("nested_graph_breaks", False)
     def test_guard_on_none_grads(self):
         def training_loop():
             input = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).reshape(3, 2)
