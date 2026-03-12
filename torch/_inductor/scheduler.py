@@ -1960,7 +1960,8 @@ class FusedSchedulerNode(BaseSchedulerNode):
             return False
         self_sizes = None
         for snode in self.snodes:
-            assert isinstance(snode, SchedulerNode)
+            if not isinstance(snode, SchedulerNode):
+                return False
             if self_sizes is not None and tuple(self_sizes) != tuple(snode._sizes[0]):
                 loop_ordering_log.debug(
                     "Can not reorder fused node due to different sizes"
@@ -5993,6 +5994,12 @@ class Scheduler:
         assert isinstance(write, MemoryDep)
 
         if free_symbol_is_type(write.index, SymT.TMP):
+            return False
+
+        # Non-injective scatter: range vars absent from write index mean
+        # multiple iterations hit the same location. Can't fuse the reader
+        # in or it will see partially-written state between iterations.
+        if not OrderedSet(write.var_names) <= write.index.free_symbols:
             return False
 
         real_name = self.mutation_real_name[weak_dep.mutating_buf]
