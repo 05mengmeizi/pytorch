@@ -305,6 +305,7 @@ class PartialRender:
         hook = self.replacement_hooks[hook_key]
         assert hook is not None, f"Hook key {hook_key} can only be called once"
         self._code = self._replace_placeholder(hook_key, hook())
+
         self.replacement_hooks[hook_key] = None
 
     def finalize_remaining(self) -> str:
