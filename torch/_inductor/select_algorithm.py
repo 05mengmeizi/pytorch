@@ -14,6 +14,7 @@ import re
 import sys
 import textwrap
 import time
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from io import StringIO
@@ -208,6 +209,86 @@ class PartialRender:
         )
         return self._code
 
+    def _replace_placeholder(self, hook_key: str, result: str) -> str:
+        """Replace a placeholder in the code with the hook result.
+
+        During Jinja template rendering, hooks like ``def_kernel()``,
+        ``load_input()``, and ``store_output()`` emit placeholder strings
+        (e.g. ``<DEF_KERNEL>``, ``<LOAD_INPUT_A>``, ``<STORE_OUTPUT_0>``)
+        into the rendered code and register corresponding hook functions in
+        ``self.replacement_hooks``.  When ``finalize_hook()`` is called for
+        each key, the hook function runs and this method splices the result
+        back into the code in place of the placeholder.
+
+        Three replacement modes:
+
+        **Inline placeholder** — direct substitution.
+            The placeholder shares a line with other content (e.g.
+            ``<ARGDEFS>,`` in flex_attention templates, where it appears
+            as part of a function signature).  The placeholder text is
+            replaced with the result string verbatim — no indent handling.
+
+        **Whole-line placeholder, non-empty result** — dedent + re-indent.
+            The placeholder sits alone on an indented line.  The result
+            (often multi-line) is dedented then re-indented to match the
+            placeholder's column, so it integrates at the right nesting
+            level.  Real-world cases:
+
+            - ``<DEF_KERNEL>`` at column 0: the hook emits the full
+              ``@triton.jit`` decorator, function signature, constant
+              defines, and prologue code.  Re-indent is a no-op (col 0).
+            - ``<STORE_OUTPUT_0>`` at 4–8 spaces indent: the hook emits
+              ``tl.store()`` plus any fused epilogue ops (e.g. relu, bias
+              add).  Re-indent aligns the block to the template's loop
+              body.
+            - ``<LOAD_INPUT_A>`` at 8 spaces indent: the hook emits
+              range-tree indexing setup and a ``tl.load()`` call.
+              Re-indent aligns to the inner loop body.
+
+        **Whole-line placeholder, empty result** — line removal.
+            The entire placeholder line is deleted.  Cases:
+
+            - ``<DEF_KERNEL>`` returns ``""`` for
+              ``ExternalTritonTemplateKernel`` (Helion), which emits its
+              own kernel definition outside the template system.
+            - ``<LOAD_INPUT_A>`` returns ``""`` when prologue fusion
+              replaces the explicit load with inline computation from a
+              fused producer.
+            - ``<STORE_OUTPUT_0>`` returns ``""`` for
+              ``ExternalTritonTemplateKernel`` outputs that have no
+              matching epilogue consumer.
+        """
+        idx = self._code.find(hook_key)
+        if idx < 0:
+            return self._code
+
+        line_start = self._code.rfind("\n", 0, idx) + 1
+        line_end = self._code.find("\n", idx)
+        if line_end == -1:
+            line_end = len(self._code)
+
+        # Inline placeholder (e.g. ``<ARGDEFS>,`` in flex_attention templates)
+        # — do a direct string substitution without indent handling.
+        if self._code[line_start:line_end].strip() != hook_key:
+            return self._code[:idx] + result + self._code[idx + len(hook_key) :]
+
+        # Whole-line placeholder with empty result — remove entire line
+        if not (result and result.strip()):
+            suffix = self._code[line_end + 1 :]
+            if not suffix and line_start > 0 and self._code[line_start - 1] == "\n":
+                # Placeholder on the very last line — also remove preceding newline
+                return self._code[: line_start - 1]
+            return self._code[:line_start] + suffix
+
+        # Whole-line placeholder — dedent result and re-indent to match
+        indent_str = self._code[line_start:idx]
+        dedented = textwrap.dedent(result.rstrip("\n"))
+        indented = textwrap.indent(dedented, indent_str)
+        if self._code[line_end : line_end + 1] == "\n":
+            return self._code[:line_start] + indented + self._code[line_end:]
+        # Placeholder on the very last line (no trailing newline)
+        return self._code[:line_start] + indented
+
     def finalize_hook(self, hook_key: str, strict: bool = True) -> None:
         """
         Finalize a hook by name.
@@ -226,7 +307,7 @@ class PartialRender:
 
         hook = self.replacement_hooks[hook_key]
         assert hook is not None, f"Hook key {hook_key} can only be called once"
-        self._code = self._code.replace(hook_key, hook())
+        self._code = self._replace_placeholder(hook_key, hook())
 
         self.replacement_hooks[hook_key] = None
 
@@ -630,6 +711,46 @@ class TritonTemplateKernel(TritonKernel):
         with self.set_subgraph_body(body_name):
             yield
 
+    def _setup_contiguous_index_state(
+        self,
+        indices: list[str],
+        index_symbols: list[sympy.Symbol],
+        lengths: list[sympy.Expr],
+        mask: str | None,
+        xindex_name: str = "xindex",
+    ) -> sympy.Expr:
+        """Set up range trees, contiguous index, mask, and template indices.
+
+        Common boilerplate shared by store_output, _setup_epilogue_hook,
+        and load_input.  Returns the contiguous index expression.
+        """
+        for name, range_tree_entry in zip(
+            indices, self.range_trees[0].construct_entries(lengths)
+        ):
+            range_tree_entry.set_name(name)
+        contiguous_index = sympy_dot(
+            ir.FlexibleLayout.contiguous_strides(lengths), index_symbols
+        )
+        contiguous_index = self.rename_indexing(contiguous_index)
+        self.body.writeline(f"{xindex_name} = " + texpr(contiguous_index))
+        self.range_trees[0].lookup(sympy.S.One, sympy_product(lengths)).set_name(
+            xindex_name
+        )
+        self.template_mask = mask
+        self.template_indices = indices
+        return contiguous_index
+
+    def _make_codegen_hook(self, subgraph_name: str) -> Callable[[], str]:
+        """Create a hook closure that codegen's a subgraph body."""
+
+        def hook():
+            with self.set_subgraph_body(subgraph_name):
+                self.codegen_body()
+                self.cse.invalidate(OrderedSet())
+                return self.body.getvalue().strip()
+
+        return hook
+
     def need_numel_args(self):
         return False
 
@@ -990,42 +1111,16 @@ class TritonTemplateKernel(TritonKernel):
             lengths = [V.graph.sizevars.simplify(s) for s in input_node.get_size()]
             assert len(indices) == len(lengths)
 
-            index_symbols = [sympy.Symbol(x, integer=True) for x in indices]
-            assert len(indices) == len(lengths)
-
-            # glue to make generated code use same indexing from template
-
-            # TODO (from reviewers as well)
-            # in codegen_template,
-            # prologue_node.codegen(kernel.split_and_set_ranges(prologue_node.get_ranges()))
-            # the ranges need to reflect the group of the prologue input or it will error
-            # not sure if there is any difference between original range_tree_entry in
-            # and new one from correct lengths/groups... both actually seem to work
-            for name, range_tree_entry in zip(
-                indices, self.range_trees[0].construct_entries(lengths)
-            ):
-                range_tree_entry.set_name(name)
-            contiguous_index = sympy_dot(
-                ir.FlexibleLayout.contiguous_strides(lengths), index_symbols
+            # MM templates use out-of-bounds wrapping (e.g. `rm % M`) so no mask
+            # is needed on the load.  Pass "None" when mask is unset to override
+            # the mask that would otherwise be inherited.
+            contiguous_index = self._setup_contiguous_index_state(
+                indices,
+                index_symbols,
+                lengths,
+                mask=mask if mask is not None else "None",
             )
-            contiguous_index = self.rename_indexing(contiguous_index)
-            self.body.writeline("xindex = " + texpr(contiguous_index))
-
-            xindex_range_root = self.range_trees[0].lookup(
-                sympy.Integer(1), sympy_product(lengths)
-            )
-            xindex_range_root.set_name("xindex")
-
-            # Note - ["None" override_mask]
-            # MM Templates work by taking out of bounds index values and wrapping them around to 0
-            # so that no mask is required on the load: offs_a_m = `rm % M`
-            # We should to override the mask to be "None" instead of inheriting the mask that would
-            # have been loaded otherwise.
-            # We are using "None" for clarity in output code, but
-            # we could alternatively emit `xmask = tl.full([xindex.shape], True, tl.int1)`
-            self.template_mask = mask if mask is not None else "None"
             self.template_out_shape = index_shape if index_shape else "xindex"
-            self.template_indices = indices
             self.cse.invalidate(OrderedSet())
 
             template_mask = self.template_mask
@@ -1122,7 +1217,7 @@ class TritonTemplateKernel(TritonKernel):
                     assert load_code is not None
                     self.body.writeline(load_code)
 
-                return textwrap.indent(self.body.getvalue(), " " * indent_width).strip()
+                return self.body.getvalue().strip()
 
         return self._register_hook(hook_key, hook)
 
@@ -1335,21 +1430,9 @@ class TritonTemplateKernel(TritonKernel):
                     self.body.writeline(line)
             else:
                 assert not self.tma_store, "TMA store requires block indexing"
-                # glue to make generated code use same indexing from template
-                for name, range_tree_entry in zip(
-                    indices, self.range_trees[0].construct_entries(lengths)
-                ):
-                    range_tree_entry.set_name(name)
-                contiguous_index = sympy_dot(
-                    ir.FlexibleLayout.contiguous_strides(lengths), index_symbols
+                contiguous_index = self._setup_contiguous_index_state(
+                    indices, index_symbols, lengths, mask
                 )
-                contiguous_index = self.rename_indexing(contiguous_index)
-                self.body.writeline("xindex = " + texpr(contiguous_index))
-                self.range_trees[0].lookup(
-                    sympy.S.One, sympy_product(lengths)
-                ).set_name("xindex")
-                self.template_mask = mask
-                self.template_indices = indices
                 output_index = self.output_node.get_layout().make_indexer()(
                     index_symbols
                 )
@@ -1389,15 +1472,9 @@ class TritonTemplateKernel(TritonKernel):
             )
             self.codegen_body()
 
-        def hook():
-            with self.set_subgraph_body(subgraph_name):
-                # more stuff might have been added since the codegen_body above
-                self.codegen_body()
-                self.cse.invalidate(OrderedSet())
-
-                return textwrap.indent(self.body.getvalue(), " " * indent_width).strip()
-
-        return self._register_hook(subgraph_name, hook)
+        return self._register_hook(
+            subgraph_name, self._make_codegen_hook(subgraph_name)
+        )
 
     def _register_hook(
         self,
@@ -1610,6 +1687,119 @@ class TritonTemplateKernel(TritonKernel):
                 return list(fixed_layout_copy.stride)
         # Already frozen or not a FlexibleLayout, just return current strides
         return node.get_stride()
+
+    def _compute_fusion_metadata(
+        self, scheduling, epilogue_nodes, prologue_nodes, buf_name_to_prologue_group
+    ):
+        """Prepare epilogue/prologue routing before render().
+
+        Default: trivial routing — all epilogues broadcast to every subgraph,
+        none unfused, no prologue source tracking.  Override in subclasses
+        for per-output routing.
+        """
+        self._epilogue_nodes_by_subgraph: defaultdict[int, list[Any]] = defaultdict(
+            lambda: epilogue_nodes
+        )
+        self._unfused_epilogues: list[Any] = []
+        self._prologue_sources: dict[str, frozenset[str]] = {}
+
+    def codegen_template_body(
+        self,
+        scheduling,
+        template_node,
+        epilogue_nodes,
+        prologue_nodes,
+        buf_name_to_prologue_group,
+        prologue_preserves_zero_mask_fn,
+        render,
+    ) -> str:
+        """Generate template source code with fused prologues and epilogues.
+
+        Returns the final source code string.
+        """
+        self._compute_fusion_metadata(
+            scheduling, epilogue_nodes, prologue_nodes, buf_name_to_prologue_group
+        )
+        with self:
+            partial_code = render()
+
+            num_store_subgraphs = self.get_store_output_count()
+            for i in range(num_store_subgraphs):
+                subgraph_name = self._get_store_output_subgraph_name(i)
+                with self.set_subgraph_body(subgraph_name):
+                    for node in self._epilogue_nodes_by_subgraph[i]:
+                        node.codegen(self.split_and_set_ranges(node.get_ranges()))
+                    self.cse.invalidate(OrderedSet())
+
+            self.codegen_prologues_in_subgraphs(
+                buf_name_to_prologue_group, prologue_preserves_zero_mask_fn
+            )
+
+        # Template hooks must be finalised after kernel.remove_kernel_local_buffers
+        # is called (this is called when the kernel context is exited above), and when
+        # the kernel handler is set (as below). This is because the hooks may add
+        # DeferredLine type lines, which preclude lines involving buffers that have
+        # been removed
+
+        # finalize must be called after adding epilogue above
+        with V.set_kernel_handler(self):
+            if not isinstance(partial_code, str):
+                # This is used to calculate flops in TritonTemplateKernels
+                with ir.IRNode.current_origins(template_node.node.origins):
+                    partial_code.finalize_hook("<DEF_KERNEL>")
+                partial_code.finalize_hook("<ARGDEFS>", strict=False)
+
+            # TODO: Maybe unify CUTLASSTemplateKernel to also use PartialRender for flexible epilogue fusion.
+
+            for input_name in self.named_input_nodes:
+                subgraph_name = f"<LOAD_INPUT_{input_name}>"
+
+                partial_code.finalize_hook(subgraph_name, strict=False)
+
+            num_store_subgraphs = self.get_store_output_count()
+            for i in range(num_store_subgraphs):
+                subgraph_name = self._get_store_output_subgraph_name(i)
+
+                partial_code.finalize_hook(subgraph_name)
+
+            if isinstance(partial_code, str):
+                src_code = partial_code
+            else:
+                # Ensure all hooks are finalized before the kernel is defined.
+                # Note: some of these hooks may have been registered by a kernel subclass
+                src_code = partial_code.finalize_remaining()
+
+        return src_code
+
+    def codegen_prologues_in_subgraphs(
+        self, buf_name_to_prologue_group, prologue_preserves_zero_mask_fn
+    ):
+        """Run prologue codegen in each load-input subgraph body."""
+        for input_name, buffer in self.named_input_nodes.items():
+            subgraph_name = f"<LOAD_INPUT_{input_name}>"
+            prologue_group = buf_name_to_prologue_group.get(buffer.get_name(), [])
+            if not prologue_group:
+                continue
+            can_codegen_without_upcast = all(
+                p_n.can_codegen_without_upcasts() for p_n in prologue_group
+            )
+            with config.patch(
+                "triton.codegen_upcast_to_fp32", not can_codegen_without_upcast
+            ):
+                with self.set_subgraph_body(subgraph_name):
+                    for prologue_node in prologue_group:
+                        if (
+                            len(prologue_node.get_buffer_names()) == 1
+                            and len(prologue_group) == 1
+                        ):
+                            if prologue_preserves_zero_mask_fn(prologue_node):
+                                self.prologue_fused_inputs_preserve_zero |= (
+                                    prologue_node.get_buffer_names()
+                                )
+                        prologue_node.codegen(
+                            self.split_and_set_ranges(prologue_node.get_ranges())
+                        )
+                    self.cse.invalidate(OrderedSet())
 
 
 @functools.cache
