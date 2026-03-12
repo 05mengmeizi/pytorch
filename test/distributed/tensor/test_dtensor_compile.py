@@ -55,6 +55,7 @@ from torch.testing._internal.common_utils import (
     run_tests,
     skipIfHpu,
     skipIfTorchDynamo,
+    skipIfXpu,
 )
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
@@ -246,6 +247,7 @@ class TestDTensorCompile(torch._dynamo.test_case.TestCase):
         res = fn(x)
         res.to_local().sum().backward()
 
+    @skipIfXpu(msg="AssertionError, torch-xpu-ops: #2958")
     @unittest.skipIf(not torch.accelerator.is_available(), "accelerator not available")
     def test_dtensor_basic_compile(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
