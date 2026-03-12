@@ -14,7 +14,6 @@ from torch.testing._internal.common_utils import (
     parametrize as parametrize_test,
     run_tests,
     skipIfNoLapack,
-    skipIfTorchDynamo,
     slowTest,
     TEST_SCIPY,
     TestCase,
@@ -30,11 +29,13 @@ class TestNNInit(TestCase):
         super().setUp()
         random.seed(123)
 
+    @torch._dynamo.disable
     def _is_normal(self, tensor, mean, std):
         samples = tensor.view(-1).tolist()
         p_value = stats.kstest(samples, "norm", args=(mean, std))[1]
         return p_value > 0.0001
 
+    @torch._dynamo.disable
     def _is_trunc_normal(self, tensor, mean, std, a, b):
         # scipy's trunc norm is suited for data drawn from N(0, 1),
         # so we need to transform our data to test it using scipy.
@@ -45,6 +46,7 @@ class TestNNInit(TestCase):
         p_value = stats.kstest(z_samples, "truncnorm", args=(a0, b0))[1]
         return p_value > 0.0001
 
+    @torch._dynamo.disable
     def _is_uniform(self, tensor, a, b):
         samples = tensor.view(-1).tolist()
         p_value = stats.kstest(samples, "uniform", args=(a, (b - a)))[1]
@@ -112,7 +114,6 @@ class TestNNInit(TestCase):
                 init.calculate_gain(random_string)
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_uniform(self):
         for dims in [1, 2, 4]:
             input_tensor = self._create_random_nd_tensor(dims, size_min=30, size_max=50)
@@ -123,7 +124,6 @@ class TestNNInit(TestCase):
                 raise AssertionError("Expected uniform distribution")
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_normal(self):
         for dims in [1, 2, 4]:
             input_tensor = self._create_random_nd_tensor(dims, size_min=30, size_max=50)
@@ -135,7 +135,6 @@ class TestNNInit(TestCase):
                 raise AssertionError("Expected normal distribution")
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_trunc_normal_generator(self):
         gen = torch.Generator()
         gen.manual_seed(42)
@@ -149,6 +148,11 @@ class TestNNInit(TestCase):
         self.assertEqual(input_tensor, ref)
         if not self._is_trunc_normal(input_tensor, mean=0, std=1, a=0, b=1):
             raise AssertionError("Expected truncated normal distribution")
+
+    def test_trunc_normal_meta(self):
+        t = torch.empty(3, 5, device="meta")
+        result = init.trunc_normal_(t)
+        self.assertIs(result, t)
 
     def test_constant(self):
         for dims in [1, 2, 4]:
@@ -350,7 +354,6 @@ class TestNNInit(TestCase):
                     raise AssertionError("Expected uniform distribution")
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_xavier_normal(self):
         for use_gain in [True, False]:
             for dims in [2, 4]:
@@ -402,7 +405,6 @@ class TestNNInit(TestCase):
             _ = init.kaiming_normal_(tensor)
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_kaiming_uniform(self):
         for use_a in [True, False]:
             for dims in [2, 4]:
@@ -434,7 +436,6 @@ class TestNNInit(TestCase):
                         raise AssertionError("Expected uniform distribution")
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_kaiming_normal(self):
         for use_a in [True, False]:
             for dims in [2, 4]:
@@ -472,7 +473,6 @@ class TestNNInit(TestCase):
                 init.sparse_(tensor, sparsity)
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     def test_sparse_default_std(self):
         for use_random_std in [True, False]:
             input_tensor = self._create_random_nd_tensor(2, size_min=30, size_max=35)
@@ -541,6 +541,7 @@ class TestNNInit(TestCase):
 
 
 class TestNNInitDeviceType(TestCase):
+    @torch._dynamo.disable
     def _is_trunc_normal(self, tensor, mean, std, a, b):
         z_samples = (tensor.view(-1) - mean) / std
         z_samples = z_samples.tolist()
@@ -550,7 +551,6 @@ class TestNNInitDeviceType(TestCase):
         return p_value > 0.0001
 
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     @parametrize_test("dims", [1, 2, 4])
     @parametrize_test(
         "dtype",
@@ -585,7 +585,6 @@ class TestNNInitDeviceType(TestCase):
     # Reduced-precision KS test uses fixed wide params to avoid random
     # intervals too narrow for the type's representable value count.
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     @parametrize_test(
         "dtype",
         [torch.float16, torch.bfloat16],
@@ -611,7 +610,6 @@ class TestNNInitDeviceType(TestCase):
 
     # Test that trunc_normal_ behaves well for narrow interval compared to std.
     @unittest.skipIf(not TEST_SCIPY, "Scipy not found.")
-    @skipIfTorchDynamo("scipy.kstest is failing under dynamo")
     @parametrize_test(
         "dtype",
         [torch.float32, torch.float64, torch.float16, torch.bfloat16],
