@@ -1909,6 +1909,7 @@ def quantized_decomposed_dequantize_per_tensor_tensor(
 
 @register_lowering(aten.cat)
 def cat(inputs, dim=0):
+    """Lower aten.cat, choosing between pointwise_cat and ConcatKernel."""
     cpu_device = inputs[0].get_device().type == "cpu"
     if cpu_device and all(
         input.get_dtype() in [torch.int8, torch.uint8] for input in inputs
@@ -2039,18 +2040,15 @@ def cat(inputs, dim=0):
             def has_fusible_multi_consumer(arg):
                 if not hasattr(arg, "users") or len(arg.users) <= 1:
                     return False
-                return any(
-                    is_pointwise_use(u) for u in arg.users if u is not cat_node
-                )
+                return any(is_pointwise_use(u) for u in arg.users if u is not cat_node)
 
             return any(has_fusible_multi_consumer(arg) for arg in fx_args)
 
         has_multi_consumers = any_input_has_multi_consumers()
 
-        horizontal_fuse_cat = (
-            all(should_lower_cat_input(inp) for inp in inputs)
-            and not any(can_fuse_reduction(t) for t in inputs)
-        )
+        horizontal_fuse_cat = all(
+            should_lower_cat_input(inp) for inp in inputs
+        ) and not any(can_fuse_reduction(t) for t in inputs)
         if not has_multi_consumers and (
             fuse_pointwise_use or (horizontal_fuse_cat and not fusable_reduction)
         ):

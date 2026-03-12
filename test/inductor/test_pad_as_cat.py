@@ -7,8 +7,12 @@ from torch._inductor.test_case import TestCase
 from torch.testing._internal.inductor_utils import GPU_TYPE, requires_gpu
 
 
-class TestCatMultiConsumer(TestCase):
+# required so that metrics.num_bytes_accessed is populated
+torch._logging.set_logs(inductor_metrics=True)
 
+
+class TestCatMultiConsumer(TestCase):
+    @torch._inductor.config.patch(fx_graph_cache=False)
     @requires_gpu()
     def test_cat_to_fp16(self):
         """Multi-consumer cat avoids duplicate computation."""
@@ -30,9 +34,11 @@ class TestCatMultiConsumer(TestCase):
         # Without the optimization x would be read twice (once by cat, once
         # by to_fp16). With the optimization ConcatKernel shares x so it is
         # read only once.
+        z = ref[0]
+        y = ref[1]
         x_bytes = x.nelement() * x.element_size()
-        z_bytes = (1024 + 6) * 768 * x.element_size()
-        y_bytes = 1024 * 768 * torch.float16.itemsize
+        z_bytes = z.nelement() * z.element_size()
+        y_bytes = y.nelement() * y.element_size()
         unoptimized_bytes = 2 * x_bytes + z_bytes + y_bytes
         self.assertLess(
             metrics.num_bytes_accessed,
