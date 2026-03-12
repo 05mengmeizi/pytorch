@@ -585,6 +585,7 @@ def make_recompile_test(optim_cls, closure=None, kernel_count=2, **kwargs):
     return test_fn
 
 
+@torch._dynamo.config.patch(nested_graph_breaks=False)
 class CompiledOptimizerParityTests(TestCase):
     @skipCUDAIf(not has_triton(), "torch.compile with cuda requires triton")
     @skipXPUIf(not has_triton(), "torch.compile with xpu requires triton")
@@ -697,6 +698,7 @@ class CompiledOptimizerParityTests(TestCase):
                 )
 
 
+@torch._dynamo.config.patch(nested_graph_breaks=False)
 class CompiledOptimizerTests(TestCase):
     check_model_gpu = check_model_gpu
     check_model_cpu = check_model
@@ -768,6 +770,7 @@ class CompiledOptimizerTests(TestCase):
         self.assertTrue(p_ref() is None)
         gc.enable()
 
+    @torch._dynamo.config.patch("nested_graph_breaks", False)
     def test_guard_on_none_grads(self):
         def training_loop():
             input = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]).reshape(3, 2)

@@ -13621,6 +13621,7 @@ def forward(self, arg0_1: "Sym(s77)", arg1_1: "Sym(s27)", arg2_1: "Sym(s53)", ar
 
     # Skipped on ROCm until https://github.com/ROCm/triton/issues/443 resolved
     @slowTest
+    @torch._dynamo.config.patch(nested_graph_breaks=False)
     def test_fuse_large_params(self):
         def pt2_optimizer_step(optimizer):
             @torch.compile()

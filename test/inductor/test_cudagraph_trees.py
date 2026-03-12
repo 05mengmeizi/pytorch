@@ -728,6 +728,7 @@ if HAS_CUDA_AND_TRITON:
                 compiled_out = f_compiled(x_cloned)
                 self.assertEqual(eager_out, compiled_out)
 
+        @torch._dynamo.config.patch(nested_graph_breaks=False)
         def test_function_compiled_multiple_times(self):
             def foo(x):
                 y = foo2(x)
