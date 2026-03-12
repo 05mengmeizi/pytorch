@@ -36,7 +36,6 @@ import itertools
 import logging
 import os
 import pstats
-import random
 import subprocess
 import sys
 import tempfile
@@ -293,9 +292,11 @@ def preserve_global_state(fn: Callable[_P, _T]) -> Callable[_P, _T]:
     """
     Context manager to:
         1) Save/restore torch.is_grad_enabled() state
-        2) Save/restore python random state
-        3) Save/restore torch random state
-        4) Monkey patch torch.fx.graph_module._forward_from_src
+        2) Save/restore torch random state
+        3) Monkey patch torch.fx.graph_module._forward_from_src
+
+    NOTE: Python random state is preserved in eval_frame_cpp.cpp instead,
+    so that it wraps more of the compilation pipeline.
     """
 
     @functools.wraps(fn)
@@ -318,7 +319,6 @@ def preserve_global_state(fn: Callable[_P, _T]) -> Callable[_P, _T]:
             prior_mobile_allocator_state = (
                 torch._C._is_default_mobile_cpu_allocator_set()
             )
-            py_rng_state = random.getstate()
             prior_dtype = torch.get_default_dtype()
             torch_rng_state = torch.random.get_rng_state()
             cuda_rng_state = None
@@ -346,7 +346,6 @@ def preserve_global_state(fn: Callable[_P, _T]) -> Callable[_P, _T]:
                 torch.use_deterministic_algorithms(
                     prior_deterministic, warn_only=prior_warn_only
                 )
-                random.setstate(py_rng_state)
                 torch.random.set_rng_state(torch_rng_state)
                 torch.set_default_dtype(prior_dtype)
                 curr_mobile_allocator_state = (
